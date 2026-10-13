@@ -57,8 +57,44 @@ amplitude and flags silence explicitly, so a broken render cannot look like a su
 Two findings matter beyond the harness itself. **Parameter names on the plugin's VST3 surface
 (`Main Vol`, `Bend Up`) do not match the preset model's names (`kParam*`)** — 2623 automatable
 parameters against 778 distinct preset leaf paths means the importer needs a real crosswalk, which is
-ticket `14`'s subject. And because renders are byte-deterministic, the fidelity suite in ticket `15`
-can compare tightly rather than with a loose tolerance.
+ticket `14`'s subject. And **determinism is conditional**: the init patch renders byte-identically
+across runs, but a *loaded preset* loads its assets asynchronously and races the renderer — four runs
+of the same preset gave four different WAVs, with 97.8 % of samples differing pairwise. Pass
+`--pre-roll` and `--settle-ms` and it becomes byte-identical again. See **Settling** below.
+
+## Settling — read this before comparing two renders
+
+The reference loads a preset's assets **asynchronously**. A render that starts too soon races the
+loader and varies from run to run, so an unsettled comparison measures timing, not sound.
+
+Two flags fix it, and both are needed:
+
+```sh
+"$BIN" --plugin "$PLUGIN" --out x.wav --seconds 2 --pre-roll 128 --settle-ms 1500
+```
+
+`--pre-roll N` processes N silent blocks before the note; `--settle-ms N` waits N milliseconds after
+instantiation. The defaults above are the smallest configuration measured to be reproducible;
+multisample-heavy presets need more (a multisample piano needed 3000 ms). Pre-roll of 128, 256 and 512
+all give *stable* renders that differ from **each other** — so the value is part of the protocol, not a
+free parameter.
+
+Because a capture that is not verified is not evidence, `tools/render-preset.sh --verify` renders twice
+and requires the two files to be byte-identical.
+
+## State experiments
+
+| Flag | Purpose |
+|---|---|
+| `--dump-state <file>` | write the plugin's `getStateInformation` chunk |
+| `--load-state <file>` | apply a chunk with `setStateInformation` before anything else |
+| `--state-hex` | hexdump the state to stdout as well |
+| `--class <name>` | instantiate a specific VST3 class (`Serum 2` vs `Serum 2 FX`) |
+| `--pre-roll <blocks>` | silent blocks before the note — see **Settling** |
+| `--settle-ms <ms>` | wait after instantiation — see **Settling** |
+
+A state dump taken before any `processBlock` does not contain parameters set through `--set`, because
+the VST3 wrapper delivers parameter changes during `processBlock`. Dumping pushes silent blocks first.
 
 ## Limits, deliberate
 

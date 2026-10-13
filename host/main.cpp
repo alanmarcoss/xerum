@@ -35,9 +35,13 @@ struct Args
     bool listPrograms = false;
     bool quiet = false;
     bool help = false;
-    juce::String dumpState;
-    juce::String loadState;
     juce::StringArray sets; // "name=value", value interpreted as normalised 0..1
+    juce::String dumpState; // ticket 20: write getStateInformation to this file
+    juce::String loadState; // ticket 20: feed this file to setStateInformation first
+    bool stateHex = false;  // ticket 20: print a hexdump of the state to stdout
+    int preRoll = 0;        // ticket 20: silent blocks to process before the note
+    int settleMs = 0;       // ticket 20: wall-clock ms to wait after instantiation/state load
+    juce::String className; // pick a specific VST3 class instead of the first
 };
 
 void printUsage()
@@ -55,7 +59,15 @@ void printUsage()
         "  --sr <n>               sample rate, default 48000\n"
         "  --block <n>            block size, default 512\n"
         "  --note <n>             MIDI note to play, default 60\n"
-        "  --quiet                suppress the render summary\n";
+        "  --quiet                suppress the render summary\n"
+        "\n"
+        "ticket 20, state experiments:\n"
+        "  --dump-state <file>    write the plugin's getStateInformation chunk, then exit\n"
+        "  --load-state <file>    apply the chunk with setStateInformation before anything else\n"
+        "  --state-hex            print a hexdump of the state to stdout as well\n"
+        "  --pre-roll <blocks>    process this many silent blocks before the note\n"
+        "  --class <name>         VST3 class to instantiate (default: the first one)\n"
+        "  --settle-ms <n>        wait n milliseconds before rendering (preset assets load async)\n";
 }
 
 bool parseArgs (Args& a, const juce::StringArray& argv)
@@ -73,11 +85,15 @@ bool parseArgs (Args& a, const juce::StringArray& argv)
         else if (arg == "--note")         a.note = next().getIntValue();
         else if (arg == "--program")      a.program = next().getIntValue();
         else if (arg == "--set")          a.sets.add (next());
-        else if (arg == "--dump-state")   a.dumpState = next();
-        else if (arg == "--load-state")   a.loadState = next();
         else if (arg == "--list-params")  a.listParams = true;
         else if (arg == "--list-programs")a.listPrograms = true;
         else if (arg == "--quiet")        a.quiet = true;
+        else if (arg == "--dump-state")   a.dumpState = next();
+        else if (arg == "--load-state")   a.loadState = next();
+        else if (arg == "--state-hex")    a.stateHex = true;
+        else if (arg == "--pre-roll")     a.preRoll = next().getIntValue();
+        else if (arg == "--settle-ms")    a.settleMs = next().getIntValue();
+        else if (arg == "--class")        a.className = next();
         else if (arg == "--help" || arg == "-h") { a.help = true; printUsage(); return true; }
         else
         {
@@ -118,8 +134,7 @@ int main (int argc, char* argv[])
     if (! parseArgs (args, juce::StringArray (argv + 1, argc - 1)))
         return 2;
 
-    // --help is a success, not a usage error. CI caught this by running the binary; the
-    // exit code is part of the interface and a smoke check is worthless if it cannot tell.
+    // --help is a success, not a usage error. CI caught this by running the binary.
     if (args.help)
         return 0;
 
@@ -163,7 +178,24 @@ int main (int argc, char* argv[])
                   << " | " << juce::String (d->numInputChannels) << " in, "
                   << juce::String (d->numOutputChannels) << " out\n";
 
-    const auto& description = *descriptions.getFirst();
+    const juce::PluginDescription* chosen = descriptions.getFirst();
+
+    if (args.className.isNotEmpty())
+    {
+        chosen = nullptr;
+
+        for (auto* d : descriptions)
+            if (d->name.equalsIgnoreCase (args.className))
+                chosen = d;
+
+        if (chosen == nullptr)
+        {
+            std::cerr << "no plugin class named \"" << args.className << "\"\n";
+            return 1;
+        }
+    }
+
+    const auto& description = *chosen;
 
     juce::String error;
     auto instance = manager.createPluginInstance (description, args.sampleRate, args.blockSize, error);
@@ -172,6 +204,24 @@ int main (int argc, char* argv[])
     {
         std::cerr << "could not create instance: " << error << "\n";
         return 1;
+    }
+
+    // The state has to be applied before anything is inspected or rendered, so that
+    // --list-params/--dump-state/--out all describe the loaded patch rather than the init patch.
+    if (! args.loadState.isEmpty())
+    {
+        juce::MemoryBlock state;
+
+        if (juce::File::createFileWithoutCheckingPath (args.loadState).loadFileAsData (state))
+        {
+            instance->setStateInformation (state.getData(), (int) state.getSize());
+            std::cout << "loaded state: " << state.getSize() << " bytes\n";
+        }
+        else
+        {
+            std::cerr << "could not read state file: " << args.loadState << "\n";
+            return 1;
+        }
     }
 
     instance->enableAllBuses();
@@ -241,36 +291,64 @@ int main (int argc, char* argv[])
         }
     }
 
-    // Round-trip experiments for ticket 20: what does the plugin's own state contain, and is it
-    // enough to drive a preset into it without a GUI?
-    if (! args.loadState.isEmpty())
+    if (! args.dumpState.isEmpty() || args.stateHex)
     {
-        juce::MemoryBlock state;
-        juce::File f (args.loadState);
-
-        if (f.existsAsFile() && f.loadFileAsData (state))
+        // Parameters set through the VST3 wrapper are queued as parameter changes and only
+        // delivered to the plugin during processBlock, so a state dump taken before any
+        // processBlock would not contain them. Push a few silent blocks first.
         {
-            instance->setStateInformation (state.getData(), (int) state.getSize());
-            std::cout << "loaded state: " << state.getSize() << " bytes\n";
-        }
-        else
-        {
-            std::cerr << "could not read state file: " << args.loadState << "\n";
-            return 1;
-        }
-    }
+            juce::AudioBuffer<float> silence (juce::jmax (1, juce::jmin (2, instance->getTotalNumOutputChannels())), args.blockSize);
+            juce::MidiBuffer none;
 
-    if (! args.dumpState.isEmpty())
-    {
+            for (int i = 0; i < 4; ++i)
+            {
+                silence.clear();
+                instance->processBlock (silence, none);
+            }
+        }
+
         juce::MemoryBlock state;
         instance->getStateInformation (state);
-        auto out = juce::File::createFileWithoutCheckingPath (args.dumpState);
-        out.replaceWithData (state.getData(), state.getSize());
-        std::cout << "state: " << state.getSize() << " bytes -> " << out.getFullPathName() << "\n";
+
+        std::cout << "\nstate: " << state.getSize() << " bytes\n";
+
+        if (! args.dumpState.isEmpty())
+        {
+            auto out = juce::File::createFileWithoutCheckingPath (args.dumpState);
+            out.replaceWithData (state.getData(), state.getSize());
+            std::cout << "  written to " << out.getFullPathName() << "\n";
+        }
+
+        if (args.stateHex)
+        {
+            const auto* bytes = static_cast<const juce::uint8*> (state.getData());
+
+            for (size_t i = 0; i < state.getSize(); i += 16)
+            {
+                juce::String line;
+                line << juce::String::toHexString ((int) i).paddedLeft ('0', 6) << "  ";
+
+                for (size_t j = 0; j < 16; ++j)
+                    if (i + j < state.getSize())
+                        line << juce::String::toHexString ((int) bytes[i + j]).paddedLeft ('0', 2) << ' ';
+
+                std::cout << line << "\n";
+            }
+        }
     }
 
-    if (args.listParams || args.listPrograms || args.out.isEmpty())
+    if (args.listParams || args.listPrograms)
         return 0;
+
+    if (args.out.isEmpty())
+    {
+        // --dump-state/--state-hex are complete actions on their own; a bare invocation is not.
+        if (! args.dumpState.isEmpty() || args.stateHex)
+            return 0;
+
+        std::cerr << "--out is required to render (or use --list-params/--list-programs/--dump-state)\n";
+        return 2;
+    }
 
     const auto outFile = juce::File::createFileWithoutCheckingPath (args.out);
     outFile.deleteFile();
@@ -314,6 +392,21 @@ int main (int argc, char* argv[])
     {
         std::cerr << "could not create WAV writer\n";
         return 1;
+    }
+
+    if (args.settleMs > 0)
+        juce::Thread::sleep (args.settleMs);
+
+    if (args.preRoll > 0)
+    {
+        juce::AudioBuffer<float> silence (numChannels, blockSize);
+        juce::MidiBuffer none;
+
+        for (int i = 0; i < args.preRoll; ++i)
+        {
+            silence.clear();
+            instance->processBlock (silence, none);
+        }
     }
 
     while (written < totalSamples)
