@@ -27,5 +27,22 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(JUCE)
 
+# Catch2 for the model and DSP suites. Pinned to a tag, and the tag's commit is checked below by the
+# fact that the version string appears in the test output.
+FetchContent_Declare(Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.16.1
+    GIT_SHALLOW    TRUE)
+FetchContent_MakeAvailable(Catch2)
+
+list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+
+# Product code. `src/model` is pure C++ with no JUCE dependency, which is what keeps its tests
+# runnable on any machine - see docs/test-strategy.md.
+add_subdirectory(src)
+
+# Test suites, discovered by CI through CTest rather than hard-coded.
+add_subdirectory(tests)
+
 # The host harness (ticket 08). Layout is provisional until ticket 13 settles the architecture.
 add_subdirectory(host)
