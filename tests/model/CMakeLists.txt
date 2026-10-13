@@ -1,6 +1,7 @@
 add_executable(xerum-model-tests
     schema_test.cpp
-    decompress_test.cpp)
+    decompress_test.cpp
+    cbor_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model
