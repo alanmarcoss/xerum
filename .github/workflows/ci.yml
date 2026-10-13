@@ -46,7 +46,10 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --target xerum-host -j"$(sysctl -n hw.ncpu)"
+        # Build every target, not just the harness. Building one target and then running CTest is a
+        # trap: an unbuilt test binary leaves Catch2's discovery placeholder in place, and the suite
+        # fails as `_NOT_BUILT` — which reads like a broken test rather than a missing build.
+        run: cmake --build build -j"$(sysctl -n hw.ncpu)"
 
       # Not a unit test: a smoke check that the artifact exists AND runs. A build that
       # links but cannot start is a real failure this catches cheaply.
@@ -77,9 +80,9 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Layer | In CI | Status |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Build | yes | see log |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build | yes | all targets |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Plugin (pluginval, auval) | yes | not wired yet — arrives with ticket 30 |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Format (own fixtures) | yes | no suite yet — ticket 21 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Format (own fixtures) | yes | schema suite, 9 tests — the container reader arrives with ticket 22 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| DSP | yes | no suite yet — tickets 24-29 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Format (factory corpus) | **no** | needs the local content tree — skips here by design |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Fidelity (golden renders) | **no** | needs the reference installed — skips here by design |" >> "$GITHUB_STEP_SUMMARY"
