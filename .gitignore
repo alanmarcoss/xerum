@@ -1,6 +1,7 @@
 build/
 external/
 .scratch/
+.xerum-fixtures/
 __pycache__/
 *.pyc
 .DS_Store

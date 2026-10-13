@@ -1,0 +1,372 @@
+{
+  "note": "Golden render corpus. The WAVs are NOT in this repository - they are captured from the reference instrument and live outside it (see docs/content-policy.md). This manifest and tools/render-preset.sh are the durable artefacts; re-capturing is one command.",
+  "capture": {
+    "plugin": "/Library/Audio/Plug-Ins/VST3/Serum2.vst3",
+    "sampleRate": 48000,
+    "blockSize": 512,
+    "seconds": 2,
+    "note": 60,
+    "preRoll": 128,
+    "settleMs": 1500,
+    "receipt": "Settle values are part of the protocol, not defaults: per ticket 20, an unsettled render of a loaded preset races its async asset load and is not reproducible, and pre-roll 128/256/512 are each stable but differ from each other."
+  },
+  "uncoveredTargets": [
+    "fx:FXConvolve",
+    "fx:FXHyper",
+    "fx:FXUtility"
+  ],
+  "fixtures": [
+    {
+      "name": "ARP - Aardvark",
+      "slug": "arp-aardvark",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Aardvark.SerumPreset",
+      "covers": [
+        "engine:Wavetable"
+      ],
+      "wav": "arp-aardvark.wav",
+      "sha256": "2301126235adf408c9e82f2ed9153dc54021a52ac07041b898e6b73bf19a887c",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Acid101",
+      "slug": "arp-acid101",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Acid101.SerumPreset",
+      "covers": [
+        "engine:SubOsc"
+      ],
+      "wav": "arp-acid101.wav",
+      "sha256": "20ba6c21f2913980f59b0695c865dda7154416d76c0e01452c20b0c3fce6ca1d",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Altar",
+      "slug": "arp-altar",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Altar.SerumPreset",
+      "covers": [
+        "engine:NoiseOsc"
+      ],
+      "wav": "arp-altar.wav",
+      "sha256": "8506a0eb8e56bcb33b4e47cb74136faef07fcbbfdb4033f6c294cb9ae0e72c30",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Bell Arperium",
+      "slug": "arp-bell-arperium",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Bell Arperium.SerumPreset",
+      "covers": [
+        "engine:GranularOsc"
+      ],
+      "wav": "arp-bell-arperium.wav",
+      "sha256": "ffad1e4db60f3537e7202059e4b21c6f80c31ffda4c86431392f2f875ba06409",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Blossom Tree Sprites",
+      "slug": "arp-blossom-tree-sprites",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Blossom Tree Sprites.SerumPreset",
+      "covers": [
+        "engine:SpectralOsc"
+      ],
+      "wav": "arp-blossom-tree-sprites.wav",
+      "sha256": "865bce5458c4bea9c3fdb2b1d334b386b61b2d863a0b0e31e8d8f5d025c65157",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Cascading Etheric Paths",
+      "slug": "arp-cascading-etheric-paths",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Cascading Etheric Paths.SerumPreset",
+      "covers": [
+        "engine:MultiSampleOsc"
+      ],
+      "wav": "arp-cascading-etheric-paths.wav",
+      "sha256": "e1d77bf7c4d584507a4be5afca00b29ca89079149da55286f5e31b16e159577f",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Cosmic Lives Forever",
+      "slug": "arp-cosmic-lives-forever",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Cosmic Lives Forever.SerumPreset",
+      "covers": [
+        "engine:SampleOsc"
+      ],
+      "wav": "arp-cosmic-lives-forever.wav",
+      "sha256": "541547b8881a18f0473649e105ee486caa618e037a1b570ce0b48a5410330c23",
+      "bytes": 768104
+    },
+    {
+      "name": "808 - Straight",
+      "slug": "808-straight",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/808/808 - Straight.SerumPreset",
+      "covers": [
+        "warp:kPD_OSC"
+      ],
+      "wav": "808-straight.wav",
+      "sha256": "d74dec4e65d07ad65b466adb27c3edbdd15080155e6c72f03057871fd1f03a12",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Daftronic",
+      "slug": "arp-daftronic",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Daftronic.SerumPreset",
+      "covers": [
+        "warp:kSync"
+      ],
+      "wav": "arp-daftronic.wav",
+      "sha256": "2e01810cafdd4489fa3080afd6c9953d892b16707e3ab4d438c1d8196815b6fc",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Etheric Aluminium",
+      "slug": "arp-etheric-aluminium",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Etheric Aluminium.SerumPreset",
+      "covers": [
+        "warp:kFM_OSC"
+      ],
+      "wav": "arp-etheric-aluminium.wav",
+      "sha256": "a4883e70e617c5c5b5459a35337f159ed8ea4f276cf4418442a758216ed38bd9",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Legend Epix",
+      "slug": "arp-legend-epix",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Legend Epix.SerumPreset",
+      "covers": [
+        "warp:kDistTube"
+      ],
+      "wav": "arp-legend-epix.wav",
+      "sha256": "a1c563b3847d495790afaa4aa05ec4773767060ae1d20172cbe02b3acd276043",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - Funk Me Electric 2",
+      "slug": "ba-funk-me-electric-2",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Electric/BA - Funk Me Electric 2.SerumPreset",
+      "covers": [
+        "warp:kBendPos"
+      ],
+      "wav": "ba-funk-me-electric-2.wav",
+      "sha256": "1e1f620b752e1d1ebdf8dfc4ccde0e317265012642f57b8806ada58ea9ad2be8",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - Basist",
+      "slug": "ba-basist",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Electric/BA - Basist.SerumPreset",
+      "covers": [
+        "warp:kPWM"
+      ],
+      "wav": "ba-basist.wav",
+      "sha256": "4a1f65479c47c3afbde82cb4f90fb59423a88bdd0e8904ef886fdaa694be1343",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - Deep Throat Bass",
+      "slug": "ba-deep-throat-bass",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Acid/BA - Deep Throat Bass.SerumPreset",
+      "covers": [
+        "warp:kRM_OSC"
+      ],
+      "wav": "ba-deep-throat-bass.wav",
+      "sha256": "52caf93aef3b542cf8a2482b5481673d8056a901229df775492ee9f3d8eaa79a",
+      "bytes": 768104
+    },
+    {
+      "name": "MDL - Khahaha Bass",
+      "slug": "mdl-khahaha-bass",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Modulated/MDL - Khahaha Bass.SerumPreset",
+      "covers": [
+        "warp:kAM_OSC"
+      ],
+      "wav": "mdl-khahaha-bass.wav",
+      "sha256": "76f4e431a37c94a471f0116cbc0cae20cd2f61eac420dd5f7682cb02492b56d7",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - Bowel Weevil",
+      "slug": "ba-bowel-weevil",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Hard/BA - Bowel Weevil.SerumPreset",
+      "covers": [
+        "warp:kFilterLPF"
+      ],
+      "wav": "ba-bowel-weevil.wav",
+      "sha256": "d950ed945407184b26e7386f1df99b2c6c102fa500e04ce86df803bdd4e245c3",
+      "bytes": 768104
+    },
+    {
+      "name": "808 - Decomposed",
+      "slug": "808-decomposed",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/808/808 - Decomposed.SerumPreset",
+      "covers": [
+        "filter:MgL24"
+      ],
+      "wav": "808-decomposed.wav",
+      "sha256": "a7f97d6015e850868b4d9cbdcdbd61f2de8c063fb5ab4f6f8a3529547a22a3ab",
+      "bytes": 768104
+    },
+    {
+      "name": "808 - Simple Electro",
+      "slug": "808-simple-electro",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/808/808 - Simple Electro.SerumPreset",
+      "covers": [
+        "filter:LadderEMS"
+      ],
+      "wav": "808-simple-electro.wav",
+      "sha256": "acc7ae1d99b7999b713c74553edda72bb5d2c80bfddd06425b498240cdfe6f94",
+      "bytes": 768104
+    },
+    {
+      "name": "808 - Texture",
+      "slug": "808-texture",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/808/808 - Texture.SerumPreset",
+      "covers": [
+        "filter:H18"
+      ],
+      "wav": "808-texture.wav",
+      "sha256": "08e3d16fdb0554d8a129e3a7df4d8f96e5ca980fa119c76a01a67be4764babf3",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - Modulated Eel",
+      "slug": "ba-modulated-eel",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Hard/BA - Modulated Eel.SerumPreset",
+      "covers": [
+        "filter:HP12"
+      ],
+      "wav": "ba-modulated-eel.wav",
+      "sha256": "9eaf25e5141eb308511896e1a2f86367fb0bda717f08719b1362e549d7264198",
+      "bytes": 768104
+    },
+    {
+      "name": "BR - Synth Trumpet Ensemble ",
+      "slug": "br-synth-trumpet-ensemble",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Brass/BR - Synth Trumpet Ensemble .SerumPreset",
+      "covers": [
+        "filter:CombP"
+      ],
+      "wav": "br-synth-trumpet-ensemble.wav",
+      "sha256": "7b0874cbd85f5c8b5f84ef3ab94e0903b1a4e5e578bc45d8ec987524a05e75b1",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - Lazer Bass",
+      "slug": "ba-lazer-bass",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Hard/BA - Lazer Bass.SerumPreset",
+      "covers": [
+        "filter:Diffuser"
+      ],
+      "wav": "ba-lazer-bass.wav",
+      "sha256": "c1bcba6986689b4e74ac266bf9c72144988b0ef980929a47c8acb54b7cd4c965",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - Geiger Wub",
+      "slug": "ba-geiger-wub",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Hard/BA - Geiger Wub.SerumPreset",
+      "covers": [
+        "filter:PZ_SVF"
+      ],
+      "wav": "ba-geiger-wub.wav",
+      "sha256": "cab2670f8233324e962a19ead6549cbbe8e2b9bcf9e035ea3a414e5440b67ab8",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Fun ElectroAcoustic Jam",
+      "slug": "arp-fun-electroacoustic-jam",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Fun ElectroAcoustic Jam.SerumPreset",
+      "covers": [
+        "fx:FXEQ"
+      ],
+      "wav": "arp-fun-electroacoustic-jam.wav",
+      "sha256": "25012066161c0542794e926420450834817c87c3a11ec2da5ad9f76fdfec761b",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Opus Arpeggio",
+      "slug": "arp-opus-arpeggio",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Opus Arpeggio.SerumPreset",
+      "covers": [
+        "fx:FXComp"
+      ],
+      "wav": "arp-opus-arpeggio.wav",
+      "sha256": "a80d9870b863530b0c92b46dbf8cb7d65b0bb0e13abe12b3362ccde639046df0",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Kalimba Arps",
+      "slug": "arp-kalimba-arps",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Kalimba Arps.SerumPreset",
+      "covers": [
+        "fx:FXReverb"
+      ],
+      "wav": "arp-kalimba-arps.wav",
+      "sha256": "83fe760796f70b4cb0602f6f6177d60e6038107f3ba4158a4ba317cc6d0b82d2",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Mallet Magium",
+      "slug": "arp-mallet-magium",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Mallet Magium.SerumPreset",
+      "covers": [
+        "fx:FXDelay"
+      ],
+      "wav": "arp-mallet-magium.wav",
+      "sha256": "0fc109b09bf596552ced94a8a91b50121bc8cc78c19e1aee732bf3cad9c9b57b",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Strum Multi",
+      "slug": "arp-strum-multi",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Strum Multi.SerumPreset",
+      "covers": [
+        "fx:FXDistortion"
+      ],
+      "wav": "arp-strum-multi.wav",
+      "sha256": "eedb9cd58a79fb2538642ad6d0f109a727c9b0bb63c70e43ad7958a1125b525b",
+      "bytes": 768104
+    },
+    {
+      "name": "808 - Diesel",
+      "slug": "808-diesel",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/808/808 - Diesel.SerumPreset",
+      "covers": [
+        "fx:FXFilter"
+      ],
+      "wav": "808-diesel.wav",
+      "sha256": "12d3e74ae26b23bcb3e02dfe16da65347bc8d7c307786190a00c6dc4e334f9b9",
+      "bytes": 768104
+    },
+    {
+      "name": "ARP - Pizz Orch Arp",
+      "slug": "arp-pizz-orch-arp",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Arp/ARP - Pizz Orch Arp.SerumPreset",
+      "covers": [
+        "fx:FXChorus"
+      ],
+      "wav": "arp-pizz-orch-arp.wav",
+      "sha256": "7f1362622f8da57a13f7d07656d36a547674ac24188889f41b7258a53e5ccb2c",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - 303 Die Treppe",
+      "slug": "ba-303-die-treppe",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Acid/BA - 303 Die Treppe.SerumPreset",
+      "covers": [
+        "fx:FXPhaser"
+      ],
+      "wav": "ba-303-die-treppe.wav",
+      "sha256": "29c4bbcdb8aa61ec99ea0c6e7f1496198ea60b8badeff0afb83c0ab704c5a37e",
+      "bytes": 768104
+    },
+    {
+      "name": "BA - JELLY FISH",
+      "slug": "ba-jelly-fish",
+      "preset": "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory/Bass/Hard/BA - JELLY FISH.SerumPreset",
+      "covers": [
+        "fx:FXFlanger"
+      ],
+      "wav": "ba-jelly-fish.wav",
+      "sha256": "66df07ed0fb081e65abd16e1c74a465b38fa39e026fae0e4d3a039693b8351b0",
+      "bytes": 768104
+    }
+  ]
+}
