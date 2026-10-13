@@ -10,6 +10,7 @@ This file records what we link and what we merely use, as ticket `11` requires.
 | [JUCE](https://github.com/juce-framework/JUCE) | 9.0.4, pinned by commit | AGPLv3 **or** commercial | xerum takes the AGPLv3 option. Fetched by CMake at configure time, not vendored into the tree. |
 | [VST3 SDK](https://github.com/steinbergmedia/vst3sdk) | 3.8.0, vendored inside JUCE | MIT | © Steinberg Media Technologies GmbH. |
 | Apple AudioUnitSDK | 1.1.0, vendored inside JUCE | Apache-2.0 | macOS AU support. |
+| [Zstandard](https://github.com/facebook/zstd) | 1.5.7, decode-only single file | BSD 3-Clause **or** GPLv2, at our option | Vendored in `third_party/zstd` because **macOS ships no zstd** to link against; every preset is a zstd frame. We take it under **BSD 3-Clause**. Version, commit, generator command and hash are recorded in `third_party/zstd/README.md` — regenerate rather than patch. |
 
 Because xerum is AGPLv3 and JUCE is used under its AGPLv3 option, the combined work is AGPLv3:
 **anyone who receives a binary is entitled to the corresponding source**, including users interacting
