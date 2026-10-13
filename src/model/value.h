@@ -59,4 +59,12 @@ struct ValueResult
 /// The name of a type, for diagnostics and report entries.
 std::string_view toString (Value::Type type);
 
+/// Deep equality.
+///
+/// Note that an `Int` and a `Float` holding the same numeric value are **not** equal: the type records
+/// which encoding the file used, and a round-trip that silently changed it would be a format regression
+/// dressed up as an equality result. Callers comparing numbers should use `numberAsDouble`.
+bool operator== (const Value& a, const Value& b);
+bool operator!= (const Value& a, const Value& b);
+
 } // namespace xerum::model

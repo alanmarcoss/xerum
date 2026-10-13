@@ -23,7 +23,7 @@ namespace xerum::model::generated
 {
 
 inline constexpr std::string_view kOrigin =
-    "Decoded from the reference preset model locally; 778 leaves, 46 module patterns, schema versions 3.0, 4.0, 5.0, 6.0. See tools/generate-schema.py.";
+    "Decoded from the reference preset model locally; 778 leaves, 48 module patterns, schema versions 3.0, 4.0, 5.0, 6.0. See tools/generate-schema.py.";
 
 inline constexpr std::string_view kVersions[] = {"3.0", "4.0", "5.0", "6.0"};
 
@@ -44,11 +44,13 @@ inline constexpr std::string_view kModulePatterns[] = {
     "MidiClip{N}",
     "ModSlot{N}",
     "MultiSampleOsc{N}",
+    "NoiseOsc{N}",
     "Oscillator{N}",
     "Osc{N}",
     "PitchQuantizer{N}",
     "RetriggerState{N}",
     "RoutingSlot{N}",
+    "SampleOsc{N}",
     "SerumGUI",
     "SpectralOsc{N}",
     "VoiceFilter{N}",

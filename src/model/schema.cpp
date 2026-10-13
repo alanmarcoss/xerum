@@ -162,10 +162,49 @@ std::optional<double> Schema::defaultFor (std::string_view normalisedPath) const
     return std::nullopt;
 }
 
-std::string Schema::normalise (std::string_view concretePath)
+std::string Schema::normalise (std::string_view concretePath) const
 {
+    // Schema-aware on purpose. A digit run at the end of a path segment is an instance index **only if
+    // the schema has an indexed module by that name**. Parameter names carry literal digits too —
+    // `kParamCurve1`, `kParamModuleCount2` — and a normaliser that rewrote those would address a path
+    // that does not exist, so every real preset would report its parameters as unknown. That failure is
+    // invisible on hand-built test trees and immediate on a factory preset, which is why the corpus test
+    // exists.
     std::string out;
-    out.reserve (concretePath.size());
+    std::string segment;
+
+    auto flushSegment = [&]
+    {
+        if (segment.empty())
+            return;
+
+        std::size_t digitsAt = segment.size();
+
+        while (digitsAt > 0 && std::isdigit (static_cast<unsigned char> (segment[digitsAt - 1])) != 0)
+            --digitsAt;
+
+        if (digitsAt > 0 && digitsAt < segment.size())
+        {
+            const auto stem = segment.substr (0, digitsAt);
+
+            if (recognisesModule (stem + "0"))
+            {
+                if (! out.empty())
+                    out.push_back ('/');
+
+                out += stem;
+                out += "{N}";
+                segment.clear();
+                return;
+            }
+        }
+
+        if (! out.empty())
+            out.push_back ('/');
+
+        out += segment;
+        segment.clear();
+    };
 
     for (std::size_t i = 0; i < concretePath.size(); ++i)
     {
@@ -173,42 +212,27 @@ std::string Schema::normalise (std::string_view concretePath)
 
         if (c == '/')
         {
-            if (out.empty())            // drop a leading separator; paths are relative to the root
-                continue;
-
-            if (out.back() != '/')
-                out.push_back (c);
-
+            flushSegment();
             continue;
         }
 
         if (c == '[')
         {
+            flushSegment();
+
             while (i < concretePath.size() && concretePath[i] != ']')
                 ++i;
 
+            // An array slot is unambiguous — nothing in this format puts a literal `[` in a name. The
+            // separator before the next segment comes from flushSegment, so none is added here.
             out += "[]";
             continue;
         }
 
-        if (std::isdigit (static_cast<unsigned char> (c)) != 0)
-        {
-            auto end = i;
-            while (end < concretePath.size() && std::isdigit (static_cast<unsigned char> (concretePath[end])) != 0)
-                ++end;
-
-            // An index only means an index when it follows a name. A bare number is data.
-            if (! out.empty() && std::isalnum (static_cast<unsigned char> (out.back())) != 0)
-                out += "{N}";
-            else
-                out.append (concretePath.substr (i, end - i));
-
-            i = end - 1;
-            continue;
-        }
-
-        out.push_back (c);
+        segment.push_back (c);
     }
+
+    flushSegment();
 
     while (! out.empty() && out.back() == '/')
         out.pop_back();

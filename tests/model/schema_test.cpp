@@ -17,7 +17,10 @@ TEST_CASE ("the schema covers the whole decoded model", "[schema]")
     // The corpus-wide counts from ticket 01. If these move, the schema was regenerated from a
     // different corpus and every downstream assumption needs re-checking.
     REQUIRE (schema.leafCount() == 778);
-    REQUIRE (schema.modulePatternCount() == 46);
+    // 48, not 46: the generator now unions the taxonomy with every indexed segment the leaf paths use,
+    // because the taxonomy alone omitted `NoiseOsc{N}` — which normalisation needs in order to tell an
+    // instance index from a literal digit in a parameter name.
+    REQUIRE (schema.modulePatternCount() == 48);
 
     REQUIRE (Schema::versions() == std::vector<std::string> { "3.0", "4.0", "5.0", "6.0" });
 }
@@ -74,17 +77,17 @@ TEST_CASE ("an unknown path is unknown, not an error", "[schema]")
 
 TEST_CASE ("concrete paths normalise to schema paths", "[schema]")
 {
-    CHECK (Schema::normalise ("/Oscillator0/WTOsc1/plainParams/kParamWarpMenu")
+    CHECK (Schema::instance().normalise ("/Oscillator0/WTOsc1/plainParams/kParamWarpMenu")
            == "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu");
 
-    CHECK (Schema::normalise ("Oscillator0/WTOsc0/plainParams/kParamWarpMenu")
+    CHECK (Schema::instance().normalise ("Oscillator0/WTOsc0/plainParams/kParamWarpMenu")
            == "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu");
 
-    CHECK (Schema::normalise ("FXRack0/FX[2]/FXReverb/plainParams/kParamWet")
+    CHECK (Schema::instance().normalise ("FXRack0/FX[2]/FXReverb/plainParams/kParamWet")
            == "FXRack{N}/FX[]/FXReverb/plainParams/kParamWet");
 
     // A bare number is data, not an index: only a digit run following a name becomes {N}.
-    CHECK (Schema::normalise ("Global0/plainParams/123") == "Global{N}/plainParams/123");
+    CHECK (Schema::instance().normalise ("Global0/plainParams/123") == "Global{N}/plainParams/123");
 }
 
 TEST_CASE ("the module taxonomy recognises indexed families", "[schema]")

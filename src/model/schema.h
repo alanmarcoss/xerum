@@ -70,8 +70,11 @@ public:
     /// Convert a concrete path into its schema form:
     ///   `/Oscillator0/WTOsc1/plainParams/kParamWarpMenu` -> `Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu`
     ///   `FXRack0/FX[2]/FXReverb/...`                     -> `FXRack{N}/FX[]/FXReverb/...`
-    /// Leading `/` is dropped; index runs become `{N}`; bracketed indices become `[]`.
-    static std::string normalise (std::string_view concretePath);
+    ///
+    /// Leading `/` is dropped; an index run becomes `{N}` **only where the schema has an indexed module
+    /// of that name**, and a bracketed index becomes `[]`. This is a member rather than a free function
+    /// because the decision is schema-dependent: `kParamCurve1` ends in a digit and is not an index.
+    std::string normalise (std::string_view concretePath) const;
 };
 
 /// Human-readable name for a kind, for reports and diagnostics.

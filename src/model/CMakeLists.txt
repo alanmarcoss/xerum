@@ -5,6 +5,7 @@ add_library(xerum_model STATIC
     legacy.cpp
     json.cpp
     container.cpp
+    document.cpp
     decompress.cpp
     # The vendored zstd decoder and the shim that exposes it. Kept in the model library rather than a
     # separate target because nothing else in the project will ever need it.

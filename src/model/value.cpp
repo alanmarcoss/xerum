@@ -48,4 +48,26 @@ bool Value::numberAsDouble (double& out) const
     }
 }
 
+bool operator== (const Value& a, const Value& b)
+{
+    if (a.type != b.type)
+        return false;
+
+    switch (a.type)
+    {
+        case Value::Type::Null:   return true;
+        case Value::Type::Bool:   return a.boolean == b.boolean;
+        case Value::Type::Int:    return a.integer == b.integer;
+        case Value::Type::Float:  return a.real == b.real;
+        case Value::Type::String:
+        case Value::Type::Bytes:  return a.text == b.text;
+        case Value::Type::Array:  return a.items == b.items;
+        case Value::Type::Map:    return a.entries == b.entries;
+    }
+
+    return false;
+}
+
+bool operator!= (const Value& a, const Value& b) { return ! (a == b); }
+
 } // namespace xerum::model

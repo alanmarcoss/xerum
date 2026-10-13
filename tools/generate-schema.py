@@ -95,7 +95,23 @@ def main() -> int:
     schema = json.loads(Path(args.schema).read_text())
     versions = sorted(schema["schemaVersions"]["versionLeafSets"].keys())
     leaves = schema["leaves"]
-    patterns = sorted(schema["moduleTaxonomy"]["kinds"])
+
+    # The taxonomy lists top-level module kinds, and it is **incomplete for normalisation**: it carries
+    # `WTOsc{N}` but not `NoiseOsc{N}`, even though leaf paths use the latter. Normalisation decides
+    # whether a trailing digit is an instance index by asking whether a pattern exists, so a missing
+    # pattern turns a real path into one the schema cannot resolve — and every preset using that engine
+    # then reports its parameters as unknown.
+    #
+    # So the pattern list is the union of the taxonomy and every indexed segment the leaf paths actually
+    # use. Deriving it from the data rather than trusting one source is what keeps the two consistent.
+    patterns = set(schema["moduleTaxonomy"]["kinds"])
+
+    for path in leaves:
+        for segment in path.split("/"):
+            if segment.endswith("{N}"):
+                patterns.add(segment)
+
+    patterns = sorted(patterns)
 
     value_arrays: list[str] = []
     value_array_of: dict[int, tuple[str, int]] = {}
