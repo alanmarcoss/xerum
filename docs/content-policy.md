@@ -50,6 +50,21 @@ rather than ignoring them, and the resolution order above already accounts for i
 honours those references without a policy change. A deferred feature must not require rewriting the
 rules it will eventually follow.
 
+## Generated files are content too
+
+A generator publishes as easily as a person — and more quietly, because nobody reads its output line by
+line before it is committed.
+
+This is not hypothetical here. `tools/generate-schema.py` first emitted every "value set" it found in
+the decoded schema, and several of those were not vocabularies at all: **embedded SFZ text, tables of
+asset paths, multi-kilobyte payloads lifted from real presets.** Its output would have published
+reference content into this public repository without anyone ever deciding to.
+
+So a generator deriving from reference-derived data **must carry its own guard**, and the guard belongs
+in the generator rather than in a review step that will eventually be skipped. Ours admits a value set
+only when it is short, has few members, and contains no newline: an enumeration is vocabulary, and
+payload is not.
+
 ## Enforcement
 
 Policy prose is not a check. The release path carries one:
