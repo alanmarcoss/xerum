@@ -34,6 +34,9 @@ struct Args
     bool listParams = false;
     bool listPrograms = false;
     bool quiet = false;
+    bool help = false;
+    juce::String dumpState;
+    juce::String loadState;
     juce::StringArray sets; // "name=value", value interpreted as normalised 0..1
 };
 
@@ -70,10 +73,12 @@ bool parseArgs (Args& a, const juce::StringArray& argv)
         else if (arg == "--note")         a.note = next().getIntValue();
         else if (arg == "--program")      a.program = next().getIntValue();
         else if (arg == "--set")          a.sets.add (next());
+        else if (arg == "--dump-state")   a.dumpState = next();
+        else if (arg == "--load-state")   a.loadState = next();
         else if (arg == "--list-params")  a.listParams = true;
         else if (arg == "--list-programs")a.listPrograms = true;
         else if (arg == "--quiet")        a.quiet = true;
-        else if (arg == "--help" || arg == "-h") { printUsage(); return false; }
+        else if (arg == "--help" || arg == "-h") { a.help = true; printUsage(); return true; }
         else
         {
             std::cerr << "unrecognised argument: " << arg << "\n";
@@ -112,6 +117,11 @@ int main (int argc, char* argv[])
     Args args;
     if (! parseArgs (args, juce::StringArray (argv + 1, argc - 1)))
         return 2;
+
+    // --help is a success, not a usage error. CI caught this by running the binary; the
+    // exit code is part of the interface and a smoke check is worthless if it cannot tell.
+    if (args.help)
+        return 0;
 
     const auto file = resolveFile (args.plugin);
 
@@ -231,14 +241,36 @@ int main (int argc, char* argv[])
         }
     }
 
-    if (args.listParams || args.listPrograms)
-        return 0;
-
-    if (args.out.isEmpty())
+    // Round-trip experiments for ticket 20: what does the plugin's own state contain, and is it
+    // enough to drive a preset into it without a GUI?
+    if (! args.loadState.isEmpty())
     {
-        std::cerr << "--out is required to render (or use --list-params/--list-programs)\n";
-        return 2;
+        juce::MemoryBlock state;
+        juce::File f (args.loadState);
+
+        if (f.existsAsFile() && f.loadFileAsData (state))
+        {
+            instance->setStateInformation (state.getData(), (int) state.getSize());
+            std::cout << "loaded state: " << state.getSize() << " bytes\n";
+        }
+        else
+        {
+            std::cerr << "could not read state file: " << args.loadState << "\n";
+            return 1;
+        }
     }
+
+    if (! args.dumpState.isEmpty())
+    {
+        juce::MemoryBlock state;
+        instance->getStateInformation (state);
+        auto out = juce::File::createFileWithoutCheckingPath (args.dumpState);
+        out.replaceWithData (state.getData(), state.getSize());
+        std::cout << "state: " << state.getSize() << " bytes -> " << out.getFullPathName() << "\n";
+    }
+
+    if (args.listParams || args.listPrograms || args.out.isEmpty())
+        return 0;
 
     const auto outFile = juce::File::createFileWithoutCheckingPath (args.out);
     outFile.deleteFile();
