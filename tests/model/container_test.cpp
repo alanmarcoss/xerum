@@ -11,6 +11,7 @@
 #include "container.h"
 #include "decompress.h"
 #include "json.h"
+#include "legacy.h"
 
 #include <cstring>
 #include <filesystem>
@@ -203,6 +204,7 @@ TEST_CASE ("every container the reference ships reads and decodes", "[container]
     std::size_t presets = 0;
     std::size_t cborDecoded = 0;
     std::size_t legacyCodec = 0;
+    std::size_t legacyDecoded = 0;
     std::vector<std::string> failures;
 
     for (const auto& entry : std::filesystem::recursive_directory_iterator (root))
@@ -240,8 +242,26 @@ TEST_CASE ("every container the reference ships reads and decodes", "[container]
 
         if (container.codec == Codec::Zlib)
         {
+            // The legacy typecode stream is a different grammar reaching the same Value tree.
+            const auto legacy = decodeLegacy (payload.bytes);
             ++legacyCodec;
-            continue;   // the legacy text stream is not CBOR; its grammar is separate work
+
+            if (! legacy.ok)
+            {
+                failures.push_back (entry.path().filename().string() + ": legacy: " + legacy.error);
+                continue;
+            }
+
+            if (legacy.bytesRead != payload.bytes.size())
+            {
+                failures.push_back (entry.path().filename().string() + ": legacy consumed "
+                                    + std::to_string (legacy.bytesRead) + " of "
+                                    + std::to_string (payload.bytes.size()));
+                continue;
+            }
+
+            ++legacyDecoded;
+            continue;
         }
 
         const auto document = decodeCbor (payload.bytes);
@@ -274,5 +294,6 @@ TEST_CASE ("every container the reference ships reads and decodes", "[container]
     CHECK (containers == 1253);
     CHECK (presets == 626);
     CHECK (legacyCodec == 12);
-    CHECK (cborDecoded == containers - legacyCodec);
+    CHECK (legacyDecoded == legacyCodec);
+    CHECK (cborDecoded + legacyDecoded == containers);   // the whole corpus reads
 }

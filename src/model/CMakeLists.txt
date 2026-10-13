@@ -1,6 +1,8 @@
 add_library(xerum_model STATIC
     schema.cpp
+    value.cpp
     cbor.cpp
+    legacy.cpp
     json.cpp
     container.cpp
     decompress.cpp

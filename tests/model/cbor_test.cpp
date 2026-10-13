@@ -62,12 +62,12 @@ TEST_CASE ("a definite-length map decodes into its entries, in order", "[cbor]")
 
     const auto* a = result.value.find ("a");
     REQUIRE (a != nullptr);
-    CHECK (a->type == CborValue::Type::Int);
+    CHECK (a->type == Value::Type::Int);
     CHECK (a->integer == 1);
 
     const auto* b = result.value.find ("b");
     REQUIRE (b != nullptr);
-    CHECK (b->type == CborValue::Type::String);
+    CHECK (b->type == Value::Type::String);
     CHECK (b->text == "two");
 
     const auto* c = result.value.find ("c");
@@ -105,12 +105,12 @@ TEST_CASE ("both float widths decode at a leaf", "[cbor]")
     // one width silently mis-reads the other.
     const auto f32 = decodeCbor (fromHex ("fa3f800000"));   // 1.0
     REQUIRE (f32.ok);
-    CHECK (f32.value.type == CborValue::Type::Float);
+    CHECK (f32.value.type == Value::Type::Float);
     CHECK (f32.value.real == 1.0);
 
     const auto f64 = decodeCbor (fromHex ("fb3ff0000000000000"));   // 1.0
     REQUIRE (f64.ok);
-    CHECK (f64.value.type == CborValue::Type::Float);
+    CHECK (f64.value.type == Value::Type::Float);
     CHECK (f64.value.real == 1.0);
 }
 
@@ -195,7 +195,7 @@ TEST_CASE ("absurd nesting is refused instead of exhausting the stack", "[cbor]"
 
 TEST_CASE ("type names are available for reports", "[cbor]")
 {
-    CHECK (toString (CborValue::Type::Map) == "map");
-    CHECK (toString (CborValue::Type::Float) == "float");
-    CHECK (toString (CborValue::Type::String) == "string");
+    CHECK (toString (Value::Type::Map) == "map");
+    CHECK (toString (Value::Type::Float) == "float");
+    CHECK (toString (Value::Type::String) == "string");
 }

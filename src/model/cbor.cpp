@@ -8,41 +8,6 @@
 namespace xerum::model
 {
 
-std::string_view toString (CborValue::Type type)
-{
-    switch (type)
-    {
-        case CborValue::Type::Null:   return "null";
-        case CborValue::Type::Bool:   return "bool";
-        case CborValue::Type::Int:    return "int";
-        case CborValue::Type::Float:  return "float";
-        case CborValue::Type::String: return "string";
-        case CborValue::Type::Bytes:  return "bytes";
-        case CborValue::Type::Array:  return "array";
-        case CborValue::Type::Map:    return "map";
-    }
-    return "unknown";
-}
-
-const CborValue* CborValue::find (std::string_view key) const
-{
-    for (const auto& [k, v] : entries)
-        if (k == key)
-            return &v;
-
-    return nullptr;
-}
-
-bool CborValue::numberAsDouble (double& out) const
-{
-    switch (type)
-    {
-        case Type::Int:   out = static_cast<double> (integer); return true;
-        case Type::Float: out = real;                          return true;
-        default:          return false;
-    }
-}
-
 namespace
 {
 
@@ -133,15 +98,15 @@ struct Reader
         return true;
     }
 
-    bool readValue (CborValue& out, int depth);
-    bool readInto (CborValue& out, int depth);
+    bool readValue (Value& out, int depth);
+    bool readInto (Value& out, int depth);
 };
 
 /// Guard against a malformed payload claiming a nesting depth that would exhaust the stack. A preset is
 /// a shallow document; anything deeper is corrupt or hostile.
 constexpr int kMaxDepth = 64;
 
-bool Reader::readInto (CborValue& out, int depth)
+bool Reader::readInto (Value& out, int depth)
 {
     if (depth > kMaxDepth)
         return fail ("nesting deeper than the reader allows");
@@ -174,7 +139,7 @@ bool Reader::readInto (CborValue& out, int depth)
             if (! argument.has_value())
                 return fail ("indefinite length on an integer");
 
-            out.type = CborValue::Type::Int;
+            out.type = Value::Type::Int;
             out.integer = static_cast<std::int64_t> (*argument);
             return true;
         }
@@ -184,7 +149,7 @@ bool Reader::readInto (CborValue& out, int depth)
             if (! argument.has_value())
                 return fail ("indefinite length on an integer");
 
-            out.type = CborValue::Type::Int;
+            out.type = Value::Type::Int;
             out.integer = -1 - static_cast<std::int64_t> (*argument);
             return true;
         }
@@ -192,7 +157,7 @@ bool Reader::readInto (CborValue& out, int depth)
         case 2:  // byte string
         case 3:  // text string
         {
-            out.type = major == 2 ? CborValue::Type::Bytes : CborValue::Type::String;
+            out.type = major == 2 ? Value::Type::Bytes : Value::Type::String;
 
             if (indefinite)
             {
@@ -208,7 +173,7 @@ bool Reader::readInto (CborValue& out, int depth)
                         return true;
                     }
 
-                    CborValue chunk;
+                    Value chunk;
 
                     if (! readInto (chunk, depth + 1))
                         return false;
@@ -231,7 +196,7 @@ bool Reader::readInto (CborValue& out, int depth)
 
         case 4:  // array
         {
-            out.type = CborValue::Type::Array;
+            out.type = Value::Type::Array;
 
             if (indefinite)
             {
@@ -268,11 +233,11 @@ bool Reader::readInto (CborValue& out, int depth)
 
         case 5:  // map
         {
-            out.type = CborValue::Type::Map;
+            out.type = Value::Type::Map;
 
             auto readPair = [&]() -> bool
             {
-                CborValue key;
+                Value key;
 
                 if (! readInto (key, depth + 1))
                     return false;
@@ -281,14 +246,14 @@ bool Reader::readInto (CborValue& out, int depth)
                 // textual form, because dropping it silently would lose information.
                 std::string name;
 
-                if (key.type == CborValue::Type::String)
+                if (key.type == Value::Type::String)
                     name = std::move (key.text);
-                else if (key.type == CborValue::Type::Int)
+                else if (key.type == Value::Type::Int)
                     name = std::to_string (key.integer);
                 else
                     name = "<" + std::string (toString (key.type)) + ">";
 
-                out.entries.emplace_back (std::move (name), CborValue {});
+                out.entries.emplace_back (std::move (name), Value {});
 
                 return readInto (out.entries.back().second, depth + 1);
             };
@@ -322,7 +287,7 @@ bool Reader::readInto (CborValue& out, int depth)
 
         case 6:  // tag — recorded but not interpreted; tags carry meaning we do not need yet
         {
-            CborValue inner;
+            Value inner;
 
             if (! readInto (inner, depth + 1))
                 return false;
@@ -335,9 +300,9 @@ bool Reader::readInto (CborValue& out, int depth)
         {
             switch (additional)
             {
-                case 20: out.type = CborValue::Type::Bool; out.boolean = false; return true;
-                case 21: out.type = CborValue::Type::Bool; out.boolean = true;  return true;
-                case 22: out.type = CborValue::Type::Null;                      return true;
+                case 20: out.type = Value::Type::Bool; out.boolean = false; return true;
+                case 21: out.type = Value::Type::Bool; out.boolean = true;  return true;
+                case 22: out.type = Value::Type::Null;                      return true;
 
                 case 25:  // half precision
                 {
@@ -352,7 +317,7 @@ bool Reader::readInto (CborValue& out, int depth)
                     const auto exponent = static_cast<int> ((raw >> 10) & 0x1F);
                     const auto mantissa = static_cast<double> (raw & 0x3FF);
 
-                    out.type = CborValue::Type::Float;
+                    out.type = Value::Type::Float;
 
                     if (exponent == 0)
                         out.real = sign * std::ldexp (mantissa, -24);
@@ -375,7 +340,7 @@ bool Reader::readInto (CborValue& out, int depth)
                     const auto bits = static_cast<std::uint32_t> (raw);
                     float f = 0.0f;
                     std::memcpy (&f, &bits, sizeof (f));
-                    out.type = CborValue::Type::Float;
+                    out.type = Value::Type::Float;
                     out.real = f;
                     return true;
                 }
@@ -389,7 +354,7 @@ bool Reader::readInto (CborValue& out, int depth)
 
                     double d = 0.0;
                     std::memcpy (&d, &raw, sizeof (d));
-                    out.type = CborValue::Type::Float;
+                    out.type = Value::Type::Float;
                     out.real = d;
                     return true;
                 }
@@ -409,13 +374,13 @@ bool Reader::readInto (CborValue& out, int depth)
     return fail ("unsupported major type " + std::to_string (major));
 }
 
-bool Reader::readValue (CborValue& out, int depth) { return readInto (out, depth); }
+bool Reader::readValue (Value& out, int depth) { return readInto (out, depth); }
 
 } // namespace
 
-CborResult decodeCbor (std::span<const std::byte> input)
+ValueResult decodeCbor (std::span<const std::byte> input)
 {
-    CborResult result;
+    ValueResult result;
     Reader reader { input, 0, {} };
 
     if (! reader.readValue (result.value, 0))
@@ -424,7 +389,7 @@ CborResult decodeCbor (std::span<const std::byte> input)
 
         // A half-built document must not escape: a caller that ignored `ok` would otherwise read a map
         // that looks plausible and is missing everything after the point of failure.
-        result.value = CborValue {};
+        result.value = Value {};
         return result;
     }
 
