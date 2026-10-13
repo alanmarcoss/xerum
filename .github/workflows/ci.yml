@@ -1,0 +1,85 @@
+name: CI
+
+# What this proves, and what it deliberately does not.
+#
+# Per docs/test-strategy.md: CI proves the code is SOUND, local runs prove it is
+# FAITHFUL. The corpus tests need the factory content tree and the fidelity tests
+# need the reference instrument installed -- neither can exist on a runner -- so
+# they run locally and skip here. This pipeline reports which layers ran and which
+# were skipped, so a green tick never quietly means "the interesting tests were
+# absent".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build + test (arm64 macOS)
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # JUCE is fetched at configure time and is ~130 MB shallow. Caching the fetch
+      # is the difference between a two-minute and a ten-minute build.
+      - name: Cache JUCE fetch
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-${{ runner.os }}-${{ runner.arch }}-9.0.4
+
+      - name: Toolchain
+        run: |
+          cmake --version
+          clang++ --version
+          uname -m
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --target xerum-host -j"$(sysctl -n hw.ncpu)"
+
+      # Not a unit test: a smoke check that the artifact exists AND runs. A build that
+      # links but cannot start is a real failure this catches cheaply.
+      - name: Smoke check
+        run: |
+          BIN=build/host/xerum-host_artefacts/Release/xerum-host
+          test -x "$BIN"
+          "$BIN" --help > /dev/null
+          echo "xerum-host starts and answers --help"
+
+      # Suites are discovered rather than hard-coded, so adding a target is enough to
+      # get it running here. Until a suite exists the step says so instead of passing
+      # silently.
+      - name: Test suites
+        run: |
+          set -o pipefail
+          suites=$(ctest --test-dir build -N 2>/dev/null | grep -c "Test *#" || true)
+          if [ "${suites:-0}" -gt 0 ]; then
+            ctest --test-dir build --output-on-failure
+          else
+            echo "::warning::no CTest suites registered yet — the DSP and format layers are unbuilt"
+          fi
+
+      - name: Layer report
+        if: always()
+        run: |
+          echo "### Test layers" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Layer | In CI | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build | yes | see log |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Plugin (pluginval, auval) | yes | not wired yet — arrives with ticket 30 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Format (own fixtures) | yes | no suite yet — ticket 21 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| DSP | yes | no suite yet — tickets 24-29 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Format (factory corpus) | **no** | needs the local content tree — skips here by design |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Fidelity (golden renders) | **no** | needs the reference installed — skips here by design |" >> "$GITHUB_STEP_SUMMARY"

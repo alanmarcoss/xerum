@@ -15,6 +15,12 @@ endif()
 # tag cannot silently change what we build. Licence: JUCE 9 is AGPLv3 or commercial; xerum
 # uses it under AGPLv3 (see .scratch/xerum/issues/11-stack-and-licence.md).
 include(FetchContent)
+
+# Register CTest so `ctest --test-dir build` works from the start. The suites arrive with the
+# format and DSP layers; until then this exists so CI can *discover* suites rather than
+# hard-coding target names.
+enable_testing()
+
 FetchContent_Declare(JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
     GIT_TAG        3fb5cbc0340758596dac39f7c8de47d562b4896e  # 9.0.4
