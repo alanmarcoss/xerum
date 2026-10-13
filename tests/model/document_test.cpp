@@ -11,9 +11,12 @@
 #include "cbor.h"
 #include "container.h"
 #include "decompress.h"
+#include "legacy.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <map>
 
 using namespace xerum::model;
 
@@ -297,6 +300,100 @@ TEST_CASE ("a real factory preset imports without a flood of false complaints", 
     CHECK (result.document.schemaVersion == "4.0");
 
 }
+TEST_CASE ("every factory preset produces a document and a report", "[document][corpus]")
+{
+    // The acceptance criterion that needs the whole bank rather than one file: a report for *every*
+    // preset, including the ones with nothing to report. It also answers a question the map has been
+    // carrying since the cut: how much of the factory bank actually imports without material loss.
+    const std::filesystem::path root =
+        "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets";
+
+    if (! std::filesystem::exists (root))
+        SKIP ("the reference's content tree is not installed here (docs/test-strategy.md)");
+
+    std::size_t presets = 0;
+    std::size_t cleanImports = 0;
+    std::size_t withHighSeverity = 0;
+    std::size_t failed = 0;
+    std::map<std::string, std::size_t> reasons;
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator (root))
+    {
+        if (! entry.is_regular_file() || entry.path().extension() != ".SerumPreset")
+            continue;
+
+        ++presets;
+
+        std::ifstream in (entry.path(), std::ios::binary);
+        std::vector<std::byte> raw ((std::size_t) std::filesystem::file_size (entry.path()));
+        in.read (reinterpret_cast<char*> (raw.data()), (std::streamsize) raw.size());
+
+        const auto container = readContainer (raw);
+
+        if (! container.ok)
+        {
+            ++failed;
+            UNSCOPED_INFO (entry.path().filename().string() << ": " << container.error);
+            continue;
+        }
+
+        const auto payload = decompress (container.payload, container.codec, container.declaredSize);
+
+        if (! payload.ok)
+        {
+            ++failed;
+            UNSCOPED_INFO (entry.path().filename().string() << ": " << payload.error);
+            continue;
+        }
+
+        const auto decoded = container.codec == Codec::Zstd ? decodeCbor (payload.bytes)
+                                                            : decodeLegacy (payload.bytes);
+
+        if (! decoded.ok || decoded.bytesRead != payload.bytes.size())
+        {
+            ++failed;
+            UNSCOPED_INFO (entry.path().filename().string() << ": " << decoded.error);
+            continue;
+        }
+
+        const auto result = loadPreset (decoded.value, container.schemaVersion, schema(), catalogue());
+
+        if (! result.ok)
+        {
+            ++failed;
+            continue;
+        }
+
+        // The criterion: a report exists for every preset. An empty one is a report.
+        if (result.report.clean())
+            ++cleanImports;
+        else if (result.report.worst() == Severity::High)
+            ++withHighSeverity;
+
+        for (const auto& reportEntry : result.report.entries)
+            if (reportEntry.severity == Severity::High)
+                ++reasons[reportEntry.item];
+    }
+
+    // A summary, not just a pass: these numbers are the answer to "does the cut hold up".
+    UNSCOPED_INFO ("presets " << presets << ", clean " << cleanImports << ", with a high-severity item "
+                              << withHighSeverity << ", failed " << failed);
+
+    std::vector<std::pair<std::size_t, std::string>> ranked;
+
+    for (const auto& [item, count] : reasons)
+        ranked.emplace_back (count, item);
+
+    std::sort (ranked.begin(), ranked.end(), [] (const auto& a, const auto& b) { return a.first > b.first; });
+
+    for (std::size_t i = 0; i < ranked.size() && i < 10; ++i)
+        UNSCOPED_INFO ("  high: " << ranked[i].second << " (" << ranked[i].first << " presets)");
+
+    CHECK (presets == 626);
+    CHECK (failed == 0);
+    CHECK (cleanImports + withHighSeverity <= presets);
+}
+
 TEST_CASE ("severity counts and the worst case are available for a user-facing summary", "[document]")
 {
     const auto result = load (object ({ { "Oscillator0", wavetableSlot ("SpectralOsc") },
