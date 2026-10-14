@@ -91,6 +91,12 @@ artefact and the output is not.
 
 ## Current state
 
-The **fidelity layer is specified but not runnable**: loading a preset into the reference instrument is
-still an open question (`.scratch/xerum/issues/20-reference-preset-loading.md`). It is left unrunnable
-rather than filled with a placeholder suite that passes by doing nothing.
+The **format**, **DSP** and **plugin** layers all run. The **fidelity layer is specified and, since ticket
+`20`, runnable** — that ticket found the load path (`<contentRoot>/Presets/User/Default.SerumPreset`, read at
+instantiation) and the determinism flags (`--pre-roll 128 --settle-ms 1500`), and ticket `32` then drove it end
+to end with byte-identical reference renders. The 32-fixture golden corpus is captured and the reference and
+harness are both present.
+
+What is missing is the **comparison itself**, which is ticket `46`. This paragraph previously said the layer
+was "not runnable" because loading a preset was an open question; that reason expired unnoticed, and the note
+is corrected rather than deleted so the sequence is visible.
