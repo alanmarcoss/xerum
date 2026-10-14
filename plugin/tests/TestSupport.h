@@ -10,6 +10,7 @@
 #include <cmath>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace xerum::plugin::tests
@@ -66,6 +67,46 @@ inline double peakOf (const std::vector<float>& samples)
         peak = std::max (peak, std::abs (static_cast<double> (sample)));
 
     return peak;
+}
+
+/// Render `blocks` blocks of `blockSize` and collect **both** channels — `{left, right}` — for the cases
+/// that measure the difference between them (ticket 41's unison spread). `midi` is called per block.
+inline std::pair<std::vector<float>, std::vector<float>> renderStereo (
+    XerumAudioProcessor& processor, const int blocks, const int blockSize,
+    const std::function<void (juce::MidiBuffer&, int)>& midi = {})
+{
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    std::pair<std::vector<float>, std::vector<float>> collected;
+
+    for (int block = 0; block < blocks; ++block)
+    {
+        buffer.clear();
+        juce::MidiBuffer events;
+
+        if (midi)
+            midi (events, block);
+
+        processor.processBlock (buffer, events);
+
+        for (int i = 0; i < blockSize; ++i)
+        {
+            collected.first.push_back (buffer.getSample (0, i));
+            collected.second.push_back (buffer.getSample (1, i));
+        }
+    }
+
+    return collected;
+}
+
+/// The largest absolute difference between two equal-length channel vectors.
+inline double channelDifference (const std::vector<float>& left, const std::vector<float>& right)
+{
+    double difference = 0.0;
+
+    for (std::size_t i = 0; i < left.size() && i < right.size(); ++i)
+        difference = std::max (difference, std::abs (static_cast<double> (left[i] - right[i])));
+
+    return difference;
 }
 
 inline double rmsOf (const std::vector<float>& samples)

@@ -19,6 +19,38 @@ int clampInt (int value, int low, int high)
 {
     return value < low ? low : (value > high ? high : value);
 }
+
+/// The half-turn in radians and `sqrt(2)`, for the equal-power pan below.
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kSqrt2 = 1.4142135623730951;
+
+/// Equal-power pan gains for one unison sub-voice.
+///
+/// **A stated convention, not a measurement.** The reference's own law for `kParamUnisonStereo` is not
+/// established (ticket 28 recorded the parameter and stopped there), so this is the standard
+/// constant-power law with one property chosen on purpose: **at `spread == 0` both gains are exactly 1**,
+/// so a preset that does not ask for width renders exactly what it rendered before the bus was stereo.
+/// A plain `cos`/`sin` pair would put 0.707 in each channel at centre and change every existing render.
+///
+/// `position` is the sub-voice's place in the stack, -0.5..0.5 (the same one that sets its detune), and
+/// `spread` is `kParamUnisonStereo` as a fraction, clamped to [-1, 1]. Its **sign mirrors the image**:
+/// negative values spread the stack the other way round, which is what the corpus's negative values
+/// (-100 occurs four times) have to mean rather than being clamped to nothing.
+void panGains (double position, double spread, double& left, double& right)
+{
+    const double pan = clampDouble (2.0 * position * spread, -1.0, 1.0);
+
+    if (spread == 0.0)
+    {
+        left = 1.0;
+        right = 1.0;
+        return;
+    }
+
+    const double angle = (pan + 1.0) * kPi / 4.0;   // 0 at hard left, pi/2 at hard right
+    left = std::cos (angle) * kSqrt2;
+    right = std::sin (angle) * kSqrt2;
+}
 } // namespace
 
 VoiceMode voiceModeFor (bool mono, bool legato)
@@ -112,8 +144,9 @@ void Voice::prepare (double sampleRate)
         for (auto& oscillator : slot)
             oscillator.prepare (sampleRate_);
 
-    for (auto& filter : filters_)
-        filter.prepare (sampleRate_);
+    for (auto& slot : filters_)
+        for (auto& filter : slot)
+            filter.prepare (sampleRate_);
 
     noise_.prepare (sampleRate_);
     sub_.prepare (sampleRate_);
@@ -147,11 +180,15 @@ void Voice::setSettings (const VoiceSettings& settings)
     for (int f = 0; f < kFilterSlots; ++f)
     {
         const auto& fs = settings_.filters[f];
-        filters_[f].setSpec (fs.spec);
-        filters_[f].setCutoff (clampDouble (fs.cutoff, 0.0, 1.0));
-        filters_[f].setResonance (clampDouble (fs.resonance, 0.0, 100.0));
-        filters_[f].setDrive (clampDouble (fs.drive, 0.0, 100.0));
-        filters_[f].setMorph (clampDouble (fs.morph, 0.0, 1.0));
+
+        for (auto& filter : filters_[f])
+        {
+            filter.setSpec (fs.spec);
+            filter.setCutoff (clampDouble (fs.cutoff, 0.0, 1.0));
+            filter.setResonance (clampDouble (fs.resonance, 0.0, 100.0));
+            filter.setDrive (clampDouble (fs.drive, 0.0, 100.0));
+            filter.setMorph (clampDouble (fs.morph, 0.0, 1.0));
+        }
     }
 
     if (settings_.noise.type.has_value())
@@ -290,7 +327,8 @@ void Voice::kill()
     sub_.reset();
 }
 
-void Voice::render (float* out, int frames, ModulationMatrix* matrix, const ModulationInputs& inputs)
+void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatrix* matrix,
+                    const ModulationInputs& inputs)
 {
     if (stage_ == VoiceStage::Idle || frames <= 0)
         return;
@@ -344,6 +382,8 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
     std::array<int, kOscillatorSlots> unison {};
     std::array<double, kOscillatorSlots> unisonNorm {};
     std::array<std::array<double, kMaxUnison>, kOscillatorSlots> detune {};
+    std::array<std::array<double, kMaxUnison>, kOscillatorSlots> panLeft {};
+    std::array<std::array<double, kMaxUnison>, kOscillatorSlots> panRight {};
 
     for (int s = 0; s < kOscillatorSlots; ++s)
     {
@@ -352,10 +392,13 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
         unison[s] = n;
         unisonNorm[s] = 1.0 / std::sqrt (static_cast<double> (n));
 
+        const double spread = clampDouble (os.unisonStereo / 100.0, -1.0, 1.0);
+
         for (int i = 0; i < n; ++i)
         {
             const double position = n > 1 ? static_cast<double> (i) / static_cast<double> (n - 1) - 0.5 : 0.0;
             detune[s][i] = std::exp2 (os.unisonRangeSemitones * position / 12.0);
+            panGains (position, spread, panLeft[s][i], panRight[s][i]);
         }
     }
 
@@ -429,10 +472,13 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
             if (! fs.enabled)
                 continue;
 
-            filters_[f].setCutoff (clampDouble (fs.cutoff + cutoffRamp[f].start * kCutoffModulationSpan,
-                                                0.0, 1.0));
-            filters_[f].setResonance (clampDouble (
-                fs.resonance + resoRamp[f].start * kResonanceModulationSpan, 0.0, 100.0));
+            for (auto& filter : filters_[f])
+            {
+                filter.setCutoff (clampDouble (fs.cutoff + cutoffRamp[f].start * kCutoffModulationSpan,
+                                               0.0, 1.0));
+                filter.setResonance (clampDouble (
+                    fs.resonance + resoRamp[f].start * kResonanceModulationSpan, 0.0, 100.0));
+            }
         }
     };
 
@@ -484,11 +530,16 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
         }
 
         const double glideNow = gliding ? glidePitch() : glideTarget_;
-        float sample = 0.0f;
+        float left = 0.0f;
+        float right = 0.0f;
 
         // The two fixed slots first. Their output is mixed like any other slot's — the reference's own
         // mixer sums the five — and generating them here costs nothing, because neither reads another
-        // slot.
+        // slot. Neither is panned either, but for a different reason from a wavetable slot: **xerum wires
+        // no `kParamPan` at all** (ticket 41's scope was the unison spread), so every slot's own pan is
+        // unapplied and sits centred. The corpus does store the field — measured: 53/59/57 presets on the
+        // wavetable slots and 28/8 on NOISE/SUB — so that is a real, separate gap rather than a fact about
+        // the bank.
         //
         // NOISE with **no** colour is the reference's sample mode, which xerum does not render: the slot
         // is silent here and the plugin reports it by name rather than generating a colour the preset did
@@ -498,7 +549,9 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
             const double volume = clampDouble (
                 settings_.noise.volume + volumeRamp[kNoiseSlot].at (frame, frames) * kVolumeModulationSpan,
                 0.0, 2.0);
-            sample += noise_.next() * static_cast<float> (volume);
+            const auto value = noise_.next() * static_cast<float> (volume);
+            left += value;
+            right += value;
         }
 
         if (settings_.sub.enabled)
@@ -513,7 +566,9 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
             const double volume = clampDouble (
                 settings_.sub.volume + volumeRamp[kSubSlot].at (frame, frames) * kVolumeModulationSpan,
                 0.0, 2.0);
-            sample += sub_.next() * static_cast<float> (volume);
+            const auto value = sub_.next() * static_cast<float> (volume);
+            left += value;
+            right += value;
         }
 
         for (int s = 0; s < kOscillatorSlots; ++s)
@@ -532,13 +587,24 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
                     oscillators_[s][i].setFrequency (baseHz * detune[s][i]);
             }
 
-            float sum = 0.0f;
+            // **The stereo spread is here.** Each sub-voice is placed across the image by its own position
+            // in the stack — the same position that sets its detune — so the voice's width comes from the
+            // unison stack itself rather than from any post-processing.
+            float sumLeft = 0.0f;
+            float sumRight = 0.0f;
+
             for (int i = 0; i < unison[s]; ++i)
-                sum += oscillators_[s][i].next();
+            {
+                const auto value = oscillators_[s][i].next();
+                sumLeft += value * static_cast<float> (panLeft[s][i]);
+                sumRight += value * static_cast<float> (panRight[s][i]);
+            }
 
             const double volume = clampDouble (
                 os.volume + volumeRamp[s].at (frame, frames) * kVolumeModulationSpan, 0.0, 2.0);
-            sample += sum * static_cast<float> (unisonNorm[s] * volume);
+            const auto amplitude = static_cast<float> (unisonNorm[s] * volume);
+            left += sumLeft * amplitude;
+            right += sumRight * amplitude;
         }
 
         for (int f = 0; f < kFilterSlots; ++f)
@@ -549,17 +615,24 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
 
             if (filterVaries)
             {
-                filters_[f].setCutoff (clampDouble (fs.cutoff
-                                                        + cutoffRamp[f].at (frame, frames)
-                                                              * kCutoffModulationSpan,
-                                                    0.0, 1.0));
-                filters_[f].setResonance (clampDouble (fs.resonance
-                                                           + resoRamp[f].at (frame, frames)
-                                                                 * kResonanceModulationSpan,
-                                                       0.0, 100.0));
+                const auto cutoff = clampDouble (fs.cutoff
+                                                     + cutoffRamp[f].at (frame, frames)
+                                                           * kCutoffModulationSpan,
+                                                 0.0, 1.0);
+                const auto resonance = clampDouble (fs.resonance
+                                                        + resoRamp[f].at (frame, frames)
+                                                              * kResonanceModulationSpan,
+                                                    0.0, 100.0);
+
+                for (auto& filter : filters_[f])
+                {
+                    filter.setCutoff (cutoff);
+                    filter.setResonance (resonance);
+                }
             }
 
-            sample = filters_[f].process (sample);
+            left = filters_[f][0].process (left);
+            right = filters_[f][1].process (right);
         }
 
         const double envelope = envelope_.level();
@@ -571,7 +644,9 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
             glideFrom_ = glideTarget_;
         }
 
-        out[frame] += sample * static_cast<float> (envelope * velocity_ * fade);
+        const auto amplitude = static_cast<float> (envelope * velocity_ * fade);
+        outLeft[frame] += left * amplitude;
+        outRight[frame] += right * amplitude;
     }
 
     if (stage_ == VoiceStage::Releasing && envelope_.idle())
@@ -843,12 +918,13 @@ void VoiceEngine::setSustainPedal (bool down)
     sustainDown_ = down;
 }
 
-void VoiceEngine::process (float* out, int frames)
+void VoiceEngine::process (float* outLeft, float* outRight, int frames)
 {
-    if (out == nullptr || frames <= 0)
+    if (outLeft == nullptr || outRight == nullptr || frames <= 0)
         return;
 
-    std::fill_n (out, frames, 0.0f);
+    std::fill_n (outLeft, frames, 0.0f);
+    std::fill_n (outRight, frames, 0.0f);
 
     const bool matrixActive = ! matrix_.slots().empty();
     const int active = activeVoiceCount();
@@ -868,7 +944,7 @@ void VoiceEngine::process (float* out, int frames)
         inputs.velocity = voice.velocity();
         inputs.envelope[0] = voice.level();
 
-        voice.render (out, frames, matrixActive ? &matrix_ : nullptr, inputs);
+        voice.render (outLeft, outRight, frames, matrixActive ? &matrix_ : nullptr, inputs);
     }
 }
 

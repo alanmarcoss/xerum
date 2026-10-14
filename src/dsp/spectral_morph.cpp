@@ -264,4 +264,15 @@ Wavetable expandWavetable (const Wavetable& table, std::size_t targetFrames)
     return expanded;
 }
 
+Wavetable tableForInterpolateAfterLoad (const Wavetable& table, bool embedded, int interpolateAfterLoad)
+{
+    // The path-referenced case is the one that must do nothing: ticket 37 measured the reference
+    // ignoring the field there, byte for byte across the field's every value. Returning the table
+    // unchanged is what keeps xerum's render identical to the reference's on those presets.
+    if (embedded && interpolateAfterLoad == 2)
+        return expandWavetable (table);
+
+    return table;
+}
+
 } // namespace xerum::dsp

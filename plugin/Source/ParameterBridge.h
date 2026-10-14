@@ -10,7 +10,7 @@
 //     do not even correspond to each other (2623 VST3 names against 776 preset leaf paths), so borrowing
 //     either buys nothing and imports a naming dependency (ticket 13, D6).
 //
-// The surface is **exactly what the engine implements** — 59 parameters, not 776. Exposing the rest
+// The surface is **exactly what the engine implements** — 75 parameters, not 776. Exposing the rest
 // would put controls in a host that write a value nothing reads, which is the placeholder-fallback smell
 // the project forbids. A preset's other parameters are not lost: they stay in the document and in the
 // import report.

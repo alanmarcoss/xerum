@@ -376,40 +376,50 @@ TEST_CASE ("array length survives when the elements carry parameters, and not wh
     CHECK (reread.document.parameters.count ("ArpClip0/clip/notes[1]/strumType") == 1);
 }
 
-TEST_CASE ("a preset asking for spectral morphing after load is reported, not silently crossfaded",
-           "[structural]")
+TEST_CASE ("spectral morphing after load is reported only where the engine cannot act on it", "[structural]")
 {
     // Ticket 37 measured what the `clm` interpolation modes do, and it is not what the guide says: modes
-    // 2/3/4 are a **plain linear crossfade**, which is what xerum already does. The real spectral morph
-    // — magnitude interpolation with shortest-arc phase, on the embedded-table path — is asked for by a
-    // *preset parameter*, `interpolateAfterLoad == 2`, and exactly one factory preset sets it.
+    // 2/3/4 are a **plain linear crossfade**, which is what xerum already does. The real spectral morph —
+    // magnitude interpolation with shortest-arc phase — is asked for by a *preset parameter*,
+    // `interpolateAfterLoad == 2`, and it is in the signal path as of ticket 41: the plugin expands the
+    // **embedded** table once at bind and the oscillator reads the morphed slots.
     //
-    // That value is an ordinary schema leaf, so it loads quietly and nothing acts on it. Silent it is
-    // not allowed to be: the preset's sound is materially wrong, which is `high`.
-    Value integer;
-    integer.type = Value::Type::Int;
-    integer.integer = 2;
+    // So the report now tracks what the engine can act on rather than what it once could not. A request
+    // the engine honours — an embedded table — is silent; one it cannot act on, a slot with no embedded
+    // table to morph, is named at `high`.
+    const auto preset = [] (const Value& afterLoad, const bool embedded)
+    {
+        Value slot = object ({ { "plainParams", object ({}) }, { "interpolateAfterLoad", afterLoad } });
 
-    const auto result = load (object ({ { "Oscillator0",
-                                         object ({ { "WTOsc0",
-                                                     object ({ { "plainParams", object ({}) },
-                                                               { "interpolateAfterLoad", integer } }) } }) } }));
+        if (embedded)
+            slot.entries.emplace_back ("embeddedWTData",
+                                       arrayOf ({ number (0.0), number (0.5), number (-0.5), number (0.0) }));
 
-    REQUIRE (result.ok);
-    CHECK (wasReported (result, "spectral morphing after load"));
-    CHECK (result.report.worst() == Severity::High);
+        return load (object ({ { "Oscillator0", object ({ { "WTOsc0", std::move (slot) } }) } }));
+    };
 
-    // And the neighbouring values are not complaints: 0 and 1 are the modes we do implement.
+    // The request the engine honours, and all three of the field's values with it: an embedded table.
+    // Nothing is reported, because nothing is dropped.
+    for (const auto value : { 0LL, 1LL, 2LL })
+    {
+        const auto honoured = preset (integer (value), /*embedded*/ true);
+
+        REQUIRE (honoured.ok);
+        CHECK_FALSE (wasReported (honoured, "spectral morphing after load"));
+    }
+
+    // The one it cannot act on: `2` on a slot with no embedded table, so there is nothing to morph.
+    const auto orphan = preset (integer (2), /*embedded*/ false);
+
+    REQUIRE (orphan.ok);
+    CHECK (wasReported (orphan, "spectral morphing after load"));
+    CHECK (orphan.report.worst() == Severity::High);
+
+    // And the neighbouring values are not complaints even with no table at all: 0 and 1 are the modes the
+    // read already performs.
     for (const auto value : { 0LL, 1LL })
     {
-        Value ok;
-        ok.type = Value::Type::Int;
-        ok.integer = value;
-
-        const auto plain = load (object ({ { "Oscillator0",
-                                             object ({ { "WTOsc0",
-                                                         object ({ { "plainParams", object ({}) },
-                                                                   { "interpolateAfterLoad", ok } }) } }) } }));
+        const auto plain = preset (integer (value), /*embedded*/ false);
 
         CHECK_FALSE (wasReported (plain, "spectral morphing after load"));
     }

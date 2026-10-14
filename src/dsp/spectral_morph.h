@@ -134,4 +134,25 @@ private:
 /// already at `targetFrames` cycles is returned unchanged.
 Wavetable expandWavetable (const Wavetable& table, std::size_t targetFrames = kExpandedFrameCount);
 
+/// The table a preset slot should bind, given the preset's `WTOsc{N}/interpolateAfterLoad`.
+///
+/// **This is the whole of the wiring, and it is a bind-time decision rather than a per-sample one.**
+/// `expandWavetable` costs one FFT pair per interpolated slot and 2 MB of frames, which is affordable
+/// once per table at bind and nowhere near affordable per sample, so the caller — the only party that
+/// knows when a table is (re)bound — expands here and then binds the result to every oscillator that
+/// shares the table. The read path never sees this function's input; it reads the expanded slots and
+/// crossfades them, which is exactly the two-step the reference performs.
+///
+/// **`embedded` decides whether the field applies at all, and it is the one thing that must not be got
+/// wrong.** Ticket 37 measured the reference ignoring `interpolateAfterLoad` for a table referenced by
+/// path: the same preset with `relativePathToWT` pointed at a factory table rendered byte-identically
+/// for the field absent and set to 0, 1 and 2. So a path-referenced table MUST be returned unchanged
+/// whatever the field says, and morphing one would make xerum differ from the reference on 74 shipped
+/// tables' worth of presets that the reference leaves alone. The table itself cannot answer this — a
+/// `.wav` file knows nothing about the preset that named it — so the caller states it.
+///
+/// `2` is the morph. `0` ("play the stored cycles as they are") and `1` ("crossfade between them") are
+/// what the read already does, so the table comes back unchanged for those.
+Wavetable tableForInterpolateAfterLoad (const Wavetable& table, bool embedded, int interpolateAfterLoad);
+
 } // namespace xerum::dsp

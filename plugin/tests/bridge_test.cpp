@@ -60,7 +60,7 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
 
     // The surface is what the engine implements, and it is not the reference's 2623-parameter VST3 space
     // nor the model's 776 leaves. A fixed count is the point: it is a claim, not an accident.
-    CHECK (bridge.specs().size() == 72);
+    CHECK (bridge.specs().size() == 75);
     CHECK (schema.leafCount() > bridge.specs().size());
 }
 

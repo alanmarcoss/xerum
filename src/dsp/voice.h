@@ -222,7 +222,7 @@ struct OscillatorSettings
     double framePosition { 0.0 };     ///< `kParamTablePos`
     int unison { 1 };                 ///< `kParamUnison`; 1 = off
     double unisonRangeSemitones { 0.0 };  ///< `kParamUnisonRange`, the total spread
-    double unisonStereo { 0.0 };      ///< `kParamUnisonStereo`; recorded, mono v1 — see the engine note
+    double unisonStereo { 0.0 };      ///< `kParamUnisonStereo`: percent spread; the sign mirrors it
     WarpMode warpMode[2] { WarpMode::None, WarpMode::None };
     double warpAmount[2] { 0.0, 0.0 };
 };
@@ -339,9 +339,10 @@ public:
     /// The pitch the voice is actually at, in note-semitones, glide included.
     double pitchSemitones() const;
 
-    /// Render `frames` samples into `out`, adding. `matrix` may be null (no modulation); `inputs` is the
-    /// engine's block inputs, which the voice augments with its own per-voice values.
-    void render (float* out, int frames, ModulationMatrix* matrix, const ModulationInputs& inputs);
+    /// Render `frames` samples into `outLeft`/`outRight`, adding. `matrix` may be null (no modulation);
+    /// `inputs` is the engine's block inputs, which the voice augments with its own per-voice values.
+    void render (float* outLeft, float* outRight, int frames, ModulationMatrix* matrix,
+                 const ModulationInputs& inputs);
 
 private:
     /// The pitch glide: a curved interpolation in semitones from where the note started to its target.
@@ -355,7 +356,13 @@ private:
     AmpEnvelope envelope_ {};
 
     std::array<std::array<WavetableOscillator, kMaxUnison>, kOscillatorSlots> oscillators_ {};
-    std::array<VoiceFilter, kFilterSlots> filters_ {};
+
+    /// **Two filters per slot, one per channel.** The voice bus is stereo from the oscillator's unison
+    /// spread onward (see `render`), so a single mono filter here would sum the two channels back
+    /// together and destroy exactly the width the oscillators just produced. Each channel's filter is
+    /// independent, which doubles the filter state and its delay lines — sized in `prepare()`, off the
+    /// audio thread.
+    std::array<std::array<VoiceFilter, 2>, kFilterSlots> filters_ {};
 
     // The two fixed single-engine slots. One instance each: the bank never stores `kParamUnison` on
     // slots 3/4 (measured — 0 of 626), so there is no unison stack to allocate for.
@@ -408,8 +415,9 @@ public:
     int noteOn (int note, double velocity);
     void noteOff (int note);
 
-    /// Render `frames` samples of the whole pool, mono, into `out` (overwritten, not added to).
-    void process (float* out, int frames);
+    /// Render `frames` samples of the whole pool, stereo, into `outLeft` and `outRight` (overwritten,
+    /// not added to). Both must hold `frames` samples; the pool sums into each.
+    void process (float* outLeft, float* outRight, int frames);
 
     int polyphony() const { return polyphony_; }
     int activeVoiceCount() const;

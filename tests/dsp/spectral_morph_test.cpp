@@ -20,6 +20,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "oscillator.h"
 #include "spectral_morph.h"
 #include "wavetable.h"
 
@@ -400,6 +401,87 @@ TEST_CASE ("the engine crossfades a table that declares spectral morphing", "[sp
         CHECK (spectral.interpolated (0.5, index) == Approx (0.5f * (a + b)).margin (1e-6));
         CHECK (spectral.interpolated (0.5, index) == linear.interpolated (0.5, index));
     }
+}
+
+TEST_CASE ("the morph is in the signal path: an embedded table asking for it renders differently from the crossfade",
+           "[morph-wired]")
+{
+    // The acceptance is asserted by **output**, not by a call existing. A two-cycle embedded table is
+    // bound twice the way the plugin binds it — once with `interpolateAfterLoad = 2` (expanded once, at
+    // bind) and once with `1` (left to the read's crossfade) — and the two renders are measured against
+    // each other.
+    //
+    // The cycles are given deliberately disagreeing magnitudes *and* phases, so the two mechanisms cannot
+    // coincide at the midpoint: a morph blends the fundamental's magnitude as
+    // `(1-t)|a_1| + t|b_1| = 0.5*1.0 + 0.5*0.8 = 0.90`, while a crossfade adds the two complex harmonics
+    // with their 2.6 rad of disagreement and lands near 0.26.
+    const auto a = cycle ({ {}, { 1.0, 0.9 }, { 0.6, 2.4 }, { 0.4, -1.1 } });
+    const auto b = cycle ({ {}, { 0.8, -1.7 }, { 0.7, 0.4 }, { 0.5, 2.2 } });
+
+    Wavetable embedded;
+    embedded.frameSize = kN;
+    embedded.frameCount = 2;
+    embedded.interpolation = FrameInterpolation::Linear;
+    embedded.samples = a;
+    embedded.samples.insert (embedded.samples.end(), b.begin(), b.end());
+
+    // **A table referenced by path is untouched whatever the field says** — ticket 37 measured the
+    // reference ignoring it there, byte for byte across the field's every value. Morphing one would make
+    // xerum differ from the reference on every preset built that way.
+    CHECK (tableForInterpolateAfterLoad (embedded, /*embedded*/ false, 2).frameCount == 2);
+    CHECK (tableForInterpolateAfterLoad (embedded, /*embedded*/ false, 2).samples == embedded.samples);
+
+    const auto morphed = tableForInterpolateAfterLoad (embedded, /*embedded*/ true, 2);
+    const auto crossfaded = tableForInterpolateAfterLoad (embedded, /*embedded*/ true, 1);
+
+    REQUIRE (morphed.frameCount == kExpandedFrameCount);
+    REQUIRE (crossfaded.frameCount == 2);
+    REQUIRE (crossfaded.samples == embedded.samples);
+
+    // Frequency chosen so one render is exactly one table cycle: 48000/2048 samples per cycle means the
+    // render is periodic over its own length and a bare DFT of it is the cycle's own spectrum, with no
+    // window and no leakage.
+    const auto renderCycle = [] (const Wavetable& table, double position)
+    {
+        WavetableOscillator oscillator;
+        oscillator.prepare (48000.0);
+        oscillator.setTable (&table);
+        oscillator.setFramePosition (position);
+        oscillator.setFrequency (48000.0 / double (kN));
+
+        std::vector<float> out (kN, 0.0f);
+        oscillator.process (out.data(), out.size());
+        return out;
+    };
+
+    // Slot 127 of the expanded table sits at t = 127/255 and slot 128 at 128/255, so position 127.5 is
+    // the same place in the table the two-frame version answers at 0.5.
+    const auto morphedRender = renderCycle (morphed, 127.5);
+    const auto crossfadeRender = renderCycle (crossfaded, 0.5);
+
+    const double morphedFundamental = std::abs (harmonic (morphedRender, 1));
+    const double crossfadeFundamental = std::abs (harmonic (crossfadeRender, 1));
+
+    CHECK (morphedFundamental == Approx (0.90).margin (0.02));   // the magnitude blend
+    CHECK (crossfadeFundamental < 0.40);                          // the complex sum, phases apart
+    CHECK (morphedFundamental > 2.0 * crossfadeFundamental);
+    CAPTURE (morphedFundamental, crossfadeFundamental);
+
+    // And they are not the same signal sample for sample, which is the blunt version of the same fact.
+    double maxDifference = 0.0;
+
+    for (std::size_t i = 0; i < kN; ++i)
+        maxDifference = std::max (maxDifference,
+                                  std::abs (static_cast<double> (morphedRender[i] - crossfadeRender[i])));
+
+    CHECK (maxDifference > 0.05);
+    CAPTURE (maxDifference);
+
+    // **The anti-aliasing property, measured the way ticket 37 measured it.** The transform is diagonal
+    // in the harmonic basis — harmonic k of the result is built only from harmonic k of the two
+    // neighbours — so it cannot place energy at a harmonic neither neighbour had. The probe is
+    // band-limited at the 3rd harmonic, and nothing may appear at the 4th.
+    CHECK (peakAbove (morphedRender, 4) < morphedFundamental * 1e-5);
 }
 
 TEST_CASE ("the factory tables declare no interpolation the engine cannot perform", "[spectral-morph][corpus]")

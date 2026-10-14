@@ -126,14 +126,31 @@ VoiceSettings sineSettings (const Wavetable* table)
 }
 
 /// Render `frames` samples in `blockSize` chunks. The engine overwrites each block, so the chunks are
-/// disjoint ranges of the output.
+/// disjoint ranges of the output. Ticket 41 made the bus stereo; this helper keeps only the left channel,
+/// which is the whole signal whenever no unison spread is set — every case here but the stereo one.
 void render (VoiceEngine& engine, std::vector<float>& out, int frames, int blockSize = 128)
 {
+    std::vector<float> right (static_cast<std::size_t> (frames), 0.0f);
+
     out.assign (static_cast<std::size_t> (frames), 0.0f);
     for (int i = 0; i < frames; i += blockSize)
     {
         const int n = std::min (blockSize, frames - i);
-        engine.process (out.data() + i, n);
+        engine.process (out.data() + i, right.data() + i, n);
+    }
+}
+
+/// Both channels, for the cases that measure the spread between them.
+void renderStereo (VoiceEngine& engine, std::vector<float>& left, std::vector<float>& right, int frames,
+                   int blockSize = 128)
+{
+    left.assign (static_cast<std::size_t> (frames), 0.0f);
+    right.assign (static_cast<std::size_t> (frames), 0.0f);
+
+    for (int i = 0; i < frames; i += blockSize)
+    {
+        const int n = std::min (blockSize, frames - i);
+        engine.process (left.data() + i, right.data() + i, n);
     }
 }
 
@@ -696,6 +713,7 @@ TEST_CASE ("voice: no heap allocation on the audio thread", "[voice]")
     engine->setGlobalInputs (globals);
 
     std::array<float, 128> block {};
+    std::array<float, 128> blockRight {};
 
     g_allocations.store (0, std::memory_order_relaxed);
     g_tracking.store (true, std::memory_order_relaxed);
@@ -707,14 +725,14 @@ TEST_CASE ("voice: no heap allocation on the audio thread", "[voice]")
         if (i % 48 == 0)
             engine->noteOff (48 + ((i + 16) % 24));
 
-        engine->process (block.data(), static_cast<int> (block.size()));
+        engine->process (block.data(), blockRight.data(), static_cast<int> (block.size()));
     }
 
     // Change settings and the sustain pedal during the render too: neither may allocate.
     engine->setSettings (settings);
     engine->setSustainPedal (true);
     engine->noteOn (60, 1.0);
-    engine->process (block.data(), static_cast<int> (block.size()));
+    engine->process (block.data(), blockRight.data(), static_cast<int> (block.size()));
     engine->setSustainPedal (false);
 
     g_tracking.store (false, std::memory_order_relaxed);
@@ -777,6 +795,7 @@ TEST_CASE ("voice: the NOISE and SUB slots allocate nothing on the audio thread"
     engine.setGlobalInputs (globals);
 
     std::array<float, 128> block {};
+    std::array<float, 128> blockRight {};
 
     g_allocations.store (0, std::memory_order_relaxed);
     g_tracking.store (true, std::memory_order_relaxed);
@@ -788,12 +807,12 @@ TEST_CASE ("voice: the NOISE and SUB slots allocate nothing on the audio thread"
         if (i % 32 == 0)
             engine.noteOff (36 + ((i + 6) % 12));
 
-        engine.process (block.data(), static_cast<int> (block.size()));
+        engine.process (block.data(), blockRight.data(), static_cast<int> (block.size()));
     }
 
     // A settings change mid-render too: it must not allocate either.
     engine.setSettings (settings);
-    engine.process (block.data(), static_cast<int> (block.size()));
+    engine.process (block.data(), blockRight.data(), static_cast<int> (block.size()));
 
     g_tracking.store (false, std::memory_order_relaxed);
 
@@ -830,4 +849,68 @@ TEST_CASE ("voice: a rendered note carries the fundamental of the note played", 
     const auto spectrum = settledSpectrumSource (engine);
 
     REQUIRE (dominantFrequency (spectrum, kSampleRate, 300.0, 600.0) == Catch::Approx (440.0).margin (1.0));
+}
+
+TEST_CASE ("the unison spread reaches the output as a difference between the channels", "[unison-stereo]")
+{
+    // Ticket 41's acceptance, asserted by **measuring the channels** rather than by reading the parameter
+    // back: the same note is rendered at three spreads and the channel difference is what is compared.
+    const auto table = sineTable();
+
+    const auto renderSpread = [&table] (double spread)
+    {
+        VoiceSettings settings = sineSettings (&table);
+        settings.oscillators[0].unison = 4;
+        settings.oscillators[0].unisonRangeSemitones = 12.0;
+        settings.oscillators[0].unisonStereo = spread;
+
+        VoiceEngine engine;
+        engine.prepare (kSampleRate, 128, 8);
+        engine.setSettings (settings);
+        REQUIRE (engine.noteOn (60, 1.0) == 0);
+
+        std::vector<float> left;
+        std::vector<float> right;
+        renderStereo (engine, left, right, 8192);
+        return std::pair (left, right);
+    };
+
+    const auto channelDifference = [] (const std::vector<float>& left, const std::vector<float>& right)
+    {
+        double difference = 0.0;
+
+        for (std::size_t i = 0; i < left.size(); ++i)
+            difference = std::max (difference, std::abs (static_cast<double> (left[i] - right[i])));
+
+        return difference;
+    };
+
+    const auto [centreLeft, centreRight] = renderSpread (0.0);
+    const auto [wideLeft, wideRight] = renderSpread (100.0);
+    const auto [mirrorLeft, mirrorRight] = renderSpread (-100.0);
+
+    // A spread of 0 is the mono render the bus produced before it was stereo: the channels are identical,
+    // bit for bit, which is what keeps every preset that asks for no width sounding the same.
+    CHECK (channelDifference (centreLeft, centreRight) == 0.0);
+
+    // The render really happened — silence would make every difference below trivially small.
+    double energy = 0.0;
+    for (const auto sample : wideLeft)
+        energy += static_cast<double> (sample) * static_cast<double> (sample);
+    REQUIRE (energy > 1.0);
+
+    // With the spread the channels differ by a margin nothing but a real image can produce.
+    const double wide = channelDifference (wideLeft, wideRight);
+    CHECK (wide > 0.05);
+    CAPTURE (wide, energy);
+
+    // And the sign mirrors the image rather than being ignored: the negative spread's left channel is the
+    // positive spread's right channel, sample for sample. (The corpus's own observed values run to -100,
+    // so clamping the sign away would silently drop the width of four factory presets.)
+    double mirrored = 0.0;
+    for (std::size_t i = 0; i < wideLeft.size(); ++i)
+        mirrored = std::max (mirrored, std::abs (static_cast<double> (mirrorLeft[i] - wideRight[i])));
+    CHECK (mirrored < 1e-5);
+
+    CHECK (channelDifference (mirrorRight, wideLeft) < 1e-5);
 }

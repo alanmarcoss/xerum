@@ -29,7 +29,7 @@ VST3 has no such registry; the bundle id and the class UID JUCE derives from `PL
 
 ## The parameter bridge
 
-A host sees **72 parameters**, plus the VST3 `Bypass` parameter JUCE necessarily adds. Not 776 and
+A host sees **75 parameters**, plus the VST3 `Bypass` parameter JUCE necessarily adds. Not 776 and
 not the reference's 2623: the surface is exactly what the engine implements. Exposing the rest would
 put controls in a host that write a value nothing reads — the placeholder-fallback smell this project
 forbids — and a preset's other parameters are not lost, because they stay in the document and in the
@@ -119,10 +119,9 @@ that nothing is dropped silently and the model cannot see this layer:
 |---|---|---|
 | an asset that resolved case-insensitively | info | model has no filesystem (contract §5) |
 | an asset that did not resolve; a documented default is substituted | high | same |
-| an embedded wavetable (`embeddedWTData`), which xerum does not read | high | the engine reads files |
+| an embedded wavetable (`embeddedWTData`) that is not a whole number of 2048-sample cycles | high | the engine reads cycles |
 | a slot whose `kParamType` selects an engine v1 does not synthesise — left **silent** | info | the model reports the engine at high; this says what the plugin did about it |
 | a warp whose name encodes a source or variant the engine does not route (`kPD_OSC`, `kDistTube`) | info | the family *is* applied; the suffix is not |
-| `kParamUnisonStereo` | info | ticket `28` records the spread; the voice bus is mono |
 | a `PZ_SVF` whose response is drawn in the preset | high | the engine takes a `FilterSpec` and no pole/zero table |
 
 Only assets belonging to a module the plugin implements are resolved. A corpus preset referencing
@@ -248,16 +247,17 @@ block; the harness asserts it end-to-end (below).
 ## This slice's suite
 
 ```sh
-build-30/plugin/tests/xerum-plugin-tests              # all of it: 26 cases, 2,990 assertions
+build-30/plugin/tests/xerum-plugin-tests              # all of it: 42 cases, 4,507 assertions
 build-30/plugin/tests/xerum-plugin-tests "[plugin]"   # the whole slice by tag
 build-30/plugin/tests/xerum-plugin-tests "[realtime]" # the allocation invariant alone
 ctest --test-dir build-30                             # every suite in the tree
 ctest --test-dir build-30 -R "state round-trips"      # one case, selected by name
 ```
 
-Measured, per tag: `[bridge]` 6 cases / 1,466 assertions, `[state]` 5 / 118, `[preset]` 6 / 1,315
-(1,255 of them the corpus walk), `[audio]` 6 / 19, `[realtime]` 2 / 5, `[defaults]` 1 / 67,
-`[corpus]` 1 / 1,255. The corpus case walks **all 626 factory presets** through the plugin and asserts
+Measured, per tag: `[bridge]` 7 cases / 1,763 assertions, `[state]` 5 / 134, `[preset]` 9 / 1,374
+(1,255 of them the corpus walk), `[audio]` 7 / 24, `[realtime]` 3 / 7, `[defaults]` 1 / 83,
+`[corpus]` 1 / 1,255, plus ticket `41`'s two: `[morph-wired]` 1 / 26 and `[unison-stereo]` 1 / 5. The
+corpus case walks **all 626 factory presets** through the plugin and asserts
 each produces a document and a report; it **skips loudly** (`SKIP`, not a silent pass) on a machine
 with no corpus. Note that `ctest -R xerum-plugin-tests` does *not* select these: `catch_discover_tests`
 registers each Catch2 *case* under its own name, which is why the tag commands above are the
@@ -268,10 +268,13 @@ implemented name); the default-resolution rule; state round-tripping (documents,
 parameters, a byte-identical render); a refused foreign state block keeping the patch; a refused future
 format version; a state block that is not a preset container; playing (the init patch audible, silence
 when the oscillator is switched off, monotone level response with exact attribution, a filter that
-measurably attenuates); automation mid-render; mono/legato through a document; bus layouts; preset
+measurably attenuates, and ticket `41`'s unison spread measured as a difference between the output
+channels); automation mid-render; mono/legato through a document; bus layouts; preset
 loading from a fixture xerum writes itself; **damaged preset files returning an error rather than
 throwing**; a missing asset substituted with the documented default; a slot selecting a deferred engine
-going silent and saying so; and the real-time invariant.
+going silent and saying so; `KY - Delicacy` — the one factory preset asking for a spectral morph after
+load — resolving its embedded table, expanded, with neither of the two report entries that used to
+cover it; and the real-time invariant.
 
 ## Known gaps, named rather than hidden
 
@@ -280,9 +283,9 @@ going silent and saying so; and the real-time invariant.
   (the modulation matrix), so it cannot be done from `processBlock`. A preset's value is applied
   immediately — `applyDocument` runs off the audio thread — and a live turn lands at the next
   prepare. A `VoiceEngine::setPolyphony` in `src/dsp` would close it; that file is not this slice's.
-* **Warp source routing, stereo unison and drawn pole/zero responses** are not applied. All three are
-  *reported* by the plugin (see the table above), which is the contract's requirement; closing them
-  is `src/dsp` work.
+* **Warp source routing and drawn pole/zero responses** are not applied. Both are *reported* by the
+  plugin (see the table above), which is the contract's requirement; closing them is `src/dsp` work.
+  The stereo unison spread was the third item here until ticket `41` put it in the signal path.
 * **The amplitude envelope is bound to `Env0`.** `tools/reference-init-defaults.py`'s crosswalk maps
   the reference's "Env 1" group onto `Env{N}` instance 0, and the reference's envelope 1 is its fixed
   amplitude envelope. The crosswalk half is evidence; the "envelope 1 is the amp envelope" half is

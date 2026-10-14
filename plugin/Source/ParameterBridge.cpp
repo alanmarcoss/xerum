@@ -486,6 +486,13 @@ void ParameterBridge::buildSpecs()
         add (base + "kParamUnison", tag + "Voices", group, ParamType::Int, ChoiceSet::None, 1, dsp::kMaxUnison, 1);
         add (base + "kParamUnisonRange", tag + "Voices Detune (semitones)", group, ParamType::Float,
              ChoiceSet::None, 0, 48, 0);
+        // The stereo spread the unison sub-voices are placed across the image with, in percent. Authoring
+        // it here (rather than taking the schema's observed -100..79.84 as legality) is the bridge's rule:
+        // the sign mirrors the spread, so **-100..100** is the engine's own range and an observed value is
+        // never clamped. 0 is xerum's init and means "no width", which is what the bus rendered before
+        // ticket 41 made it stereo.
+        add (base + "kParamUnisonStereo", tag + "Stereo", group, ParamType::Float,
+             ChoiceSet::None, -100, 100, 0);
         add (warp + "kParamWarpMenu", tag + "Warp 1 Mode", group, ParamType::Choice, ChoiceSet::WarpMode, 0, 0, 0);
         add (warp + "kParamWarp", tag + "Warp 1 Amount", group, ParamType::Float, ChoiceSet::None, 0, 1, 0);
         add (warp + "kParamWarpMenu2", tag + "Warp 2 Mode", group, ParamType::Choice, ChoiceSet::WarpMode, 0, 0, 0);

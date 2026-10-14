@@ -5,6 +5,7 @@
 #include "PluginIdentity.h"
 #include "XerumAudioProcessorEditor.h"
 #include "schema.h"
+#include "spectral_morph.h"
 
 #include <algorithm>
 #include <cmath>
@@ -105,6 +106,7 @@ void XerumAudioProcessor::resolveLayout()
         osc.fine = find (oscillator + "fine");
         osc.unison = find (oscillator + "unison");
         osc.unisonRange = find (oscillator + "unisonrange");
+        osc.unisonStereo = find (oscillator + "unisonstereo");
         osc.warp1Mode = find (oscillator + "wtosc" + std::to_string (slot) + ".warpmenu");
         osc.warp1Amount = find (oscillator + "wtosc" + std::to_string (slot) + ".warp");
         osc.warp2Mode = find (oscillator + "wtosc" + std::to_string (slot) + ".warpmenu2");
@@ -165,7 +167,8 @@ void XerumAudioProcessor::prepareToPlay (const double sampleRate, const int maxi
     sampleRate_ = sampleRate > 0.0 ? sampleRate : 48000.0;
     maxBlock_ = juce::jmax (1, maximumExpectedSamplesPerBlock);
 
-    mono_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
+    left_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
+    right_.assign (static_cast<std::size_t> (maxBlock_), 0.0f);
 
     const int polyphony = layout_.polyCount >= 0
                               ? static_cast<int> (parameterValue (bridge_.specs()[static_cast<std::size_t> (layout_.polyCount)]
@@ -246,6 +249,7 @@ void XerumAudioProcessor::refreshSettingsFromParameters() noexcept
                              + amount (layout.fine) / 100.0 + bendSemitones_;
         osc.unison = static_cast<int> (amount (layout.unison));
         osc.unisonRangeSemitones = amount (layout.unisonRange);
+        osc.unisonStereo = amount (layout.unisonStereo);
         osc.framePosition = amount (layout.tablePos);
         osc.table = tables_[static_cast<std::size_t> (slot)].has_value()
                         ? &*tables_[static_cast<std::size_t> (slot)]
@@ -381,24 +385,46 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     const auto gainStart = masterGain_;
     const auto gainStep = numSamples > 0 ? (gainTarget - gainStart) / static_cast<double> (numSamples) : 0.0;
 
-    // The engine writes mono and overwrites, so it is rendered in chunks no larger than `prepare` sized.
-    const int chunkLimit = juce::jmax (1, static_cast<int> (mono_.size()));
+    // The engine renders **stereo** and overwrites, so it is rendered in chunks no larger than `prepare`
+    // sized. Ticket 41 made the bus stereo so that the unison spread reaches the output; the master gain
+    // is still applied here, per sample, on both channels.
+    const int chunkLimit = juce::jmax (1, static_cast<int> (left_.size()));
 
     for (int done = 0; done < numSamples; done += chunkLimit)
     {
         const int chunk = juce::jmin (chunkLimit, numSamples - done);
-        engine_.process (mono_.data() + done, chunk);
+        engine_.process (left_.data() + done, right_.data() + done, chunk);
     }
 
+    // Channel 0 is the left, channel 1 the right. A mono output bus — which `isBusesLayoutSupported`
+    // allows — takes their mean, and so does any channel past the second, because that is the only
+    // honest answer for a layout xerum does not render. With no spread the two channels are identical, so
+    // a mono host hears exactly the render it heard before the bus was stereo.
     for (int channel = 0; channel < numChannels; ++channel)
     {
         auto* out = buffer.getWritePointer (channel);
         auto gain = gainStart;
+        const bool leftChannel = channel == 0 && numChannels > 1;
+        const bool rightChannel = channel == 1;
 
-        for (int i = 0; i < numSamples; ++i)
+        if (leftChannel || rightChannel)
         {
-            out[i] = mono_[static_cast<std::size_t> (i)] * static_cast<float> (gain);
-            gain += gainStep;
+            const auto* source = rightChannel ? right_.data() : left_.data();
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                out[i] = source[static_cast<std::size_t> (i)] * static_cast<float> (gain);
+                gain += gainStep;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                out[i] = 0.5f * (left_[static_cast<std::size_t> (i)] + right_[static_cast<std::size_t> (i)])
+                         * static_cast<float> (gain);
+                gain += gainStep;
+            }
         }
     }
 
@@ -482,6 +508,82 @@ bool XerumAudioProcessor::slotSelectsWavetable (const model::PresetDocument& doc
     return text == "kOsc_WT" || text == "kOsc_Wavetable";
 }
 
+std::optional<dsp::Wavetable> XerumAudioProcessor::embeddedTable (const model::PresetDocument& document,
+                                                                  const std::string& prefix) const
+{
+    // The document keys array elements by their real index — `embeddedWTData[0]`, `[1]`, … — so
+    // `std::map`'s ordering is **lexicographic**, which puts `[10]` before `[2]`. Trusting iteration
+    // order would interleave the cycles; the index is parsed instead.
+    const auto marker = prefix + "/embeddedWTData[";
+    std::vector<float> samples;
+
+    for (auto it = document.parameters.lower_bound (marker);
+         it != document.parameters.end() && it->first.starts_with (marker); ++it)
+    {
+        const auto close = it->first.find (']', marker.size());
+
+        if (close == std::string::npos)
+            return std::nullopt;
+
+        std::size_t index = 0;
+        bool digits = false;
+
+        for (auto at = marker.size(); at < close; ++at)
+        {
+            const char c = it->first[at];
+
+            if (c < '0' || c > '9')
+                return std::nullopt;
+
+            index = index * 10 + static_cast<std::size_t> (c - '0');
+            digits = true;
+        }
+
+        if (! digits)
+            return std::nullopt;
+
+        double value = 0.0;
+
+        if (! modelNumber (it->second, value))
+            return std::nullopt;
+
+        if (index + 1 > samples.size())
+            samples.resize (index + 1, 0.0f);
+
+        samples[index] = static_cast<float> (value);
+    }
+
+    // A missing index would leave a silent hole inside a cycle, which is a corruption rather than a
+    // table, so the count has to match the highest index seen. The format is `frameCount` cycles of
+    // `kDefaultFrameSize` samples: measured over the whole factory bank, all 34 embedded slots are a
+    // whole number of 2048-sample cycles (1, 2, 4 or 9 of them).
+    if (samples.empty() || samples.size() % dsp::kDefaultFrameSize != 0)
+        return std::nullopt;
+
+    dsp::Wavetable table;
+    table.frameSize = dsp::kDefaultFrameSize;
+    table.frameCount = samples.size() / dsp::kDefaultFrameSize;
+    table.samples = std::move (samples);
+    table.interpolation = dsp::FrameInterpolation::Linear;
+    return table;
+}
+
+int XerumAudioProcessor::interpolateAfterLoadOf (const model::PresetDocument& document,
+                                                 const std::string& prefix) const
+{
+    const auto found = document.parameters.find (prefix + "/interpolateAfterLoad");
+
+    if (found == document.parameters.end())
+        return 0;
+
+    double value = 0.0;
+
+    if (! modelNumber (found->second, value))
+        return 0;
+
+    return static_cast<int> (value);
+}
+
 void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
 {
     std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> next;
@@ -501,8 +603,38 @@ void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
         const auto tablePath = prefix + "/relativePathToWT";
         std::string reference;
 
-        if (const auto found = document.parameters.find (tablePath);
-            found != document.parameters.end() && modelText (found->second, reference) && ! reference.empty())
+        if (const auto found = document.parameters.find (tablePath); found != document.parameters.end())
+            modelText (found->second, reference);
+
+        const bool carriesEmbedded = document.parameters.find (prefix + "/embeddedWTData[0]")
+                                     != document.parameters.end();
+
+        // **The embedded table comes first**, because contract §5 says an embedded asset takes precedence
+        // over a path reference — a preset carrying its own data is self-contained, and one slot in the
+        // factory bank (`BA - Gnarly Reese`, oscillator C) carries both. This is also the only place
+        // `interpolateAfterLoad` applies at all: ticket 37 measured the reference ignoring it for a table
+        // referenced by path, so the morph is decided here, once, at bind — 2 MB per table paid once
+        // rather than per sample — and a table that came from a file is never morphed.
+        if (carriesEmbedded)
+        {
+            const auto embedded = embeddedTable (document, prefix);
+
+            if (! embedded.has_value())
+            {
+                // The preset inlined a table, but not as a whole number of 2048-sample cycles, so there is
+                // no cycle to read. Reported rather than substituted: a file in its place would be exactly
+                // the silent drop the contract forbids.
+                addReportEntry (report_, model::Severity::High, prefix, "embeddedWTData",
+                                "the preset carries its wavetable inline, but not as a whole number of "
+                                "2048-sample cycles, so this slot renders silence");
+                continue;
+            }
+
+            next[static_cast<std::size_t> (slot)] =
+                dsp::tableForInterpolateAfterLoad (*embedded, /*embedded*/ true,
+                                                   interpolateAfterLoadOf (document, prefix));
+        }
+        else if (! reference.empty())
         {
             const auto lookup = library_.loadTable (reference);
 
@@ -521,16 +653,6 @@ void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
                                     ? std::string ("the asset could not be found under any content root")
                                     : lookup.error);
             }
-        }
-        else if (document.parameters.find (prefix + "/embeddedWTData[0]") != document.parameters.end())
-        {
-            // The preset carries the table inline. xerum reads wavetable *files*; an embedded table is a
-            // different asset form, and substituting a file for it would be the silent drop the contract
-            // forbids.
-            addReportEntry (report_, model::Severity::High, prefix, "embeddedWTData",
-                            "the preset carries its wavetable inline; xerum reads wavetable files, so this "
-                            "slot renders silence");
-            continue;
         }
 
         if (! next[static_cast<std::size_t> (slot)].has_value())
@@ -626,13 +748,6 @@ void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
                     break;
                 }
         }
-
-        // Ticket 28 records the stereo unison spread and the voice bus is mono, so this one is a value
-        // the engine holds and does not act on. It is a *number* in the model, which is why this reads it
-        // rather than its text.
-        if (numberAt ("Oscillator" + std::to_string (slot) + "/plainParams/kParamUnisonStereo") != 0.0)
-            addReportEntry (report_, model::Severity::Info, "Oscillator" + std::to_string (slot),
-                            "kParamUnisonStereo", "the unison spread is not applied: the voice bus is mono in v1");
     }
 
     for (int slot = 0; slot < dsp::kFilterSlots; ++slot)

@@ -11,6 +11,7 @@
 #include "cbor.h"
 #include "container.h"
 #include "decompress.h"
+#include "spectral_morph.h"
 #include "write.h"
 
 #include <cstring>
@@ -70,8 +71,10 @@ TEST_CASE ("a preset reaches the parameters, and a half-loading one says so in t
     auto document = engineDocument();
 
     // Three kinds of thing the plugin's own part of the report has to name: a warp the engine does not
-    // implement, a warp *variant* whose source routing it does not have, and a value it holds but does
-    // not act on (the stereo unison spread).
+    // implement (the model's half), a warp *variant* whose source routing it does not have (the plugin's
+    // half), and a parameter from a newer reference. The stereo unison spread used to be a fourth — a
+    // value the engine held and did not act on — and ticket 41 put it in the signal path, so it is now a
+    // value the preset reaches the host with instead.
     document.parameters["Oscillator0/WTOsc0/plainParams/kParamWarpMenu"] = text ("kRemap_4");
     document.parameters["Oscillator0/WTOsc0/plainParams/kParamWarp2"] = number (0.5);
     document.parameters["Oscillator0/WTOsc0/plainParams/kParamWarpMenu2"] = text ("kPD_OSC");
@@ -112,9 +115,12 @@ TEST_CASE ("a preset reaches the parameters, and a half-loading one says so in t
 
     // The model's half: the unimplemented warp, by name, at high.
     CHECK (hasEntry (xerum::model::Severity::High, "kRemap_4"));
-    // The plugin's half: the variant's source routing, and the value it holds but does not apply.
+    // The plugin's half: the variant's source routing.
     CHECK (hasEntry (xerum::model::Severity::Info, "kPD_OSC"));
-    CHECK (hasEntry (xerum::model::Severity::Info, "kParamUnisonStereo"));
+    // The stereo spread is no longer reported — ticket 41 wired it — and the preset's value reached the
+    // parameter the host automates instead.
+    CHECK_FALSE (hasEntry (xerum::model::Severity::Info, "kParamUnisonStereo"));
+    CHECK (processor.parameterValue ("Oscillator0/plainParams/kParamUnisonStereo") == Catch::Approx (75.0));
     // And the uninterpreted parameter from a newer reference. The model reports it under its *normalised*
     // path — the module is `{N}`-addressed there — so the match is on the parameter's own name.
     CHECK (std::any_of (report.entries.begin(), report.entries.end(),
@@ -127,7 +133,7 @@ TEST_CASE ("a preset reaches the parameters, and a half-loading one says so in t
     // The text the interface shows carries them, with the path a user can find, and counts per severity.
     CHECK (text.contains ("Oscillator0/WTOsc0"));
     CHECK (text.contains ("kRemap_4"));
-    CHECK (text.contains ("kParamUnisonStereo"));
+    CHECK (text.contains ("kPD_OSC"));
     CHECK (text.contains ("high 1"));
 
     // The unimplemented warp did not silently become a neighbour: the parameter shows the sentinel, and
@@ -389,6 +395,62 @@ TEST_CASE ("a damaged preset file is an error, not an exception at the plugin bo
 
         file.deleteFile();
     }
+}
+
+TEST_CASE ("the one factory preset that asks for a spectral morph after load now gets it",
+           "[plugin][preset][morph-wired]")
+{
+    // Ticket 41's real-world case. `KY - Delicacy` is the only preset in the whole factory bank that sets
+    // `WTOsc{N}/interpolateAfterLoad == 2` (walked: 23 of 626 presets carry the field at all; one sets it
+    // to 2, three times to 1 and the rest to 0), and its oscillator A carries the table inline — so it is
+    // the one place in the corpus where the morph can apply at all. The two report entries that used to
+    // cover this slot must be gone: the model's "xerum crossfades the table instead", and the plugin's
+    // "xerum reads wavetable files, so this slot renders silence".
+    const juce::File preset (juce::String (corpusRoot())
+                             + "/Presets/Factory/Keyboard/KY - Delicacy.SerumPreset");
+
+    if (! preset.existsAsFile())
+        SKIP ("the reference's corpus is not installed at " << corpusRoot().toStdString()
+                                                           << " (docs/test-strategy.md)");
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    REQUIRE (processor.loadPresetFromFile (preset).wasOk());
+
+    const auto document = processor.document();
+    const auto afterLoad = document.parameters.find ("Oscillator0/WTOsc0/interpolateAfterLoad");
+
+    REQUIRE (afterLoad != document.parameters.end());
+
+    double value = 0.0;
+    REQUIRE (afterLoad->second.numberAsDouble (value));
+    CHECK (value == 2.0);
+
+    // The preset carries four 2048-sample cycles inline (measured: 8192 `embeddedWTData` entries), and the
+    // morph expands them to the 256 WT POS slots the reference describes `numFrames` as.
+    CHECK (document.parameters.count ("Oscillator0/WTOsc0/embeddedWTData[0]") == 1);
+    CHECK (document.parameters.count ("Oscillator0/WTOsc0/embeddedWTData[8191]") == 1);
+
+    const auto* table = processor.oscillatorTable (0);
+    REQUIRE (table != nullptr);
+    CHECK (table->frameCount == xerum::dsp::kExpandedFrameCount);
+    CHECK (table->frameSize == xerum::dsp::kDefaultFrameSize);
+
+    for (const auto& entry : processor.report().entries)
+    {
+        CHECK (entry.reason.find ("spectral morphing after load") == std::string::npos);
+        CHECK (entry.item != "embeddedWTData");
+    }
+
+    // The slot is in the signal path. A bare render of this preset is silent *downstream of the
+    // oscillator*: `VoiceFilter0` sits at `kParamFreq` 0 and `VoiceFilter1` is an `H24` at the top of the
+    // band whose `kParamLevelOut` is 0 — and xerum runs the two voice filters **in series** and has no
+    // parameter for the output level (both checkable in `Voice::render` and `ParameterBridge`), so filter 1
+    // attenuates everything filter 0 passed. That is a separate, pre-existing gap and not what this test is
+    // about, so both are switched off and the oscillator's own output is what is measured.
+    processor.setParameterValue ("VoiceFilter0/plainParams/kParamEnable", 0.0);
+    processor.setParameterValue ("VoiceFilter1/plainParams/kParamEnable", 0.0);
+    CHECK (peakOf (render (processor, 16, 512, noteThenRelease (48, 8))) > 0.001);
 }
 
 TEST_CASE ("the factory corpus, if it is installed", "[plugin][preset][corpus]")

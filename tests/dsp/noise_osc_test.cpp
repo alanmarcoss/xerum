@@ -415,8 +415,9 @@ TEST_CASE ("noise: the colour is not a wavetable — its spectrum has no partial
     REQUIRE (engine.noteOn (60, 1.0) == 0);
 
     std::vector<float> periodic (1 << 14);
+    std::vector<float> periodicRight (periodic.size());
     for (std::size_t i = 0; i < periodic.size(); i += 128)
-        engine.process (periodic.data() + i, 128);
+        engine.process (periodic.data() + i, periodicRight.data() + i, 128);
 
     const double noiseFlatness = spectralFlatness (noise);
     const double periodicFlatness = spectralFlatness (periodic);
@@ -443,8 +444,9 @@ TEST_CASE ("noise: the slot renders through the voice pool", "[noise]")
     REQUIRE (engine.noteOn (55, 1.0) == 0);
 
     std::vector<float> rendered (1 << 14);
+    std::vector<float> renderedRight (rendered.size());
     for (std::size_t i = 0; i < rendered.size(); i += 128)
-        engine.process (rendered.data() + i, 128);
+        engine.process (rendered.data() + i, renderedRight.data() + i, 128);
 
     double energy = 0.0;
     for (const auto sample : rendered)
@@ -468,8 +470,9 @@ TEST_CASE ("noise: the slot renders through the voice pool", "[noise]")
     REQUIRE (silent.noteOn (55, 1.0) == 0);
 
     std::vector<float> rendered2 (4096);
+    std::vector<float> rendered2Right (rendered2.size());
     for (std::size_t i = 0; i < rendered2.size(); i += 128)
-        silent.process (rendered2.data() + i, 128);
+        silent.process (rendered2.data() + i, rendered2Right.data() + i, 128);
 
     for (const auto sample : rendered2)
         REQUIRE (sample == 0.0f);

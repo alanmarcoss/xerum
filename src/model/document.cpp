@@ -304,6 +304,11 @@ struct Walker
     ImportReport& report;
     std::set<std::string> alreadyReported;
 
+    /// `interpolateAfterLoad = 2` leaves, held until the walk is done. Whether the request is honoured
+    /// depends on the slot carrying an embedded table, which the leaf itself cannot see — so it is
+    /// decided in `finish()`, after the preset's shape is known. See that function.
+    std::vector<std::string> morphRequests;
+
     void note (Severity severity, std::string modulePath, std::string item, std::string reason)
     {
         // One entry per distinct complaint. A parameter missing from every LFO should read as one fact,
@@ -382,15 +387,20 @@ struct Walker
         if (value.isText() && looksLikeAssetReference (leafKey))
             document.assetReferences.push_back (value.text);
 
-        // `interpolateAfterLoad == 2` asks the engine to morph an embedded table **in the frequency
-        // domain** after load. Xerum crossfades, so the preset's sound is materially wrong — and the
-        // value is an ordinary schema leaf, so it loads quietly and nothing acts on it. That is the
-        // silent behavioural drop the contract forbids, and this is the only place the real spectral
-        // morph is ever asked for: ticket `37` measured that the `clm` modes 2/3/4, which the guide calls
-        // spectral morphing, are a plain linear crossfade. One factory preset sets this value.
-        if (leafKey == "interpolateAfterLoad" && value.type == Value::Type::Int && value.integer == 2)
-            note (Severity::High, path, "interpolateAfterLoad=2",
-                  "the preset asks for spectral morphing after load; xerum crossfades the table instead");
+        // `WTOsc{N}/interpolateAfterLoad == 2` asks the engine to morph an **embedded** table after load,
+        // and that is now in the signal path: the plugin expands the table once at bind
+        // (`dsp::tableForInterpolateAfterLoad`) and the oscillator reads the morphed slots. So the request
+        // is honoured, and complaining about it would turn a true statement into a false one.
+        //
+        // The field applies to an embedded table only — ticket 37 measured the reference ignoring it for a
+        // table referenced by path — so a preset that sets it and inlines no table for the slot is asking
+        // for something nothing can act on, and that stays reported. Which of the two a preset is cannot
+        // be seen from this leaf, so the decision is deferred to `finish()`. Exactly one factory preset
+        // sets the value (`KY - Delicacy`, oscillator A) and it carries its table inline.
+        double afterLoad = 0.0;
+
+        if (leafKey == "interpolateAfterLoad" && value.numberAsDouble (afterLoad) && afterLoad == 2.0)
+            morphRequests.push_back (path);
 
         const auto normalised = schema.normalise (path);
 
@@ -493,6 +503,32 @@ struct Walker
             // `checkModulationRow`.
             if (name.starts_with ("ModSlot"))
                 checkModulationRow (name, module);
+        }
+    }
+
+    /// Ticket 41: the `interpolateAfterLoad = 2` requests the engine has nothing to act on.
+    ///
+    /// The morph applies to an **embedded** table — the plugin expands it once at bind — so a slot that
+    /// carries no `embeddedWTData` has nothing to morph, and the request is named. A slot that does carry
+    /// one is honoured (the plugin expands it) and is deliberately silent. This is decided here rather
+    /// than at the leaf because only the whole preset shows whether the table is inline.
+    void finish()
+    {
+        for (const auto& path : morphRequests)
+        {
+            const auto module = path.substr (0, path.find_last_of ('/'));
+            const auto embedded = module + "/embeddedWTData[";
+
+            const auto first = document.parameters.lower_bound (embedded);
+            const bool carried = first != document.parameters.end() && first->first.starts_with (embedded);
+
+            if (carried)
+                continue;
+
+            note (Severity::High, path, "interpolateAfterLoad=2",
+                  "the preset asks for spectral morphing after load, but carries no embedded table for the "
+                  "slot — the morph applies to an embedded table and there is none here, so nothing acts "
+                  "on the request");
         }
     }
 
@@ -712,8 +748,9 @@ LoadResult loadPreset (const Value& payload, std::string_view schemaVersion, con
 
     result.document.schemaVersion = std::string (schemaVersion);
 
-    Walker walker { schema, catalogue, result.document, result.report, {} };
+    Walker walker { schema, catalogue, result.document, result.report, {}, {} };
     walker.run (payload);
+    walker.finish();
 
     result.ok = true;
     return result;

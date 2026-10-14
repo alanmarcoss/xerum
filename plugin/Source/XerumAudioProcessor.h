@@ -125,8 +125,8 @@ private:
         struct Osc
         {
             int enable { -1 }, volume { -1 }, pitch { -1 }, octave { -1 }, fine { -1 }, unison { -1 };
-            int unisonRange { -1 }, warp1Mode { -1 }, warp1Amount { -1 }, warp2Mode { -1 }, warp2Amount { -1 };
-            int tablePos { -1 };
+            int unisonRange { -1 }, unisonStereo { -1 }, warp1Mode { -1 }, warp1Amount { -1 };
+            int warp2Mode { -1 }, warp2Amount { -1 }, tablePos { -1 };
         };
 
         Osc osc[dsp::kOscillatorSlots];
@@ -179,11 +179,20 @@ private:
     /// silent rather than substituted.
     bool slotSelectsWavetable (const model::PresetDocument& document, int slot) const;
 
+    /// The table a slot carries inline (`WTOsc{slot}/embeddedWTData[]`), or `nullopt` when the slot has
+    /// none or the array is not a whole number of cycles. Contract §5: an embedded asset takes precedence
+    /// over a path reference, because a preset carrying its own data is self-contained.
+    std::optional<dsp::Wavetable> embeddedTable (const model::PresetDocument& document,
+                                                 const std::string& prefix) const;
+
+    /// The slot's `WTOsc{slot}/interpolateAfterLoad`, as an int; 0 when the preset does not set it.
+    int interpolateAfterLoadOf (const model::PresetDocument& document, const std::string& prefix) const;
+
     /// Resolve the oscillator tables and complete the report with what only the plugin knows.
     void resolveContent (const model::PresetDocument& document);
 
-    /// The engine-level gaps the bridge knowingly leaves: a warp variant's source routing, the stereo
-    /// unison spread, and a drawn pole/zero filter response. Named rather than dropped, per the contract.
+    /// The engine-level gaps the bridge knowingly leaves: a warp variant's source routing, and a drawn
+    /// pole/zero filter response. Named rather than dropped, per the contract.
     void completeReport (const model::PresetDocument& document);
 
     ParameterBridge bridge_;
@@ -193,7 +202,9 @@ private:
     std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> tables_ {};
     content::TableLibrary library_;
 
-    std::vector<float> mono_;
+    /// The engine renders stereo (ticket 41), so the plugin holds both channels. Sized in `prepareToPlay`.
+    std::vector<float> left_ {};
+    std::vector<float> right_ {};
     double sampleRate_ { 48000.0 };
     int maxBlock_ { 0 };
     int prepared_ { 0 };

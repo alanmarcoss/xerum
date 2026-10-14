@@ -37,8 +37,12 @@ float Wavetable::interpolated (double position, std::size_t index) const
     if (interpolation == FrameInterpolation::None)
         return at (fraction < 0.5f ? lower : lower + 1, index);
 
-    // Linear crossfade. SpectralMorph lands here too for now — see the note in the ticket: it is a real
-    // gap, and the library reports tables that need it rather than letting this pass unnoticed.
+    // Linear crossfade — and for a table whose file declared `clm ` mode 2, 3 or 4, that is not a
+    // fallback: ticket 37 measured the reference rendering all four modes as exactly this crossfade, so
+    // reading a `FrameInterpolation::SpectralMorph` table this way *is* the reference's behaviour. (The
+    // spectral morph that does exist in the reference is a **preset** field,
+    // `WTOsc{N}/interpolateAfterLoad`, and it applies to an *embedded* table only — see
+    // `spectral_morph.h`, and ticket 41, which wires it at bind.)
     const auto a = at (lower, index);
     const auto b = at (lower + 1, index);
 

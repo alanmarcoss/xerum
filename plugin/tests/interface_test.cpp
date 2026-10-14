@@ -74,8 +74,9 @@ xerum::model::PresetDocument halfLoadingDocument()
     // An asset that cannot resolve: the plugin's own half of the report, at high.
     document.parameters["Oscillator0/WTOsc0/relativePathToWT"] = text ("No/Such/Table.wav");
 
-    // A warp mode the engine does not implement (the model's half, at high), and a value the bridge
-    // carries but does not act on (the plugin's half, at info).
+    // A warp mode the engine does not implement (the model's half, at high), and a parameter the bridge
+    // carries and does act on since ticket `41` (the unison spread), so it is *not* a report entry — it is
+    // here to prove the row count follows the report rather than a fixed list.
     document.parameters["Oscillator0/WTOsc0/plainParams/kParamWarpMenu"] = text ("kRemap_4");
     document.parameters["Oscillator0/plainParams/kParamUnisonStereo"] = number (75.0);
 

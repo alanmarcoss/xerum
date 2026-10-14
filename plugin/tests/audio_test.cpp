@@ -145,6 +145,46 @@ TEST_CASE ("portamento and mono are honoured from a preset document", "[plugin][
     CHECK (after > before * 0.5);   // no retrigger-to-silence
 }
 
+TEST_CASE ("the unison spread is measured between the output channels, not read back",
+           "[plugin][audio][unison-stereo]")
+{
+    // Ticket 41's second acceptance, at the boundary a host sees: the same note is rendered at spread 0
+    // and at full spread, and the **difference between the two output channels** is what is compared. A
+    // parameter read-back would pass with the value going nowhere.
+    // A fresh processor per spread, so nothing carries over between the three renders — a shared one
+    // would compare a note against the *tail* of the note before it.
+    const auto renderSpread = [] (const double spread)
+    {
+        XerumAudioProcessor processor;
+        processor.prepareToPlay (48000.0, 512);
+
+        processor.setParameterValue ("Oscillator0/plainParams/kParamEnable", 1.0);
+        processor.setParameterValue ("Oscillator0/plainParams/kParamUnison", 4.0);
+        processor.setParameterValue ("Oscillator0/plainParams/kParamUnisonRange", 12.0);
+        processor.setParameterValue ("Oscillator0/plainParams/kParamUnisonStereo", spread);
+
+        return renderStereo (processor, 24, 512, noteThenRelease (60, 16));
+    };
+
+    const auto centre = renderSpread (0.0);
+
+    CHECK (peakOf (centre.first) > 0.1);                        // it really rendered
+    CHECK (channelDifference (centre.first, centre.second) == 0.0);
+
+    const auto wide = renderSpread (100.0);
+
+    CHECK (peakOf (wide.first) > 0.1);
+
+    const double difference = channelDifference (wide.first, wide.second);
+    CHECK (difference > 0.05);
+    CAPTURE (difference);
+
+    // And the image mirrors when the sign flips, which is what the corpus's own negative values ask for.
+    const auto mirror = renderSpread (-100.0);
+
+    CHECK (channelDifference (mirror.first, wide.second) < 1e-5);
+}
+
 TEST_CASE ("a bus layout other than stereo or mono is refused", "[plugin][audio]")
 {
     XerumAudioProcessor processor;
