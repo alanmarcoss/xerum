@@ -832,6 +832,24 @@ float VoiceFilter::processPoleZero (float input)
     for (std::size_t i = 0; i < poleZeroCount_; ++i)
         value = pz_[i].process (value);
 
+    // **A cascade can amplify without bound, and 32 sections of it overflow a float.** `radiusForQ`
+    // clamps a section's pole radius at 0.9999, so one section is stable — but a pole at DC at Q 1 has
+    // that radius, and eight of those in series have a DC gain near 1e64: finite in a `double`, an
+    // infinity in the `float` this returns, and `inf` in the biquad state poisons every later sample.
+    // Ticket `46` measured the corpus's drawn-filter fixture going non-finite once (and finite since), so
+    // this is now the one place it can be caught.
+    //
+    // The check is exactly "what a float cannot hold" — every finite render passes it untouched, so no
+    // existing measurement moves — and the recovery is to clear the sections, which brings the filter
+    // back on the next sample instead of leaving it emitting NaN for the rest of the note.
+    if (! std::isfinite (static_cast<float> (value)))
+    {
+        for (auto& section : pz_)
+            section.clear();
+
+        return 0.0f;
+    }
+
     return static_cast<float> (value);
 }
 

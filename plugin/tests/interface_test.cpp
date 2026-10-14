@@ -1362,6 +1362,39 @@ TEST_CASE ("the pole/zero plane's edits reach the engine, and a drawn response i
     for (const auto& entry : processor.report().entries)
         CHECK (juce::String (entry.reason).contains ("drawn in the preset") == false);
 
+    // **Non-finite output is the failure mode a cascade of drawn sections can have** — and the corpus's
+    // drawn-filter fixture is the only member that ever produced a non-finite reading (ticket `46`'s
+    // report; attributed there to the tree moving, and worth guarding now that the response is applied).
+    // 32 sections at the extremes — a pole radius of `0.9999` (Q 1, pole at 0 of Nyquist) against a zero
+    // at Nyquist — is where it would show, so it is measured rather than assumed.
+    {
+        auto extremes = poleZeroDocument();
+
+        for (int object = 0; object < 4; ++object)
+            for (int i = 0; i < 8; ++i)
+            {
+                const std::string prefix = "VoiceFilter0/PZs[" + std::to_string (object) + "]";
+                const auto leaf = [&prefix, i] (const char* field)
+                { return prefix + "/" + field + "[" + std::to_string (i) + "]"; };
+
+                extremes.parameters[leaf ("fp")] = number (object % 2 == 0 ? 0.0 : 1.0);
+                extremes.parameters[leaf ("fz")] = number (object % 2 == 0 ? 1.0 : 0.0);
+                extremes.parameters[leaf ("qp")] = number (1.0);
+                extremes.parameters[leaf ("qz")] = number (1.0);
+                extremes.parameters[leaf ("gain")] = number (1.0);
+                extremes.parameters[leaf ("types")] = integerValue (i % 7);
+            }
+
+        const auto samples = renderDocument (extremes);
+        auto finite = true;
+
+        for (const auto sample : samples)
+            finite = finite && std::isfinite (sample);
+
+        CHECK (finite);
+        CHECK (rmsOf (samples) >= 0.0);
+    }
+
     // The plane edits through its own gesture, and the edit reaches the document and the engine. The drag
     // is synthesised exactly as the mouse delivers it: down on the pole marker, then drag right.
     auto editor = openEditor (processor);

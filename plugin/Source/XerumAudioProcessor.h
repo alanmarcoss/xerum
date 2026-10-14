@@ -188,6 +188,11 @@ private:
         };
 
         Amp amp;
+
+        /// The eight macros (ticket 48). They are parameters because a macro is a *control* the matrix's
+        /// source table names, so it must be movable — the live value reaches
+        /// `ModulationInputs::macro[m] / 100`.
+        std::array<int, dsp::kMacroCount> macro {};
     };
 
     void resolveLayout();
@@ -244,6 +249,21 @@ private:
     /// holding the audio thread out. Message thread.
     void publishPoleZero();
 
+    /// Read the ten LFOs and the four matrix envelopes out of the document (ticket 48) and hand them to the
+    /// engine, holding the audio thread out — the settings carry the drawn point arrays, so this is a swap
+    /// of engine state the audio thread reads, not a message. Message thread.
+    void publishModulationSources();
+
+    /// The generators' settings a document describes: every `LFO{N}` and `Env{N}` the reference stores.
+    dsp::ModSourceSettings modulationSourcesFromDocument (const model::PresetDocument& document) const;
+
+    /// Each oscillator's two warp **_sources_**, read from the document's own mode names (ticket 48).
+    ///
+    /// A warp mode's *family* is a parameter — the interface's choice list — and the signal the mode reads
+    /// is only in the name the preset stored: `kFM_OSC` and `kFM_SUB` are one choice and two sources. Both
+    /// arrays are written while the audio thread is held out and only read from it.
+    std::array<std::array<dsp::WarpSource, 2>, dsp::kOscillatorSlots> warpSource_ {};
+
     /// Start the drain timer if it is not running and this is the message thread. Called from the
     /// constructor, from `prepareToPlay` and from `createEditor`, so a host that constructs the processor
     /// off the message thread still gets one the moment it can.
@@ -296,6 +316,14 @@ private:
     dsp::VoiceSettings settings_ {};
     double masterGain_ { 1.0 };
     double bendSemitones_ { 0.0 };
+
+    /// **The global modulation inputs' MIDI half** (ticket 48). Held across blocks because a controller
+    /// event is a change, not a state: the matrix reads the value that is standing, the same way the mod
+    /// wheel on a hardware synth stays where it was left. Written on the audio thread in `processBlock`
+    /// and read on it in the same call.
+    double modWheel_ { 0.0 };
+    double aftertouch_ { 0.0 };
+    double polyAftertouch_ { 0.0 };
 
     /// Set by anything that changes a parameter or a table off the audio thread; consumed by the first
     /// block that rebuilds. `std::atomic<double>` is deliberately not used: the parameters themselves are

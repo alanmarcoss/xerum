@@ -759,6 +759,90 @@ TEST_CASE ("voice: no heap allocation on the audio thread", "[voice]")
     }
 }
 
+TEST_CASE ("voice: the modulation generators allocate nothing on the audio thread",
+           "[voice][modsources]")
+{
+    // Ticket 48's half of the real-time invariant, on the generator path ticket 13 made control-rate: a
+    // render whose modulation comes from a **drawn** LFO and a matrix envelope — the two settings blocks
+    // that carry per-preset data rather than scalars — must allocate as little as any other.
+    const auto table = sineTable();
+
+    auto engine = std::make_unique<VoiceEngine>();
+    engine->prepare (kSampleRate, 128, 16);
+    engine->setSettings (sineSettings (&table));
+
+    // A shape with points, so the drawn-curve read is on the path rather than only the built-in branch.
+    ModSourceSettings sources;
+    sources.lfos[0].rateHz = 3.0;
+    sources.lfos[0].shape = LfoShape::SawUp;
+    sources.lfos[0].smooth = 0.5;
+    sources.lfos[0].delaySeconds = 0.01;
+    sources.lfos[0].riseSeconds = 0.02;
+    sources.lfos[0].curve.add (0.0, 0.0, 0.5);
+    sources.lfos[0].curve.add (0.3, 1.0, 0.5);
+    sources.lfos[0].curve.add (0.6, 0.25, 0.5);
+    sources.lfos[0].curve.add (1.0, 0.0, 0.5);
+    sources.lfos[0].path.closed = false;
+    sources.lfos[0].path.add (0.0, 0.1, 0.5);
+    sources.lfos[0].path.add (1.0, 0.9, 0.5);
+
+    sources.lfos[1].mono = true;
+    sources.lfos[1].rateHz = 2.0;
+
+    sources.envelopes[2].attack = 0.01;
+    sources.envelopes[2].hold = 0.01;
+    sources.envelopes[2].decay = 0.02;
+    sources.envelopes[2].sustain = 0.5;
+    sources.envelopes[2].release = 0.03;
+
+    engine->setModulationSources (sources);
+
+    std::vector<ModSlot> rows;
+
+    for (const auto source : { "LFO 1", "LFO 1 Y", "LFO 2", "Env 3", "OSC A", "Filter 1" })
+    {
+        ModSlot slot;
+        slot.used = true;
+        slot.source = modSourceFromName (source);
+        REQUIRE (slot.source > 0);
+        slot.amount = 30.0;
+        slot.destinationClass = std::string (voiceDestination::kOscillatorClass);
+        slot.destinationInstance = 0;
+        slot.destinationParameter = voiceDestination::kParamPitch;
+        slot.destinationName = "kParamPitch";
+        rows.push_back (slot);
+    }
+
+    engine->setModulationSlots (rows);
+
+    std::array<float, 128> block {};
+    std::array<float, 128> blockRight {};
+
+    g_allocations.store (0, std::memory_order_relaxed);
+    g_tracking.store (true, std::memory_order_relaxed);
+
+    for (int i = 0; i < 400; ++i)
+    {
+        if (i % 32 == 0)
+            engine->noteOn (48 + (i % 24), 1.0);
+        if (i % 48 == 0)
+            engine->noteOff (48 + ((i + 16) % 24));
+
+        engine->process (block.data(), blockRight.data(), static_cast<int> (block.size()));
+    }
+
+    g_tracking.store (false, std::memory_order_relaxed);
+
+    REQUIRE (g_allocations.load (std::memory_order_relaxed) == 0);
+
+    // The generators really moved the destinations, so the zero above is the whole generated path.
+    REQUIRE (engine->modulation().modulatedDestinationCount() > 0);
+
+    const auto ramp = engine->modulation().rampFor (voiceDestination::kOscillatorClass, 0,
+                                                    voiceDestination::kParamPitch);
+    REQUIRE (ramp.start != ramp.end);
+}
+
 TEST_CASE ("voice: the NOISE and SUB slots allocate nothing on the audio thread", "[voice][noise][sub]")
 {
     // Ticket 40's real-time invariant, on the two slots ticket 40 added: they come out of the *same*

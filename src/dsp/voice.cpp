@@ -24,6 +24,22 @@ int clampInt (int value, int low, int high)
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kSqrt2 = 1.4142135623730951;
 
+/// The generators' settings, or an empty set when a voice has not been wired to an engine's — a voice is
+/// usable on its own in tests, and it must not need one to render.
+const ModSourceSettings& sourcesOf (const ModSourceSettings* settings)
+{
+    static const ModSourceSettings none {};
+    return settings != nullptr ? *settings : none;
+}
+
+/// One bipolar sample as the modulation source the matrix reads: the convention is that every source
+/// reports its output on the reference's 0..1 range (modulation.h), so a signal that swings either side
+/// of zero is centred at 0.5.
+double unipolarSource (double sample)
+{
+    return clampDouble (0.5 * (sample + 1.0), 0.0, 1.0);
+}
+
 /// Equal-power pan gains for one unison sub-voice.
 ///
 /// **A stated convention, not a measurement.** The reference's own law for `kParamUnisonStereo` is not
@@ -152,6 +168,10 @@ void Voice::prepare (double sampleRate)
     sub_.prepare (sampleRate_);
 
     envelope_.prepare (sampleRate_);
+    generator_.prepare (sampleRate_);
+
+    lastSlotSample_.fill (0.0);
+    lastFilterSample_.fill (0.0);
 }
 
 void Voice::setSettings (const VoiceSettings& settings)
@@ -236,6 +256,10 @@ void Voice::start (int note, double velocity, double startPitchSemitones)
     stage_ = VoiceStage::On;
     envelope_.trigger();
 
+    // The matrix envelopes retrigger with the note, and the LFOs unless the preset marks them
+    // free-running. A steal's fade keeps the old note's generators running until the new note starts.
+    generator_.noteOn (sourcesOf (sourceSettings_), false);
+
     // The two fixed slots start with the note. NOISE replays from the note's start state unless
     // `kParamRandomPhase` asks for a different one per note; SUB restarts at its initial phase unless
     // `kParamContiguousPhase` says to carry the previous note's.
@@ -278,6 +302,9 @@ void Voice::retarget (int note, double targetPitchSemitones)
         glideSamplesDone_ = 0;
         glideFrom_ = targetPitchSemitones;
     }
+
+    // A legato note change retriggers the generators that do not opt out of it.
+    generator_.noteOn (sourcesOf (sourceSettings_), true);
 }
 
 void Voice::release()
@@ -287,6 +314,7 @@ void Voice::release()
 
     stage_ = VoiceStage::Releasing;
     envelope_.releaseStage();
+    generator_.noteOff (sourcesOf (sourceSettings_));
 }
 
 void Voice::steal (int note, double velocity, double startPitchSemitones)
@@ -331,6 +359,10 @@ void Voice::kill()
     // filter history and the sub's phase running into the next note it takes.
     noise_.reset();
     sub_.reset();
+
+    generator_.reset();
+    lastSlotSample_.fill (0.0);
+    lastFilterSample_.fill (0.0);
 }
 
 void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatrix* matrix,
@@ -346,9 +378,29 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
     }
 
     // ---- Control rate: one matrix evaluation per block, ramps read per sample below.
+    //
+    // The voice's own generators are advanced *first*, into this block's copy of the engine's inputs,
+    // because the matrix reads a source at the block's end (ticket 13). Four sources only the voice can
+    // supply are added here too — its own samples, one frame old:
+    //
+    //   * `osc[0..2]`, `noiseOsc`, `subOsc` and `voiceFilter[0..1]` are the audio-rate sources. Reading
+    //     the previous frame is what makes a cross-oscillator warp causal without reading any oscillator
+    //     twice, and it is the honest control-rate answer for a matrix that is evaluated per block.
+    ModulationInputs in = inputs;
+    generator_.advance (sourcesOf (sourceSettings_), in, frames);
+
+    for (int s = 0; s < kOscillatorSlots; ++s)
+        in.osc[s] = unipolarSource (lastSlotSample_[static_cast<std::size_t> (s)]);
+
+    in.noiseOsc = unipolarSource (lastSlotSample_[static_cast<std::size_t> (kNoiseSlot)]);
+    in.subOsc = unipolarSource (lastSlotSample_[static_cast<std::size_t> (kSubSlot)]);
+
+    for (int f = 0; f < kFilterSlots; ++f)
+        in.voiceFilter[f] = unipolarSource (lastFilterSample_[static_cast<std::size_t> (f)]);
+
     const bool modulated = matrix != nullptr && ! matrix->slots().empty();
     if (modulated)
-        matrix->beginBlock (inputs, frames);
+        matrix->beginBlock (in, frames);
 
     // Indexed by the preset's own slot number, so NOISE (3) and SUB (4) are addressed exactly as the
     // bank addresses them — `Oscillator/3/kParamVolume` and `Oscillator/4/kParamVolume` are 513 of the
@@ -488,6 +540,31 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
         }
     };
 
+    /// **What a warp reads.** The source the mode's name encodes, resolved against the samples this voice
+    /// has produced: the two other tabled oscillators, the sub, the noise colour, either filter, or — for
+    /// `kSelfPD` — the oscillator's own previous sample.
+    ///
+    /// One frame old, like the audio-rate matrix sources above and for the same reason: a warp may be on
+    /// the first slot and its source on the third, so nothing here can be read this frame without reading
+    /// an oscillator twice.
+    const auto warpModulatorValue = [&] (WarpSource source, int slot) -> double
+    {
+        const int index = warpSourceSlot (source, slot, kOscillatorSlots);
+
+        if (index >= 0)
+            return lastSlotSample_[static_cast<std::size_t> (index)];
+
+        switch (source)
+        {
+            case WarpSource::Self:    return lastSlotSample_[static_cast<std::size_t> (slot)];
+            case WarpSource::Sub:     return lastSlotSample_[static_cast<std::size_t> (kSubSlot)];
+            case WarpSource::Noise:   return lastSlotSample_[static_cast<std::size_t> (kNoiseSlot)];
+            case WarpSource::Filter1: return lastFilterSample_[0];
+            case WarpSource::Filter2: return lastFilterSample_[1];
+            default:                  return 0.0;
+        }
+    };
+
     if (! pitchVaries)
         setConstantOscillatorFrequencies();
     if (! subPitchVaries)
@@ -558,6 +635,7 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
             const auto value = noise_.next() * static_cast<float> (volume);
             left += value;
             right += value;
+            lastSlotSample_[static_cast<std::size_t> (kNoiseSlot)] = value;
         }
 
         if (settings_.sub.enabled)
@@ -575,6 +653,7 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
             const auto value = sub_.next() * static_cast<float> (volume);
             left += value;
             right += value;
+            lastSlotSample_[static_cast<std::size_t> (kSubSlot)] = value;
         }
 
         for (int s = 0; s < kOscillatorSlots; ++s)
@@ -591,6 +670,22 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
 
                 for (int i = 0; i < unison[s]; ++i)
                     oscillators_[s][i].setFrequency (baseHz * detune[s][i]);
+            }
+
+            // **The warp's modulator.** Ticket 25 built the source-driven families to take their modulator
+            // as an argument and nothing ever called `setWarpModulator`, so `kPD_OSC`, `kFM_OSC`, the
+            // `kAM_*` family and the rest were transparent in the product while passing their own unit
+            // tests. Here the source the *name* encodes reaches the warp that reads it — before the table
+            // is read, because a phase-domain warp rewrites the read position.
+            for (int w = 0; w < WavetableOscillator::kWarpSlotCount; ++w)
+            {
+                if (os.warpMode[w] == WarpMode::None || os.warpSource[w] == WarpSource::None)
+                    continue;
+
+                const double modulator = warpModulatorValue (os.warpSource[w], s);
+
+                for (int i = 0; i < unison[s]; ++i)
+                    oscillators_[s][i].setWarpModulator (w, modulator);
             }
 
             // **The stereo spread is here.** Each sub-voice is placed across the image by its own position
@@ -611,6 +706,13 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
             const auto amplitude = static_cast<float> (unisonNorm[s] * volume);
             left += sumLeft * amplitude;
             right += sumRight * amplitude;
+
+            // What this slot contributed, which is both its `OSC A/B/C` source value and what any warp
+            // reading *this* oscillator sees. Post-level, so a preset that mutes the source stops the
+            // modulation with it rather than leaving it running silently.
+            lastSlotSample_[static_cast<std::size_t> (s)]
+                = 0.5 * (static_cast<double> (sumLeft) + static_cast<double> (sumRight))
+                  * static_cast<double> (amplitude);
         }
 
         for (int f = 0; f < kFilterSlots; ++f)
@@ -639,6 +741,11 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
 
             left = filters_[f][0].process (left);
             right = filters_[f][1].process (right);
+
+            // `Filter 1`/`Filter 2` as modulation sources: the signal leaving that filter. Filter 2's
+            // input is filter 1's output, so the two sources are what the chain actually produces.
+            lastFilterSample_[static_cast<std::size_t> (f)]
+                = 0.5 * (static_cast<double> (left) + static_cast<double> (right));
         }
 
         const double envelope = envelope_.level();
@@ -668,11 +775,13 @@ void VoiceEngine::prepare (double sampleRate, int maxBlockFrames, int polyphony)
 
     settings_.envelope.prepare (sampleRate_);
     matrix_.prepare (sampleRate_, maxBlockFrames);
+    globalGenerator_.prepare (sampleRate_);
 
     for (int i = 0; i < kMaxVoices; ++i)
     {
         voices_[i].prepare (sampleRate_);
         voices_[i].setVoiceIndex (i);
+        voices_[i].setModulationSources (&sourceSettings_);
         voices_[i].setSettings (settings_);
     }
 
@@ -683,6 +792,8 @@ void VoiceEngine::reset()
 {
     for (auto& voice : voices_)
         voice.kill();
+
+    globalGenerator_.reset();
 
     noteStackSize_ = 0;
     noteCounter_ = 0;
@@ -815,6 +926,11 @@ void VoiceEngine::removeNote (int note)
 
 int VoiceEngine::noteOn (int note, double velocity)
 {
+    // A `Mono` LFO is the whole pool's, so its one-shot restart belongs to the *phrase*: the first note
+    // after silence. A voice's own one-shot LFOs restart per note, in `Voice::start`.
+    if (activeVoiceCount() == 0)
+        globalGenerator_.restartOneShotLfos (sourceSettings_);
+
     if (settings_.mode != VoiceMode::Poly)
     {
         const bool noteWasHeld = noteStackSize_ > 0;
@@ -935,20 +1051,29 @@ void VoiceEngine::process (float* outLeft, float* outRight, int frames)
     const bool matrixActive = ! matrix_.slots().empty();
     const int active = activeVoiceCount();
 
+    // The pool's own generators first: the LFOs a preset marks `Mono` run once for every voice, and their
+    // value joins the block inputs so a voice's generator — which skips them — does not overwrite it.
+    ModulationInputs base = globalInputs_;
+    globalGenerator_.advanceMonoLfos (sourceSettings_, base, frames);
+
     for (int i = 0; i < polyphony_; ++i)
     {
         auto& voice = voices_[i];
         if (! voice.active())
             continue;
 
-        ModulationInputs inputs = globalInputs_;
+        ModulationInputs inputs = base;
         inputs.voiceIndex = polyphony_ > 1
                                 ? static_cast<double> (i) / static_cast<double> (polyphony_ - 1)
                                 : 0.0;
         inputs.activeVoices = static_cast<double> (active) / static_cast<double> (polyphony_);
         inputs.noteNumber = static_cast<double> (voice.note()) / 127.0;
         inputs.velocity = voice.velocity();
-        inputs.envelope[0] = voice.level();
+
+        // `inputs.envelope[0..3]` are **the voice's four matrix envelopes**, written by its generator in
+        // `render`. They used to be the amplitude envelope's level, which is a different generator with
+        // different settings and its own state, and the two must not be conflated: ticket 48 asserts a
+        // matrix envelope moving a filter while the amplitude envelope shapes the level.
 
         voice.render (outLeft, outRight, frames, matrixActive ? &matrix_ : nullptr, inputs);
     }

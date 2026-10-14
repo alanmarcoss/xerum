@@ -4,6 +4,7 @@ add_library(xerum_dsp STATIC
     warp.cpp
     filter.cpp
     modulation.cpp
+    mod_sources.cpp
     voice.cpp
     noise_osc.cpp
     sub_osc.cpp

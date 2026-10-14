@@ -553,3 +553,77 @@ is applied** (`VoiceFilter::setPoleZero`, with the `high` report retracted). Wha
   still not on screen. Ticket `43`'s finding stands: the arrays and containers are addressed by the
   pages they belong to, and this interface shows what the bridge binds — 75 page controls and 512 matrix
   cells — with the gap stated in the header rather than a page of raw arrays with no engine behind them.
+
+# Ticket 48 — the modulation sources that had no generator
+
+Thirty-seven of the matrix's fifty-seven source cases read a field nothing in `src/dsp` or
+`plugin/Source` ever assigned, so an editable matrix evaluated a constant zero — worse than no matrix,
+because it looked like it worked. `WavetableOscillator::setWarpModulator` was declared and never called,
+which made the corpus's most-used warp families (`kPD_OSC` 12.6%, `kFM_OSC` 7.3%) transparent in the
+product while passing their own unit tests, because those tests handed the warp a modulator themselves.
+
+## What is generated now
+
+* **The ten LFOs** (`LFO0..9`), from the schema's own `plainParams`: rate (`kParamRate` percent, with the
+  reference's `kParamRate10x`, dotted and triplet multipliers), `kParamPhase`, `kParamDelay`,
+  `kParamRise`, `kParamSmooth`, `kParamSwing`, `kParamDirection`, `kParamMode` (`Envelope` = one cycle
+  per note, `Free` = free-running) and `kParamMono`. The **drawn shape** is `curveData`'s point arrays
+  sampled as the preset drew them, including the vertical edge a repeated `x` encodes; the built-in
+  shapes (`Sine`, `Triangle`, `SawUp`, `SawDown`, `Square`) cover an LFO that draws nothing, which is
+  most of the bank (1411 of ~1554 LFO instances).
+* **`LFO n Y`**, each LFO's second output, from `pathData` — and following the curve when the preset drew
+  no path, so the source moves rather than sitting at zero.
+* **The four matrix envelopes** (`Env0..3`), with attack, hold, decay, sustain, release, the three
+  segment curves, start and end. They are **separate generators from the amplitude envelope**, with
+  their own state; `in.envelope[0..3]` is theirs.
+* **The eight macros**, exposed as eight host parameters (`Macro0..7/plainParams/kParamValue`, one
+  one-control group each, because a page is a group and lives in one model module). A macro that nobody
+  can move would be the same defect one step smaller.
+* **The audio-rate sources**: `OSC A/B/C`, `NOISE OSC`, `SUB OSC` and `Filter 1/2` — the voice's own
+  samples, one frame old, which is what makes a cross-oscillator read causal without reading an
+  oscillator twice.
+* **`setWarpModulator` is called.** The signal a mode's name encodes (`_OSC`, `_OSC2`, `_SUB`, `_NOISE`,
+  `_FILT1`, `_FILT2`, `kSelfPD`) is recovered by `dsp::warpSourceFromName` and handed to the warp that
+  reads it. The report entry that used to say the variant "is not routed yet" is **retracted** — an entry
+  true before and false after is worse than no entry.
+* **The player's controls** reach the matrix too: `Mod Wheel` (CC 1), `Aftertouch` (channel pressure),
+  `Poly Aftertch` (polyphonic key pressure) and `Pitch Bend`. No `ModulationInputs` was constructed in
+  the plugin at all before this, so those sources were as zero as the LFOs.
+
+## What is still not generated, by name
+
+* **The `Lorenz` and `Rossler` LFO types** (`kParamType`, 33 LFO instances in the sampled corpus). The
+  preset stores the type's *name* and none of its coefficients, and the reference's own constants are not
+  measured; integrating an invented attractor would be inventing the sound. Such an LFO plays its curve —
+  so it still moves — and the report names the type at `medium`.
+* **`kParamBeatSync`** on an LFO: the rate is a free rate in hertz, and the host's tempo is not applied.
+  The corpus never sets the flag (measured: 0 of 178 sampled LFO instances), and the report names it
+  where a preset does.
+* **`kParamAnchored`, `kParamDefaultMode` and `kParamPhaseSnap`**: carried, not acted on — what the
+  reference anchors an LFO's phase to, and its own default mode, are not established.
+* **`curveData/loopbackPointNum`**: carried, not acted on. It is not a point index — 481 occurs with
+  `numPoints` 3 — so its unit is not established, and the drawn shape loops over its whole cycle.
+* **`kParamGridX`/`kParamGridY`** are the curve editor's drawing grid and have no audible meaning.
+* **A warp's *variant* is a preset field, not a parameter.** The interface's warp menu selects the
+  family (ticket 25's choice list); the signal the mode reads is only in the name the preset stored, so it
+  is published from the document. A family chosen from the interface therefore takes that family's
+  canonical variant, which is now the plain `_OSC` one rather than whichever the alphabetical enum
+  happened to put first.
+* **`Voice Mod 1/2`** (sources 56/57) still have no generator: no corpus evidence establishes what
+  produces them, so they are left named and zero rather than filled with something plausible. The same
+  goes for `NoteOn Rand2` (22), which `modulation.h` already reports, and `ModSlot` (60).
+* **`Expr X/Y/Z`** (34/35/36) are MPE axes: `Expr Y` and `Expr Z` map onto CC 74 and channel pressure,
+  which xerum reads under their own names above, and `Expr X` is per-note pitch bend, which this engine
+  has no per-note place for. None of the three is filled.
+
+## How it is asserted
+
+`tests/dsp/mod_sources_test.cpp` is the generators' arithmetic (a drawn shape sampled as drawn, a
+repeated `x` as a step, the envelope's stages and their curves, the rate/direction/swing/delay/rise of an
+LFO, the name-to-source decode, and the real-time invariant). `plugin/tests/mod_sources_test.cpp` is the
+**whole path from a preset** — `writeContainer` -> `loadPresetFromFile` -> parameters -> engine ->
+generators -> matrix -> render — and every assertion there is a render difference: an LFO's rate and
+shape, a matrix envelope moving a filter while the amplitude envelope shapes the level, a macro turning
+up, the audio-rate sources, and a preset whose `kFM_OSC` warp renders differently from the same preset
+unwarped *and identically to it when the oscillator it names is silent*. That last pair is the assertion
+ticket 25's unit tests could not make.

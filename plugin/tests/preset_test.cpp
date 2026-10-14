@@ -115,8 +115,12 @@ TEST_CASE ("a preset reaches the parameters, and a half-loading one says so in t
 
     // The model's half: the unimplemented warp, by name, at high.
     CHECK (hasEntry (xerum::model::Severity::High, "kRemap_4"));
-    // The plugin's half: the variant's source routing.
-    CHECK (hasEntry (xerum::model::Severity::Info, "kPD_OSC"));
+    // **The variant's source routing is no longer reported, and that is deliberate.** This used to be the
+    // plugin's half of the report — `kPD_OSC` reaching its family while the source its name encodes went
+    // nowhere. Ticket 48 routed it (`warpSourceFromName` + `setWarpModulator`), so the entry was true
+    // before and false after; the assertion is inverted rather than deleted, the same way ticket 41
+    // retracted `kParamUnisonStereo` below.
+    CHECK_FALSE (hasEntry (xerum::model::Severity::Info, "kPD_OSC"));
     // The stereo spread is no longer reported — ticket 41 wired it — and the preset's value reached the
     // parameter the host automates instead.
     CHECK_FALSE (hasEntry (xerum::model::Severity::Info, "kParamUnisonStereo"));
@@ -133,7 +137,7 @@ TEST_CASE ("a preset reaches the parameters, and a half-loading one says so in t
     // The text the interface shows carries them, with the path a user can find, and counts per severity.
     CHECK (text.contains ("Oscillator0/WTOsc0"));
     CHECK (text.contains ("kRemap_4"));
-    CHECK (text.contains ("kPD_OSC"));
+    CHECK_FALSE (text.contains ("kPD_OSC"));
     CHECK (text.contains ("high 1"));
 
     // The unimplemented warp did not silently become a neighbour: the parameter shows the sentinel, and

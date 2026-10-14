@@ -189,11 +189,12 @@ void XerumAudioProcessor::flushModulation()
     if (! modulationDirty_.exchange (false, std::memory_order_acq_rel))
         return;
 
-    // Both are idempotent reads of the document, and either can defer the other's retry by re-raising the
-    // flag — so drain the pair rather than assuming only the matrix moved. Message thread (the timer, or
-    // a caller); never the audio thread.
+    // All three are idempotent reads of the document, and any can defer the others' retry by re-raising
+    // the flag — so drain the set rather than assuming only the matrix moved. Message thread (the timer,
+    // or a caller); never the audio thread.
     publishPoleZero();
     publishModulationSlots();
+    publishModulationSources();
 }
 
 void XerumAudioProcessor::resolveLayout()
@@ -271,6 +272,9 @@ void XerumAudioProcessor::resolveLayout()
     layout_.amp.decay = find (amp + "decay");
     layout_.amp.sustain = find (amp + "sustain");
     layout_.amp.release = find (amp + "release");
+
+    for (int macro = 0; macro < dsp::kMacroCount; ++macro)
+        layout_.macro[static_cast<std::size_t> (macro)] = find ("macro" + std::to_string (macro) + ".value");
 }
 
 int XerumAudioProcessor::indexOfParameter (const std::string_view modelPath) const
@@ -385,10 +389,24 @@ void XerumAudioProcessor::refreshSettingsFromParameters() noexcept
         const auto mode1 = static_cast<int> (amount (layout.warp1Mode));
         const auto mode2 = static_cast<int> (amount (layout.warp2Mode));
 
-        osc.warpMode[0] = bridge_.choices (ChoiceSet::WarpMode).warpModes[mode1];
-        osc.warpMode[1] = bridge_.choices (ChoiceSet::WarpMode).warpModes[mode2];
+        const auto& warpChoices = bridge_.choices (ChoiceSet::WarpMode);
+
+        osc.warpMode[0] = warpChoices.warpModes[mode1];
+        osc.warpMode[1] = warpChoices.warpModes[mode2];
         osc.warpAmount[0] = amount (layout.warp1Amount);
         osc.warpAmount[1] = amount (layout.warp2Amount);
+
+        // **The warp's source** (ticket 48). The mode's *name* is where the source lives — `kFM_OSC` and
+        // `kFM_SUB` are the same family and different sounds — so it is decoded from the preset's own name
+        // when the document has one, and from the choice's canonical token when it does not (an interface
+        // edit selects the family, and the canonical token is that family's plain variant). Both halves are
+        // read off the audio thread: the document's name in `publishWarpSources`, the canonical token here.
+        osc.warpSource[0] = warpSource_[static_cast<std::size_t> (slot)][0] != dsp::WarpSource::None
+                                ? warpSource_[static_cast<std::size_t> (slot)][0]
+                                : dsp::warpSourceFromName (warpChoices.modelNames[static_cast<std::size_t> (mode1)]);
+        osc.warpSource[1] = warpSource_[static_cast<std::size_t> (slot)][1] != dsp::WarpSource::None
+                                ? warpSource_[static_cast<std::size_t> (slot)][1]
+                                : dsp::warpSourceFromName (warpChoices.modelNames[static_cast<std::size_t> (mode2)]);
     }
 
     // --- The two fixed single-engine slots (ticket 40) -------------------------------------------------
@@ -529,9 +547,48 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             engine_.reset();
         else if (message.isPitchWheel())
             bendSemitones_ = 2.0 * (static_cast<double> (message.getPitchWheelValue()) - 8192.0) / 8192.0;
+
+        // **The global modulation inputs, from MIDI** (ticket 48). Nothing constructed a
+        // `ModulationInputs` before, so `Mod Wheel`, `Aftertouch` and the rest of the matrix's
+        // player-driven sources were as zero as the LFOs — the same defect, one family over. What is
+        // filled here is what MIDI names unambiguously; `plugin/README.md` lists what is not.
+        else if (message.isController())
+        {
+            const auto value = static_cast<double> (message.getControllerValue()) / 127.0;
+
+            if (message.getControllerNumber() == 1)
+                modWheel_ = value;
+        }
+        else if (message.isChannelPressure())
+            aftertouch_ = static_cast<double> (message.getChannelPressureValue()) / 127.0;
+        else if (message.isAftertouch())
+            polyAftertouch_ = static_cast<double> (message.getAfterTouchValue()) / 127.0;
     }
 
     midi.clear();
+
+    // The pool's block inputs: the player's controls and the eight macros. A `ModulationInputs` is a
+    // plain struct of doubles, so this is a store per block and never an allocation — and it is the only
+    // place the matrix's player-driven sources are filled from the host's MIDI.
+    {
+        dsp::ModulationInputs globals;
+        globals.modWheel = modWheel_;
+        globals.aftertouch = aftertouch_;
+        globals.polyAftertouch = polyAftertouch_;
+        globals.pitchBend = bendSemitones_ / 2.0 + 0.5;   // `Pitch Bend` is a source on the 0..1 range
+        globals.activeVoices = 0.0;                        // the pool fills it per voice
+        globals.noteNumber = 0.0;
+
+        for (int macro = 0; macro < dsp::kMacroCount; ++macro)
+        {
+            const auto index = layout_.macro[static_cast<std::size_t> (macro)];
+
+            if (index >= 0)
+                globals.macro[macro] = std::clamp (values_[static_cast<std::size_t> (index)] / 100.0, 0.0, 1.0);
+        }
+
+        engine_.setGlobalInputs (globals);
+    }
 
     const auto gainTarget = layout_.masterVolume >= 0
                                 ? std::clamp (values_[static_cast<std::size_t> (layout_.masterVolume)], 0.0, 1.0)
@@ -876,34 +933,54 @@ void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
         return modelNumber (found->second, number) && number != 0.0;
     };
 
-    for (int slot = 0; slot < dsp::kOscillatorSlots; ++slot)
+    // **The warp variants are not reported any more, and that is deliberate.** This block used to say, at
+    // `info`, that a name such as `kPD_OSC` reached its family but "the source or variant this name
+    // encodes is not routed yet". Ticket 48 routed it — `warpSourceFromName` recovers the suffix and
+    // `Voice::render` calls `setWarpModulator` with the signal it names — so the entry was true before and
+    // false after, which is worse than no entry (the same retraction ticket 45 made for the drawn
+    // response). `plugin/README.md` records it, and `preset_test.cpp` now asserts the entry is gone.
+
+    // --- The modulation generators (ticket 48) ---------------------------------------------------------
+    //
+    // The ten LFOs and the four matrix envelopes generate now, so there is nothing to say about them as a
+    // class. What is left is the parts of an LFO the schema carries and this build does not act on: the
+    // two chaotic generator types, and the fields whose unit the corpus does not settle. Each is named,
+    // because "an LFO parameter was ignored" is not something a user can act on.
+    for (int lfo = 0; lfo < dsp::kLfoCount; ++lfo)
     {
-        const auto prefix = slotPrefix (slot);
+        const auto prefix = "LFO" + std::to_string (lfo);
+        const auto params = prefix + "/plainParams/";
+        const auto type = text (params + "kParamType");
 
-        for (const auto* leaf : { "kParamWarpMenu", "kParamWarpMenu2" })
+        if (type == "Lorenz" || type == "Rossler")
+            addReportEntry (report_, model::Severity::Medium, prefix, type,
+                            "the LFO's chaotic generator type is not implemented: the preset stores the "
+                            "type's name and none of its coefficients, so the LFO plays its curve and the "
+                            "attractor's character is missing");
+
+        const auto unapplied = [&] (const std::string& leaf, const char* reason)
         {
-            const auto path = prefix + "/plainParams/" + leaf;
-            const auto name = text (path);
+            if (numberAt (params + leaf) != 0.0)
+                addReportEntry (report_, model::Severity::Medium, prefix,
+                                leaf.substr (leaf.rfind ('/') + 1), reason);
+        };
 
-            if (name.empty())
-                continue;
+        unapplied ("kParamBeatSync",
+                   "the LFO runs free here: its rate is `kParamRate` mapped to a free rate in hertz, and a "
+                   "preset that asks to sync it to the host's tempo keeps the free rate instead");
+        unapplied ("kParamAnchored",
+                   "not applied: what the reference anchors an LFO's phase to is not established");
+        unapplied ("kParamDefaultMode",
+                   "not applied: the reference's own default mode for an LFO is not established");
+        unapplied ("kParamPhaseSnap",
+                   "not applied: the reference's phase snapping is a draw-time aid, and its unit is not "
+                   "established");
 
-            const auto mode = dsp::warpModeFromName (name);
-
-            if (mode == dsp::WarpMode::Unknown)
-                continue;   // the model's report already names this mode, at high
-
-            const auto& choices = bridge_.choices (ChoiceSet::WarpMode);
-
-            for (int i = 0; i < choices.size(); ++i)
-                if (i != choices.sentinel && choices.warpModes[i] == mode && choices.modelNames[i] != name)
-                {
-                    addReportEntry (report_, model::Severity::Info, path, name,
-                                    "xerum applies the " + std::string (dsp::warpModeFamilyName (mode))
-                                        + " family; the source or variant this name encodes is not routed yet");
-                    break;
-                }
-        }
+        if (numberAt (prefix + "/curveData/loopbackPointNum") != 0.0)
+            addReportEntry (report_, model::Severity::Info, prefix, "loopbackPointNum",
+                            "the drawn shape loops over its whole cycle: the loopback point the preset "
+                            "stores is not a point index (481 occurs with `numPoints` 3), so its unit is "
+                            "not established and xerum plays every point");
     }
 
     // **The drawn response is not reported any more, and that is deliberate.** It used to say, at `high`,
@@ -1124,6 +1201,217 @@ void XerumAudioProcessor::publishModulationSlots()
     sendChangeMessage();
 }
 
+void XerumAudioProcessor::publishModulationSources()
+{
+    const juce::ScopedLock lock (stateLock_);
+
+    // Read while the state lock is held, and publish under the audio thread's handshake: the settings
+    // carry the drawn point arrays, so a half-swapped block would be a render with one LFO's shape and
+    // another LFO's phase.
+    const auto next = modulationSourcesFromDocument (document_);
+
+    std::array<std::array<dsp::WarpSource, 2>, dsp::kOscillatorSlots> warpSources {};
+
+    for (int slot = 0; slot < dsp::kOscillatorSlots; ++slot)
+    {
+        const auto prefix = slotPrefix (slot) + "/plainParams/";
+
+        for (int warp = 0; warp < 2; ++warp)
+        {
+            const auto leaf = std::string (warp == 0 ? "kParamWarpMenu" : "kParamWarpMenu2");
+            std::string name;
+
+            if (const auto found = document_.parameters.find (prefix + leaf);
+                found != document_.parameters.end())
+                modelText (found->second, name);
+
+            warpSources[static_cast<std::size_t> (slot)][static_cast<std::size_t> (warp)]
+                = dsp::warpSourceFromName (name);
+        }
+    }
+
+    if (! freezeAndWait())
+    {
+        modulationDirty_.store (true, std::memory_order_release);
+        return;
+    }
+
+    engine_.setModulationSources (next);
+    warpSource_ = warpSources;
+
+    frozen_.store (false, std::memory_order_release);
+}
+
+dsp::ModSourceSettings
+XerumAudioProcessor::modulationSourcesFromDocument (const model::PresetDocument& document) const
+{
+    dsp::ModSourceSettings settings;
+
+    const auto numberAt = [&document] (const std::string& path) -> std::optional<double>
+    {
+        const auto found = document.parameters.find (path);
+
+        if (found == document.parameters.end())
+            return std::nullopt;
+
+        double value = 0.0;
+
+        if (! modelNumber (found->second, value))
+            return std::nullopt;
+
+        return value;
+    };
+
+    const auto textAt = [&document] (const std::string& path) -> std::string
+    {
+        std::string value;
+
+        if (const auto found = document.parameters.find (path); found != document.parameters.end())
+            modelText (found->second, value);
+
+        return value;
+    };
+
+    /// A stored CBOR `true`, or a non-zero number. `pathData/isOpen` is a real bool leaf.
+    const auto truthyAt = [&document] (const std::string& path)
+    {
+        const auto found = document.parameters.find (path);
+
+        if (found == document.parameters.end())
+            return false;
+
+        if (found->second.type == model::Value::Type::Bool)
+            return found->second.boolean;
+
+        double value = 0.0;
+        return modelNumber (found->second, value) && value != 0.0;
+    };
+
+    /// The point arrays. A preset stores `numPoints + 1` entries — the last closes the cycle at `x == 1`
+    /// — so the read walks while the leaves exist rather than trusting the count, and a shape longer than
+    /// the ceiling is read to the ceiling rather than truncated in the middle of a segment.
+    const auto readCurve = [&numberAt] (const std::string& prefix, const bool closed)
+    {
+        dsp::LfoCurve curve;
+        curve.closed = closed;
+
+        for (int i = 0; i < dsp::kMaxLfoPoints; ++i)
+        {
+            const auto index = std::to_string (i);
+            const auto x = numberAt (prefix + "xVals[" + index + "]");
+
+            if (! x.has_value())
+                break;
+
+            const auto y = numberAt (prefix + "yVals[" + index + "]").value_or (0.0);
+            const auto bend = numberAt (prefix + "curveVals[" + index + "]").value_or (0.5);
+
+            curve.add (*x, y, bend);
+        }
+
+        return curve;
+    };
+
+    const auto shapeFromName = [] (std::string_view name)
+    {
+        // The corpus's own `curveDisplayName` vocabulary (`kValues336`). Names like `7 SKIES Sig` and
+        // `HALF RANDOM` are *library* shapes, and the preset that names one also carries its points, so
+        // the built-in fallback only has to cover the five the reference draws itself.
+        const auto equals = [name] (std::string_view candidate)
+        { return name.size() == candidate.size()
+                 && std::equal (name.begin(), name.end(), candidate.begin(),
+                                [] (char a, char b) { return std::tolower (static_cast<unsigned char> (a)) == b; }); };
+
+        if (equals ("sine"))
+            return dsp::LfoShape::Sine;
+
+        if (equals ("triangle") || equals ("triangle 0"))
+            return dsp::LfoShape::Triangle;
+
+        if (equals ("saw up") || equals ("saw up curved"))
+            return dsp::LfoShape::SawUp;
+
+        if (equals ("saw down") || equals ("saw down curved"))
+            return dsp::LfoShape::SawDown;
+
+        if (equals ("square"))
+            return dsp::LfoShape::Square;
+
+        return dsp::LfoShape::Sine;
+    };
+
+    for (int lfo = 0; lfo < dsp::kLfoCount; ++lfo)
+    {
+        const auto base = "LFO" + std::to_string (lfo);
+        const auto params = base + "/plainParams/";
+        auto& lfoSettings = settings.lfos[static_cast<std::size_t> (lfo)];
+
+        const auto type = textAt (params + "kParamType");
+
+        if (type == "Path")
+            lfoSettings.type = dsp::LfoType::Path;
+        else if (type == "RandomSH")
+            lfoSettings.type = dsp::LfoType::RandomSampleHold;
+        else if (type == "Lorenz")
+            lfoSettings.type = dsp::LfoType::Lorenz;
+        else if (type == "Rossler")
+            lfoSettings.type = dsp::LfoType::Rossler;
+
+        // A preset that stores no rate gets the engine's default (0.5 Hz). `kParamRate` is present in 552
+        // of 626 presets, so this is the exception rather than the rule, and 0.5 Hz is the rate the model's
+        // own default sits at.
+        const auto rate = numberAt (params + "kParamRate");
+        const bool rate10x = numberAt (params + "kParamRate10x").value_or (0.0) != 0.0;
+
+        lfoSettings.rateHz = rate.has_value() ? dsp::lfoRateHz (*rate, rate10x) : 0.5;
+
+        // Dotted and triplet modify the *length* of a step, so they scale the rate the other way: a dotted
+        // step is 1.5 times as long, a triplet step two thirds.
+        if (numberAt (params + "kParamDotted").value_or (0.0) != 0.0)
+            lfoSettings.rateHz *= 2.0 / 3.0;
+
+        if (numberAt (params + "kParamTriplets").value_or (0.0) != 0.0)
+            lfoSettings.rateHz *= 3.0 / 2.0;
+
+        lfoSettings.phaseTurns = numberAt (params + "kParamPhase").value_or (0.0) / 360.0;
+        lfoSettings.delaySeconds = numberAt (params + "kParamDelay").value_or (0.0);
+        lfoSettings.riseSeconds = numberAt (params + "kParamRise").value_or (0.0);
+        lfoSettings.smooth = numberAt (params + "kParamSmooth").value_or (0.0) / 100.0;
+        lfoSettings.swing = numberAt (params + "kParamSwing").value_or (0.0) / 100.0;
+        lfoSettings.direction = numberAt (params + "kParamDirection").value_or (1.0) == 2.0 ? -1.0 : 1.0;
+        lfoSettings.mono = numberAt (params + "kParamMono").value_or (0.0) != 0.0;
+
+        // The two modes the schema stores: `Envelope` is one cycle per note, `Free` is free-running.
+        const auto mode = textAt (params + "kParamMode");
+        lfoSettings.oneShot = mode == "Envelope";
+        lfoSettings.freeRunning = mode == "Free";
+
+        lfoSettings.shape = shapeFromName (textAt (base + "/curveDisplayName"));
+        lfoSettings.curve = readCurve (base + "/curveData/", true);
+        lfoSettings.path = readCurve (base + "/pathData/", ! truthyAt (base + "/pathData/isOpen"));
+    }
+
+    for (int envelope = 0; envelope < dsp::kMatrixEnvelopeCount; ++envelope)
+    {
+        const auto params = "Env" + std::to_string (envelope) + "/plainParams/";
+        auto& env = settings.envelopes[static_cast<std::size_t> (envelope)];
+
+        env.attack = numberAt (params + "kParamAttack").value_or (0.0);
+        env.hold = numberAt (params + "kParamHold").value_or (0.0);
+        env.decay = numberAt (params + "kParamDecay").value_or (0.0);
+        env.sustain = numberAt (params + "kParamSustain").value_or (1.0);
+        env.release = numberAt (params + "kParamRelease").value_or (0.0);
+        env.curve1 = numberAt (params + "kParamCurve1").value_or (50.0);
+        env.curve2 = numberAt (params + "kParamCurve2").value_or (50.0);
+        env.curve3 = numberAt (params + "kParamCurve3").value_or (50.0);
+        env.start = numberAt (params + "kParamStart").value_or (0.0);
+        env.end = numberAt (params + "kParamEnd").value_or (0.0);
+        env.legatoInverted = numberAt (params + "kParamLegatoInverted").value_or (0.0) != 0.0;
+    }
+
+    return settings;
+}
+
 void XerumAudioProcessor::publishPoleZero()
 {
     const juce::ScopedLock lock (stateLock_);
@@ -1296,6 +1584,7 @@ void XerumAudioProcessor::applyDocument (const model::PresetDocument& document, 
     // while holding it out — the same handshake the tables use, because both allocate.
     publishPoleZero();
     publishModulationSlots();
+    publishModulationSources();
 
     // The active voice count is a `prepare()` argument (ticket 28), and re-preparing the pool allocates
     // (the modulation matrix), so it is applied here — off the audio thread, with the tables' handshake

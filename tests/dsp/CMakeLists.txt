@@ -3,6 +3,7 @@ add_executable(xerum-dsp-tests
     warp_test.cpp
     filter_test.cpp
     modulation_test.cpp
+    mod_sources_test.cpp
     voice_test.cpp
     noise_osc_test.cpp
     sub_osc_test.cpp

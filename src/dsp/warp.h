@@ -71,6 +71,37 @@ WarpMode warpModeFromName (std::string_view name);
 
 std::string_view warpModeFamilyName (WarpMode mode);
 
+/// **Which signal a source-driven warp reads.** The mode names carry their source as a suffix —
+/// `kPD_OSC`, `kFM_OSC2`, `kAM_SUB`, `kRM_NOISE`, `kPD_FILT1` — which ticket `25` dropped when it mapped
+/// a name onto its family, because there was no routing for it to name. The suffix is the whole of the
+/// difference between `kFM_OSC` and `kFM_SUB`, so it is recovered here and the voice resolves it against
+/// the samples it has just produced.
+enum class WarpSource
+{
+    None,
+    OtherOsc,        ///< `..._OSC`: the next tabled oscillator, wrapping past the last back to the first
+    SecondOtherOsc,  ///< `..._OSC2`: the one after that
+    Self,            ///< `kSelfPD`: the oscillator's own previous sample
+    Sub,             ///< `..._SUB`
+    Noise,           ///< `..._NOISE`
+    Filter1,         ///< `..._FILT1`
+    Filter2          ///< `..._FILT2`
+};
+
+/// The source a warp mode name encodes, or `None` for a mode that takes no modulator.
+///
+/// **A stated convention, on one point.** Serum 1's source choices name *the other* oscillator, and the
+/// corpus's own suffixes (`_OSC`, `_OSC2`) name two of them with three oscillators present. Which
+/// oscillator `_OSC` is for each slot is therefore read as the cyclic successor: `_OSC` is the slot after
+/// the warp's own, `_OSC2` the one after that, both wrapping. That keeps a warp from modulating itself
+/// by accident, which is the reading the alternative (a fixed slot A) would produce for the most-used
+/// family — `kPD_OSC` is 12.6% of the corpus's warps.
+WarpSource warpSourceFromName (std::string_view modeName);
+
+/// The tabled oscillator slot a `WarpSource` resolves to for a warp on `slot`, given `tableCount`
+/// oscillators. Returns -1 for a source that is not a tabled oscillator.
+int warpSourceSlot (WarpSource source, int slot, int tableCount);
+
 /// The warp's own parameter, and the modulator it is driven by.
 class Warp
 {

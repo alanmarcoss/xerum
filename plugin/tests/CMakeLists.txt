@@ -17,7 +17,9 @@ add_executable(xerum-plugin-tests
     preset_test.cpp
     realtime_test.cpp
     interface_test.cpp
-    third_party_test.cpp)
+    third_party_test.cpp
+    mod_sources_test.cpp
+    fidelity_test.cpp)
 
 target_sources(xerum-plugin-tests PRIVATE ${XERUM_PLUGIN_SOURCES})
 
@@ -31,13 +33,19 @@ target_compile_definitions(xerum-plugin-tests PRIVATE
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     JUCE_VST3_EMULATE_MIDI_CC_WITH_PARAMETERS=0
-    XERUM_CONTENT_DIR="${CMAKE_SOURCE_DIR}/content")
+    XERUM_CONTENT_DIR="${CMAKE_SOURCE_DIR}/content"
+    # Ticket 46. The fidelity layer needs the repository root (for tests/golden/manifest.json, the
+    # committed half of the corpus) and the build tree it belongs to (for the harness and xerum's own
+    # bundle). Both are resolved by path at run time, and the test skips loudly when either is absent.
+    XERUM_REPO_ROOT="${CMAKE_SOURCE_DIR}"
+    XERUM_BUILD_DIR="${CMAKE_BINARY_DIR}")
 
 target_link_libraries(xerum-plugin-tests PRIVATE
     xerum_model
     xerum_dsp
     xerum_content
     juce::juce_audio_utils
+    juce::juce_dsp
     juce::juce_recommended_config_flags
     Catch2::Catch2WithMain)
 

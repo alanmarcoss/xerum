@@ -206,6 +206,51 @@ std::string_view warpModeFamilyName (WarpMode mode)
     return "unknown";
 }
 
+WarpSource warpSourceFromName (const std::string_view modeName)
+{
+    if (modeName.empty())
+        return WarpSource::None;
+
+    const auto endsWith = [] (const std::string_view text, const std::string_view suffix)
+    { return text.size() >= suffix.size() && text.compare (text.size() - suffix.size(), suffix.size(), suffix) == 0; };
+
+    if (modeName == "kSelfPD")
+        return WarpSource::Self;
+
+    if (endsWith (modeName, "OSC2"))
+        return WarpSource::SecondOtherOsc;
+
+    if (endsWith (modeName, "OSC"))
+        return WarpSource::OtherOsc;
+
+    if (endsWith (modeName, "SUB"))
+        return WarpSource::Sub;
+
+    if (endsWith (modeName, "NOISE"))
+        return WarpSource::Noise;
+
+    if (endsWith (modeName, "FILT1"))
+        return WarpSource::Filter1;
+
+    if (endsWith (modeName, "FILT2"))
+        return WarpSource::Filter2;
+
+    return WarpSource::None;
+}
+
+int warpSourceSlot (const WarpSource source, const int slot, const int tableCount)
+{
+    if (tableCount <= 0 || slot < 0 || slot >= tableCount)
+        return -1;
+
+    switch (source)
+    {
+        case WarpSource::OtherOsc:       return (slot + 1) % tableCount;
+        case WarpSource::SecondOtherOsc: return (slot + 2) % tableCount;
+        default:                         return -1;
+    }
+}
+
 void Warp::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate > 0.0 ? sampleRate : 48000.0;

@@ -88,7 +88,12 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
     // VST3 space nor the model's 776 leaves. A fixed count is the point: it is a claim, not an accident.
     // The modulation surface is deliberately **not** in `specs()` — `InterfacePlan` is what turns specs
     // into device pages, and a 512-row page is not a matrix (ticket 45).
-    CHECK (bridge.specs().size() == 75);
+    //
+    // 83 rather than 75 since ticket 48: the eight `Macro{N}/plainParams/kParamValue` leaves, because the
+    // matrix's source table names `Macro 1..8` and a macro that no one can move would be a source with no
+    // generator — the ticket's own defect, one step smaller. They are one group each, so the interface's
+    // page-per-group rule is untouched.
+    CHECK (bridge.specs().size() == 83);
     CHECK (schema.leafCount() > bridge.specs().size());
 }
 

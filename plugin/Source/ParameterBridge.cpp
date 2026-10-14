@@ -718,6 +718,28 @@ void ParameterBridge::buildSpecs()
         add (base + "kParamSustain", "Sustain", "Amp Envelope", ParamType::Float, ChoiceSet::None, 0, 1, 1.0);
         add (base + "kParamRelease", "Release (s)", "Amp Envelope", ParamType::Float, ChoiceSet::None, 0, 32, 0.05);
     }
+
+    // --- The eight macros (ticket 48) ------------------------------------------------------------------
+    //
+    // `Macro{N}/plainParams/kParamValue` is the reference's own leaf and its own range (0..100), and it is
+    // the whole of a macro that xerum can carry: the `name` beside it is the preset's label for the knob,
+    // not a value, and xerum's parameter table has no string type, so a macro arrives with the number the
+    // preset assigned it.
+    //
+    // They are parameters rather than document-only values because a macro is a **control**: the matrix's
+    // source table names `Macro 1..8`, so a macro that no one can move is the same defect as an LFO with
+    // no generator, one step smaller.
+    //
+    // **One group per macro, not one `Macros` group.** A page is a group and a page lives in one model
+    // module (`InterfacePlan.h`: the strip's report dots and the page's subtitle are keyed on it), and
+    // `Macro0..7` are eight modules — so eight pages of one knob is the shape the design's own rule
+    // produces. A single `Macros` page would span eight modules and make its own subtitle a lie.
+    for (int macro = 0; macro < dsp::kMacroCount; ++macro)
+    {
+        const auto index = std::to_string (macro);
+        add ("Macro" + index + "/plainParams/kParamValue", "Amount",
+             "Macro " + std::to_string (macro + 1), ParamType::Float, ChoiceSet::None, 0, 100, 0);
+    }
 }
 
 void ParameterBridge::buildChoices()
@@ -740,6 +762,22 @@ void ParameterBridge::buildChoices()
                     canonical = name;
                     break;
                 }
+
+            // **A source-driven family canonicalises to its `_OSC` variant** (ticket 48). Every PD, FM, AM
+            // and RM name carries the signal it reads as a suffix, and the enum's alphabetical order puts
+            // `kFMP_NOISE` before `kFM_OSC` and `kPD_FILT1` before `kPD_OSC` — so the first match would
+            // make the choice for "frequency modulation" read a signal the user never chose. The token a
+            // mode writes back to a document, and the source `warpSourceFromName` recovers from it, are
+            // therefore the plainest variant the family has. A *preset* is not affected: its own name is
+            // read for the variant it stored, and this only decides what the interface selects.
+            if (dsp::warpSourceFromName (canonical) != dsp::WarpSource::None)
+                for (const auto& name : names)
+                    if (dsp::warpModeFromName (name) == entry.mode
+                        && dsp::warpSourceFromName (name) == dsp::WarpSource::OtherOsc)
+                    {
+                        canonical = name;
+                        break;
+                    }
 
             warp_.labels.add (entry.label);
             warp_.modelNames.push_back (canonical);

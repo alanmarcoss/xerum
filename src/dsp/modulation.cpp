@@ -6,6 +6,11 @@
 // and LFOs do not live here, they arrive as values in `ModulationInputs`, which is what makes the whole
 // evaluator a pure function of its inputs and what makes moving to per-sample later a call-site change.
 //
+// **`mod_sources.h` is where those values are generated** (ticket `48`): ten LFOs, four matrix envelopes
+// and the voice's own samples. Before it, thirty-seven of this file's fifty-seven source cases read a
+// field nothing in `src/dsp` or `plugin/Source` ever assigned — so an editable matrix read a constant
+// zero, which is worse than no matrix because it looks like it works.
+//
 // Three of its facts come from measurement rather than from the manual, and each one is load-bearing:
 //
 //   * **the source names and their count** — 60, 1-based, verbatim from the reference's own string

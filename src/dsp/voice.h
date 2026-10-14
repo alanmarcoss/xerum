@@ -86,10 +86,36 @@
 // A destination's ramp is in units where a `kParamAmount` of 100 contributes 1.0 (modulation.h), so the
 // spans above are what turns a ramp into a parameter delta. The spans are a **stated convention** kept
 // equal to each parameter's schema range, not a measured curve; the fidelity suite replaces them.
+//
+// ## Where the generated half of the inputs comes from
+//
+// Ticket 48 — the four matrix envelopes, the ten LFOs (and their `LFO n Y` outputs), the eight macros and
+// the audio-rate sources are **generated**, and each has a specific author:
+//
+//   * `mod_sources.h`'s `ModulationGenerator` is the four matrix envelopes and the ten LFOs. A voice has
+//     one; the engine has one too, and it runs the LFOs a preset marks `Mono` **once for the pool** so a
+//     shared LFO's phase belongs to the transport rather than to whichever voice is playing.
+//   * the macros and the player's controls arrive through `setGlobalInputs` — the plugin fills them from
+//     its parameters and the host's MIDI.
+//   * `osc[0..2]`, `noiseOsc`, `subOsc` and `voiceFilter[0..1]` are **the voice's own samples from the
+//     previous frame**, captured in `render`. One frame old on purpose: a warp may sit on the first slot
+//     and read the third, so nothing here can be this frame's sample without reading an oscillator twice.
+//   * **the warp's modulator** is the same signal, handed to `WavetableOscillator::setWarpModulator` in
+//     `render`, resolved from the mode's name by `dsp::warpSourceFromName`. Ticket 25 built the
+//     source-driven families to take their modulator as an argument and *nothing ever called that
+//     function*, which left `kPD_OSC` (12.6% of the corpus's warps) and `kFM_OSC` (7.3%) transparent in
+//     the product while passing their own unit tests.
+//
+// The four matrix envelopes are their own generators with their own state, **not** the amplitude envelope:
+// `AmpEnvelope` shapes the voice's level from `VoiceSettings::envelope`, and `in.envelope[0..3]` are the
+// four `Env0..3` the preset stores. The two must not be conflated, and `mod_sources_test.cpp` asserts that
+// a matrix envelope with no destination leaves the render byte-identical while the amplitude envelope
+// still shapes it.
 
 #pragma once
 
 #include "filter.h"
+#include "mod_sources.h"
 #include "modulation.h"
 #include "noise_osc.h"
 #include "oscillator.h"
@@ -225,6 +251,13 @@ struct OscillatorSettings
     double unisonStereo { 0.0 };      ///< `kParamUnisonStereo`: percent spread; the sign mirrors it
     WarpMode warpMode[2] { WarpMode::None, WarpMode::None };
     double warpAmount[2] { 0.0, 0.0 };
+
+    /// **What each warp slot is driven by**, decoded from the mode's name (`kPD_OSC` -> the other
+    /// oscillator, `kFM_SUB` -> the sub, `kSelfPD` -> itself). Ticket `25` built the source-driven
+    /// families to take their modulator as an argument and nothing ever handed them one, so the twelve
+    /// warp modes whose name encodes a source were transparent in the product. This is the field that
+    /// lets `Voice::render` call `setWarpModulator`.
+    WarpSource warpSource[2] { WarpSource::None, WarpSource::None };
 };
 
 /// One filter slot's preset settings.
@@ -301,6 +334,13 @@ public:
     /// `prepare()`.
     void setSettings (const VoiceSettings& settings);
     const VoiceSettings& settings() const { return settings_; }
+
+    /// The modulation generators' settings, owned by `VoiceEngine` and read (never copied) here.
+    ///
+    /// A pointer rather than a copy for a measured reason: one LFO's drawn shape is up to 256 points of
+    /// three doubles, so a copy per voice would be 32 copies of the whole bank on every settings change.
+    /// The engine sets it once in `prepare` and the object outlives every voice.
+    void setModulationSources (const ModSourceSettings* settings) { sourceSettings_ = settings; }
 
     /// The voice's index in the pool. Carried into `ModulationInputs::voiceIndex`.
     void setVoiceIndex (int index) { voiceIndex_ = index; }
@@ -394,6 +434,18 @@ private:
     int pendingNote_ { 60 };
     double pendingVelocity_ { 1.0 };
     double pendingStartPitch_ { 60.0 };
+
+    // --- the modulation generators (ticket 48) ----------------------------------------------------------
+    //
+    // The per-voice half of `ModulationInputs`: the ten LFOs and the four matrix envelopes, plus the
+    // voice's *own* samples, which are the audio-rate sources (`OSC A/B/C`, `Filter 1/2`, `NOISE`, `SUB`)
+    // and the warp modulators. The samples are the previous frame's, one per source, which is what makes
+    // a cross-oscillator warp causal without a second read of any oscillator.
+    ModulationGenerator generator_ {};
+    const ModSourceSettings* sourceSettings_ { nullptr };
+
+    std::array<double, kSlotCount> lastSlotSample_ {};     ///< indexed like `kSlotCount`: A, B, C, NOISE, SUB
+    std::array<double, kFilterSlots> lastFilterSample_ {};
 };
 
 /// The fixed voice pool. Allocates in `prepare()` and never again.
@@ -415,6 +467,14 @@ public:
     /// Block-rate global modulation inputs (mod wheel, bend, macros). Per-voice values are filled in by
     /// the pool.
     void setGlobalInputs (const ModulationInputs& inputs) { globalInputs_ = inputs; }
+
+    /// The modulation generators' settings: the ten LFOs and the four matrix envelopes (ticket 48).
+    ///
+    /// **Message thread only.** The block carries the drawn point arrays, so the swap is made while the
+    /// audio thread is held out, the same handshake `setModulationSlots` uses — and the audio thread only
+    /// ever *reads* the result, which is why a voice holds a pointer to it rather than a copy.
+    void setModulationSources (const ModSourceSettings& settings) { sourceSettings_ = settings; }
+    const ModSourceSettings& modulationSources() const { return sourceSettings_; }
 
     void setSustainPedal (bool down);
 
@@ -455,6 +515,11 @@ private:
     VoiceSettings settings_ {};
     ModulationMatrix matrix_ {};
     ModulationInputs globalInputs_ {};
+
+    /// The generators' settings and the **one** generator the whole pool shares — the LFOs a preset
+    /// marks `Mono`. A voice's own generator advances only the other nine/non-mono ones.
+    ModSourceSettings sourceSettings_ {};
+    ModulationGenerator globalGenerator_ {};
 
     double sampleRate_ { 48000.0 };
     int polyphony_ { 16 };
