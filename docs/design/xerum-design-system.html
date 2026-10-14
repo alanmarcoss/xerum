@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xerum — Design System · Warm Analog</title>
+<style>
+  :root {
+    --bg:         #111110;
+    --surface:    #1a1917;
+    --surface2:   #222120;
+    --border:     #2a2826;
+    --border-hi:  #3a3836;
+    --fg:         #d4cec4;
+    --fg-dim:     #7a756b;
+    --fg-muted:   #4a4640;
+    --accent:     #e89b30;
+    --accent-dim: #8a5a18;
+    --accent-bg:  rgba(232,155,48,0.10);
+    --red:        #d94848;
+    --orange:     #d98848;
+    --green:      #50b868;
+    --font-body:  'DM Sans', -apple-system, sans-serif;
+    --font-mono:  'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: #0d0c0b;
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 40px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  h1 span { color: var(--fg-dim); font-weight: 400; font-size: 16px; margin-left: 12px; }
+  .subtitle {
+    font-size: 13px;
+    color: var(--fg-dim);
+    margin-bottom: 40px;
+    font-family: var(--font-mono);
+  }
+
+  h2 {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--fg);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-top: 48px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h3 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--fg);
+    margin-top: 24px;
+    margin-bottom: 10px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    font-size: 12px;
+  }
+  th {
+    font-weight: 700;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-family: var(--font-mono);
+  }
+  td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  tr:hover td { background: rgba(232,155,48,0.03); }
+
+  .swatch {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  .color-name { font-family: var(--font-mono); font-weight: 600; }
+  .color-hex { font-family: var(--font-mono); color: var(--fg-dim); }
+  .color-use { color: var(--fg-dim); font-size: 11px; }
+
+  .token-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--fg-dim);
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .token-block .key { color: var(--accent); }
+  .token-block .val { color: var(--fg); }
+
+  .demo-row {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+  .demo-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .demo-label {
+    font-size: 10px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: var(--font-mono);
+  }
+  .demo-state {
+    font-size: 9px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .type-sample {
+    margin-bottom: 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+  .type-size {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-muted);
+    min-width: 48px;
+    text-align: right;
+  }
+  .type-spec {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+    min-width: 120px;
+  }
+
+  .spacing-demo {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .spacing-block {
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-dim);
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--accent);
+  }
+
+  .knob-svg { width: 44px; height: 44px; }
+  .knob-body { fill: var(--surface2); stroke: var(--border); stroke-width: 1; }
+  .knob-track { fill: none; stroke: #2a2826; stroke-width: 3.5px; stroke-linecap: round; }
+  .knob-value { fill: none; stroke: var(--accent); stroke-width: 3.5px; stroke-linecap: round; }
+  .knob-mod-arc { fill: none; stroke: var(--accent-dim); stroke-width: 2px; stroke-linecap: round; opacity: 0.5; }
+  .knob-indicator { fill: var(--fg); }
+
+  .knob-svg-sm { width: 28px; height: 28px; }
+  .knob-svg-sm .knob-track { stroke-width: 2.5px; }
+  .knob-svg-sm .knob-value { stroke-width: 2.5px; }
+
+  .toggle-demo {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    color: var(--fg-dim);
+    padding: 3px 8px;
+    border-radius: 14px;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .toggle-demo.on { color: var(--accent); background: var(--accent-bg); border-color: var(--accent-dim); }
+  .toggle-demo.disabled { opacity: 0.4; cursor: not-allowed; }
+  .toggle-demo .td-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--fg-muted);
+  }
+  .toggle-demo.on .td-dot { background: var(--accent); box-shadow: 0 0 5px rgba(232,155,48,0.4); }
+
+  .btn-demo {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    cursor: pointer;
+    background: transparent;
+    transition: all 0.15s;
+  }
+  .btn-demo:hover { border-color: var(--border-hi); color: var(--fg); }
+  .btn-demo.active { border-color: var(--accent-dim); color: var(--accent); background: var(--accent-bg); }
+  .btn-demo.disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .fx-demo {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    width: 140px;
+  }
+  .fx-demo:hover { border-color: var(--border-hi); }
+  .fx-demo.active { border-color: var(--accent-dim); }
+  .fx-demo .fx-name { font-size: 9px; font-weight: 700; color: var(--fg); text-transform: uppercase; letter-spacing: 0.4px; }
+  .fx-demo .fx-type { font-size: 8px; color: var(--fg-dim); }
+
+  .import-demo {
+    height: 22px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 9px;
+    gap: 6px;
+    font-family: var(--font-mono);
+  }
+  .import-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .import-dot.clean { background: var(--green); }
+  .import-dot.warn { background: var(--orange); }
+  .import-dot.error { background: var(--red); }
+
+  .grid-demo {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 20px;
+    position: relative;
+    height: 120px;
+  }
+  .grid-cell {
+    position: absolute;
+    background: var(--accent-bg);
+    border: 1px dashed var(--accent-dim);
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 8px;
+    color: var(--accent-dim);
+  }
+
+  .section-note {
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin-bottom: 16px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<h1>xerum <span>Design System — Warm Analog</span></h1>
+<div class="subtitle">Style tokens for JUCE implementation · 900 × 600 baseline · all values in px unless noted</div>
+
+<h2>1. Palette</h2>
+<table>
+  <thead>
+    <tr><th>Token</th><th>Swatch</th><th>Hex</th><th>Use</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="color-name">--bg</td>
+      <td><span class="swatch" style="background:#111110"></span></td>
+      <td class="color-hex">#111110</td>
+      <td class="color-use">Window background</td>
+    </tr>
+    <tr>
+      <td class="color-name">--surface</td>
+      <td><span class="swatch" style="background:#1a1917"></span></td>
+      <td class="color-hex">#1a1917</td>
+      <td class="color-use">Panel background</td>
+    </tr>
+    <tr>
+      <td class="color-name">--surface2</td>
+      <td><span class="swatch" style="background:#222120"></span></td>
+      <td class="color-hex">#222120</td>
+      <td class="color-use">Knob body, header gradient, hover fills</td>
+    </tr>
+    <tr>
+      <td class="color-name">--border</td>
+      <td><span class="swatch" style="background:#2a2826"></span></td>
+      <td class="color-hex">#2a2826</td>
+      <td class="color-use">Default borders, knob track</td>
+    </tr>
+    <tr>
+      <td class="color-name">--border-hi</td>
+      <td><span class="swatch" style="background:#3a3836"></span></td>
+      <td class="color-hex">#3a3836</td>
+      <td class="color-use">Hover borders, focus outlines</td>
+    </tr>
+    <tr>
+      <td class="color-name">--fg</td>
+      <td><span class="swatch" style="background:#d4cec4"></span></td>
+      <td class="color-hex">#d4cec4</td>
+      <td class="color-use">Primary text, knob indicator, readouts</td>
+    </tr>
+    <tr>
+      <td class="color-name">--fg-dim</td>
+      <td><span class="swatch" style="background:#7a756b"></span></td>
+      <td class="color-hex">#7a756b</td>
+      <td class="color-use">Labels, secondary text, inactive tab</td>
+    </tr>
+    <tr>
+      <td class="color-name">--fg-muted</td>
+      <td><span class="swatch" style="background:#4a4640"></span></td>
+      <td class="color-hex">#4a4640</td>
+      <td class="color-use">Section titles, disabled text, axis labels</td>
+    </tr>
+    <tr>
+      <td class="color-name">--accent</td>
+      <td><span class="swatch" style="background:#e89b30"></span></td>
+      <td class="color-hex">#e89b30</td>
+      <td class="color-use">Active values, mod arcs, active tabs, source names</td>
+    </tr>
+    <tr>
+      <td class="color-name">--accent-dim</td>
+      <td><span class="swatch" style="background:#8a5a18"></span></td>
+      <td class="color-hex">#8a5a18</td>
+      <td class="color-use">Active borders, mod arc (secondary), knob active stroke</td>
+    </tr>
+    <tr>
+      <td class="color-name">--accent-bg</td>
+      <td><span class="swatch" style="background:rgba(232,155,48,0.10)"></span></td>
+      <td class="color-hex">rgba(232,155,48,0.10)</td>
+      <td class="color-use">Active toggle/button background, tag fill</td>
+    </tr>
+    <tr>
+      <td class="color-name">--red</td>
+      <td><span class="swatch" style="background:#d94848"></span></td>
+      <td class="color-hex">#d94848</td>
+      <td class="color-use">Negative amounts, high severity, error state</td>
+    </tr>
+    <tr>
+      <td class="color-name">--orange</td>
+      <td><span class="swatch" style="background:#d98848"></span></td>
+      <td class="color-hex">#d98848</td>
+      <td class="color-use">Warning state, medium severity</td>
+    </tr>
+    <tr>
+      <td class="color-name">--green</td>
+      <td><span class="swatch" style="background:#50b868"></span></td>
+      <td class="color-hex">#50b868</td>
+      <td class="color-use">Positive amounts, bypass active, clean import</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="token-block"><span class="key">--bg</span>:        <span class="val">#111110</span>;
+<span class="key">--surface</span>:   <span class="val">#1a1917</span>;
+<span class="key">--surface2</span>:  <span class="val">#222120</span>;
+<span class="key">--border</span>:    <span class="val">#2a2826</span>;
+<span class="key">--border-hi</span>: <span class="val">#3a3836</span>;
+<span class="key">--fg</span>:        <span class="val">#d4cec4</span>;
+<span class="key">--fg-dim</span>:    <span class="val">#7a756b</span>;
+<span class="key">--fg-muted</span>:  <span class="val">#4a4640</span>;
+<span class="key">--accent</span>:    <span class="val">#e89b30</span>;
+<span class="key">--accent-dim</span>: <span class="val">#8a5a18</span>;
+<span class="key">--accent-bg</span>: <span class="val">rgba(232,155,48,0.10)</span>;
+<span class="key">--red</span>:       <span class="val">#d94848</span>;
+<span class="key">--orange</span>:    <span class="val">#d98848</span>;
+<span class="key">--green</span>:     <span class="val">#50b868</span>;</div>
+
+
+<h2>2. Typography</h2>
+<p class="section-note">Display and body use DM Sans. All readouts, numeric values, and data use IBM Plex Mono. Monospaced numerals prevent layout jitter when values change.</p>
+
+<table>
+  <thead>
+    <tr><th>Token</th><th>Size</th><th>Weight</th><th>Family</th><th>Use</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="color-name">--type-logo</td>
+      <td>13px</td>
+      <td>800</td>
+      <td>DM Sans</td>
+      <td class="color-use">Logo mark in header</td>
+    </tr>
+    <tr>
+      <td class="color-name">--type-section</td>
+      <td>9px</td>
+      <td>700</td>
+      <td>DM Sans</td>
+      <td class="color-use">Panel titles, section titles</td>
+    </tr>
+    <tr>
+      <td class="color-name">--type-label</td>
+      <td>8px</td>
+      <td>400–600</td>
+      <td>DM Sans</td>
+      <td class="color-use">Knob labels, toggle labels, macro labels</td>
+    </tr>
+    <tr>
+      <td class="color-name">--type-tag</td>
+      <td>7px</td>
+      <td>600</td>
+      <td>DM Sans</td>
+      <td class="color-use">Tags (Active, LP 24dB), mod polarity, fx-type</td>
+    </tr>
+    <tr>
+      <td class="color-name">--type-readout</td>
+      <td>9px</td>
+      <td>500</td>
+      <td>IBM Plex Mono</td>
+      <td class="color-use">Knob readouts, value displays</td>
+    </tr>
+    <tr>
+      <td class="color-name">--type-readout-sm</td>
+      <td>8px</td>
+      <td>400</td>
+      <td>IBM Plex Mono</td>
+      <td class="color-use">Small knob readouts, table cells</td>
+    </tr>
+    <tr>
+      <td class="color-name">--type-data</td>
+      <td>8px</td>
+      <td>400</td>
+      <td>IBM Plex Mono</td>
+      <td class="color-use">Mod matrix cells, import bar, preset name</td>
+    </tr>
+    <tr>
+      <td class="color-name">--type-table-head</td>
+      <td>7px</td>
+      <td>700</td>
+      <td>IBM Plex Mono</td>
+      <td class="color-use">Mod matrix column headers</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2>3. Spacing Grid</h2>
+<p class="section-note">Base unit: 2px. All spacing derives from multiples of this unit. The 900×600 window uses a CSS Grid with 6 content rows and 3–6px gaps.</p>
+
+<div class="spacing-demo">
+  <div class="spacing-block" style="width:2px; height:24px;">2</div>
+  <div class="spacing-block" style="width:3px; height:24px;">3</div>
+  <div class="spacing-block" style="width:4px; height:24px;">4</div>
+  <div class="spacing-block" style="width:5px; height:24px;">5</div>
+  <div class="spacing-block" style="width:6px; height:24px;">6</div>
+  <div class="spacing-block" style="width:7px; height:24px;">7</div>
+  <div class="spacing-block" style="width:8px; height:24px;">8</div>
+  <div class="spacing-block" style="width:10px; height:24px;">10</div>
+  <div class="spacing-block" style="width:12px; height:24px;">12</div>
+  <div class="spacing-block" style="width:14px; height:24px;">14</div>
+</div>
+
+<table>
+  <thead>
+    <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">--gap-section</td><td>3px</td><td class="color-use">Between major grid rows (osc / noise / filter / matrix / bottom)</td></tr>
+    <tr><td class="color-name">--gap-panel</td><td>3px</td><td class="color-use">Inside panel: between title, controls, toggles</td></tr>
+    <tr><td class="color-name">--gap-knob</td><td>4px</td><td class="color-use">Between knobs in a row</td></tr>
+    <tr><td class="color-name">--gap-inline</td><td>6px</td><td class="color-use">Between inline elements (knobs + buttons in noise/sub)</td></tr>
+    <tr><td class="color-name">--pad-panel</td><td>5px 7px</td><td class="color-use">Panel inner padding</td></tr>
+    <tr><td class="color-name">--pad-header</td><td>0 14px</td><td class="color-use">Header horizontal padding</td></tr>
+    <tr><td class="color-name">--pad-content</td><td>5px 10px 4px</td><td class="color-use">Content area padding (top right bottom left)</td></tr>
+    <tr><td class="color-name">--pad-import</td><td>0 14px</td><td class="color-use">Import bar horizontal padding</td></tr>
+    <tr><td class="color-name">--gap-row</td><td>6px</td><td class="color-use">Between panels in the same row (osc-row, filter-section)</td></tr>
+    <tr><td class="color-name">--gap-bottom</td><td>6px</td><td class="color-use">Between FX section and macro section in bottom row</td></tr>
+    <tr><td class="color-name">--gap-fx</td><td>4px</td><td class="color-use">Between FX cards</td></tr>
+    <tr><td class="color-name">--gap-macro</td><td>6px</td><td class="color-use">Between macro knobs</td></tr>
+  </tbody>
+</table>
+
+
+<h2>4. Layout Grid</h2>
+<p class="section-note">The 900×600 window uses a 6-row CSS grid. Heights are auto (content-sized) except the mod matrix which flexes to fill remaining space.</p>
+
+<div class="grid-demo">
+  <div class="grid-cell" style="left:0; top:0; width:900px; height:34px;">Header — 34px</div>
+  <div class="grid-cell" style="left:10px; top:37px; width:880px; height:130px;">OSC A/B/C — auto (~130px)</div>
+  <div class="grid-cell" style="left:10px; top:170px; width:880px; height:60px;">Noise + Sub — auto (~60px)</div>
+  <div class="grid-cell" style="left:10px; top:233px; width:880px; height:100px;">Filter 1 + Filter 2 — auto (~100px)</div>
+  <div class="grid-cell" style="left:10px; top:336px; width:880px; height:120px;">Mod Matrix — flex 1 (fills remaining)</div>
+  <div class="grid-cell" style="left:10px; top:459px; width:880px; height:50px;">FX + Macros — auto (~50px)</div>
+  <div class="grid-cell" style="left:0; top:514px; width:900px; height:22px;">Import Bar — 22px</div>
+</div>
+
+<table>
+  <thead>
+    <tr><th>Row</th><th>Content</th><th>Height</th><th>Gap above</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">1</td><td>Header (logo, preset, tabs, VPO readouts)</td><td>34px fixed</td><td>—</td></tr>
+    <tr><td class="color-name">2</td><td>OSC A + OSC B + OSC C panels</td><td>auto (~130px)</td><td>5px top padding</td></tr>
+    <tr><td class="color-name">3</td><td>Noise + Sub panels</td><td>auto (~60px)</td><td>3px</td></tr>
+    <tr><td class="color-name">4</td><td>Filter 1 + Filter 2 panels</td><td>auto (~100px)</td><td>3px</td></tr>
+    <tr><td class="color-name">5</td><td>Mod Matrix (8 rows visible)</td><td>flex 1</td><td>3px</td></tr>
+    <tr><td class="color-name">6</td><td>FX chain + Macros</td><td>auto (~50px)</td><td>3px</td></tr>
+    <tr><td class="color-name">7</td><td>Import report bar</td><td>22px fixed</td><td>—</td></tr>
+  </tbody>
+</table>
+
+
+<h2>5. Control Geometry</h2>
+
+<h3>5.1 Knobs</h3>
+<table>
+  <thead>
+    <tr><th>Variant</th><th>Size</th><th>Body r</th><th>Track r</th><th>Stroke</th><th>Indicator</th><th>Arc sweep</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="color-name">Knob (default)</td>
+      <td>44 × 44px</td>
+      <td>18px</td>
+      <td>15px</td>
+      <td>3.5px round</td>
+      <td>r=2 circle at (22, 8)</td>
+      <td>225° → 315° CW (~270°)</td>
+    </tr>
+    <tr>
+      <td class="color-name">Knob-sm</td>
+      <td>28 × 28px</td>
+      <td>11px</td>
+      <td>9px</td>
+      <td>2.5px round</td>
+      <td>r=1.2 circle at (14, 6)</td>
+      <td>225° → 315° CW (~270°)</td>
+    </tr>
+    <tr>
+      <td class="color-name">Macro</td>
+      <td>26 × 26px</td>
+      <td>10px</td>
+      <td>8px</td>
+      <td>2px round</td>
+      <td>r=1 circle at (13, 6)</td>
+      <td>225° → 315° CW (~270°)</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="demo-row">
+  <div class="demo-item">
+    <svg class="knob-svg" viewBox="0 0 44 44">
+      <defs><filter id="ks"><feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-opacity="0.25"/></filter></defs>
+      <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+      <circle class="knob-track" cx="22" cy="22" r="15"/>
+      <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" />
+      <circle class="knob-indicator" cx="37.0" cy="22.0" r="2"/>
+    </svg>
+    <div class="demo-label">Default</div>
+  </div>
+  <div class="demo-item">
+    <svg class="knob-svg" viewBox="0 0 44 44">
+      <circle class="knob-body" cx="22" cy="22" r="18" style="stroke:#3a3836"/>
+      <circle class="knob-track" cx="22" cy="22" r="15"/>
+      <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" />
+      <circle class="knob-indicator" cx="37.0" cy="22.0" r="2"/>
+    </svg>
+    <div class="demo-label">Hover</div>
+    <div class="demo-state">border-hi</div>
+  </div>
+  <div class="demo-item">
+    <svg class="knob-svg" viewBox="0 0 44 44">
+      <circle class="knob-body" cx="22" cy="22" r="18" style="stroke:#8a5a18"/>
+      <circle class="knob-track" cx="22" cy="22" r="15"/>
+      <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" />
+      <circle class="knob-indicator" cx="37.0" cy="22.0" r="2" style="fill:#8a5a18"/>
+    </svg>
+    <div class="demo-label">Active / Drag</div>
+    <div class="demo-state">accent-dim</div>
+  </div>
+  <div class="demo-item">
+    <svg class="knob-svg" viewBox="0 0 44 44" style="opacity:0.4">
+      <circle class="knob-body" cx="22" cy="22" r="18"/>
+      <circle class="knob-track" cx="22" cy="22" r="15"/>
+      <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+      <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+    </svg>
+    <div class="demo-label">Disabled</div>
+    <div class="demo-state">40% opacity</div>
+  </div>
+  <div class="demo-item">
+    <svg class="knob-svg" viewBox="0 0 44 44">
+      <circle class="knob-body" cx="22" cy="22" r="18" style="stroke:#e89b30; stroke-width:1.5"/>
+      <circle class="knob-track" cx="22" cy="22" r="15"/>
+      <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" />
+      <circle class="knob-indicator" cx="37.0" cy="22.0" r="2"/>
+    </svg>
+    <div class="demo-label">Focused</div>
+    <div class="demo-state">accent ring</div>
+  </div>
+  <div class="demo-item">
+    <svg class="knob-svg" viewBox="0 0 44 44">
+      <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+      <circle class="knob-track" cx="22" cy="22" r="15"/>
+      <path class="knob-mod-arc" d="M11.4,11.4 A15,15 0 0,1 33.4,12.3" style="opacity:1"/>
+      <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" />
+      <circle class="knob-indicator" cx="33.4" cy="12.3" r="2"/>
+    </svg>
+    <div class="demo-label">Modulated</div>
+    <div class="demo-state">dim arc visible</div>
+  </div>
+</div>
+
+<div class="token-block"><span class="key">Knob arc geometry</span> (all sizes):
+  Start angle: <span class="val">225°</span> (7 o'clock position)
+  End angle:   <span class="val">315°</span> (5 o'clock position, CW)
+  Total sweep: <span class="val">~270°</span>
+  Center:      <span class="val">(size/2, size/2)</span>
+  Indicator:   <span class="val">placed at start-angle position on track radius</span>
+
+  SVG path formula (44px knob, r=15):
+    Zero:  <span class="val">M 8.8,35.2 A 15,15 0 0,1 22,7</span>     (start → top)
+    Full:  <span class="val">M 8.8,35.2 A 15,15 0 1,1 35.2,35.2</span> (start → end CW)
+    50%:   <span class="val">M 8.8,35.2 A 15,15 0 0,1 35.2,35.2</span> (start → midpoint)
+
+  Modulation arc: <span class="val">same geometry, stroke: --accent-dim, opacity 0.5</span>
+  When modulated: <span class="val">knob-value stroke changes to --accent, mod arc to opacity 1</span></div>
+
+
+<h3>5.2 Toggle</h3>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Height</td><td>auto (text + 4px vertical padding)</td></tr>
+    <tr><td class="color-name">Padding</td><td>2px 6px</td></tr>
+    <tr><td class="color-name">Border-radius</td><td>12px (pill)</td></tr>
+    <tr><td class="color-name">Font</td><td>8px DM Sans 400</td></tr>
+    <tr><td class="color-name">Dot size</td><td>5 × 5px, r=50%</td></tr>
+    <tr><td class="color-name">Gap (dot ↔ text)</td><td>3px</td></tr>
+  </tbody>
+</table>
+
+<div class="demo-row">
+  <div class="demo-item">
+    <div class="toggle-demo"><div class="td-dot"></div>Phase</div>
+    <div class="demo-label">Off</div>
+  </div>
+  <div class="demo-item">
+    <div class="toggle-demo on"><div class="td-dot"></div>Phase</div>
+    <div class="demo-label">On</div>
+  </div>
+  <div class="demo-item">
+    <div class="toggle-demo disabled"><div class="td-dot"></div>Phase</div>
+    <div class="demo-label">Disabled</div>
+  </div>
+</div>
+
+
+<h3>5.3 Button (btn-opt)</h3>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Padding</td><td>2px 7px</td></tr>
+    <tr><td class="color-name">Border-radius</td><td>12px (pill)</td></tr>
+    <tr><td class="color-name">Border</td><td>1px solid --border</td></tr>
+    <tr><td class="color-name">Font</td><td>8px DM Sans 600</td></tr>
+    <tr><td class="color-name">Gap (in row)</td><td>2px</td></tr>
+  </tbody>
+</table>
+
+<div class="demo-row">
+  <div class="demo-item">
+    <div style="display:flex;gap:2px;">
+      <div class="btn-demo">Brown</div>
+      <div class="btn-demo active">Pink</div>
+      <div class="btn-demo">White</div>
+      <div class="btn-demo">Geiger</div>
+    </div>
+    <div class="demo-label">Default + Active</div>
+  </div>
+  <div class="demo-item">
+    <div class="btn-demo disabled">Disabled</div>
+    <div class="demo-label">Disabled</div>
+  </div>
+</div>
+
+
+<h3>5.4 FX Card</h3>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Padding</td><td>4px 7px</td></tr>
+    <tr><td class="color-name">Border-radius</td><td>5px</td></tr>
+    <tr><td class="color-name">Border</td><td>1px solid --border</td></tr>
+    <tr><td class="color-name">Gap (name ↔ type)</td><td>1px</td></tr>
+    <tr><td class="color-name">FX name</td><td>8px DM Sans 700 uppercase</td></tr>
+    <tr><td class="color-name">FX type</td><td>7px DM Sans 400 --fg-dim</td></tr>
+    <tr><td class="color-name">Active border</td><td>--accent-dim</td></tr>
+  </tbody>
+</table>
+
+<div class="demo-row">
+  <div class="demo-item">
+    <div class="fx-demo">
+      <div class="fx-name">Distort</div>
+      <div class="fx-type">Tube · Drive 42%</div>
+    </div>
+    <div class="demo-label">Default</div>
+  </div>
+  <div class="demo-item">
+    <div class="fx-demo active">
+      <div class="fx-name">Distort</div>
+      <div class="fx-type">Tube · Drive 42%</div>
+    </div>
+    <div class="demo-label">Active</div>
+  </div>
+</div>
+
+
+<h3>5.5 Mod Matrix Bypass Dot</h3>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Size</td><td>6 × 6px, r=50%</td></tr>
+    <tr><td class="color-name">Inactive</td><td>--fg-muted</td></tr>
+    <tr><td class="color-name">Active</td><td>--green + 0 0 3px glow</td></tr>
+    <tr><td class="color-name">Hover</td><td>scale(1.3)</td></tr>
+  </tbody>
+</table>
+
+
+<h3>5.6 Import Bar</h3>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Height</td><td>22px</td></tr>
+    <tr><td class="color-name">Padding</td><td>0 14px</td></tr>
+    <tr><td class="color-name">Font</td><td>8px IBM Plex Mono</td></tr>
+    <tr><td class="color-name">Dot size</td><td>5 × 5px</td></tr>
+    <tr><td class="color-name">Clean state</td><td>green dot + "Nothing to report"</td></tr>
+    <tr><td class="color-name">Warning state</td><td>orange dot + entry count + severity counts</td></tr>
+    <tr><td class="color-name">Error state</td><td>red dot + entry count + severity counts</td></tr>
+  </tbody>
+</table>
+
+<div class="demo-row">
+  <div class="demo-item">
+    <div class="import-demo">
+      <div class="import-dot clean"></div>
+      <span style="color:#7a756b">Nothing to report</span>
+    </div>
+    <div class="demo-label">Clean</div>
+  </div>
+  <div class="demo-item">
+    <div class="import-demo">
+      <div class="import-dot warn"></div>
+      <span style="color:#7a756b">3 entries — 1 high, 2 info</span>
+    </div>
+    <div class="demo-label">Warning</div>
+  </div>
+  <div class="demo-item">
+    <div class="import-demo">
+      <div class="import-dot error"></div>
+      <span style="color:#7a756b">12 entries — 4 high, 5 med, 3 info</span>
+    </div>
+    <div class="demo-label">Error</div>
+  </div>
+</div>
+
+
+<h2>6. Panel</h2>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Background</td><td>--surface (#1a1917)</td></tr>
+    <tr><td class="color-name">Border</td><td>1px solid --border</td></tr>
+    <tr><td class="color-name">Border-radius</td><td>5px</td></tr>
+    <tr><td class="color-name">Padding</td><td>5px 7px</td></tr>
+    <tr><td class="color-name">Inner gap</td><td>3px (between title, controls, toggles)</td></tr>
+    <tr><td class="color-name">Shadow</td><td>inset 0 1px 0 rgba(255,255,255,0.02)</td></tr>
+  </tbody>
+</table>
+
+
+<h2>7. Header</h2>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Height</td><td>34px</td></tr>
+    <tr><td class="color-name">Background</td><td>linear-gradient(180deg, --surface2 → --surface)</td></tr>
+    <tr><td class="color-name">Padding</td><td>0 14px</td></tr>
+    <tr><td class="color-name">Border-bottom</td><td>1px solid --border</td></tr>
+    <tr><td class="color-name">Logo</td><td>13px DM Sans 800 --accent, letter-spacing 1.5px</td></tr>
+    <tr><td class="color-name">Preset name</td><td>10px IBM Plex Mono, --fg-dim, bg --bg, border --border, r=5px</td></tr>
+    <tr><td class="color-name">VPO readout</td><td>10px IBM Plex Mono, --fg-dim, value in --accent</td></tr>
+    <tr><td class="color-name">Tab</td><td>9px DM Sans 600, r=16px pill, --fg-dim → --accent on active</td></tr>
+  </tbody>
+</table>
+
+
+<h2>8. Filter Display</h2>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Background</td><td>--bg</td></tr>
+    <tr><td class="color-name">Border</td><td>1px solid --border</td></tr>
+    <tr><td class="color-name">Border-radius</td><td>3px</td></tr>
+    <tr><td class="color-name">Grid lines</td><td>--border, 0.5px stroke</td></tr>
+    <tr><td class="color-name">Response curve</td><td>--accent, 1.5px stroke</td></tr>
+    <tr><td class="color-name">Control point</td><td>r=3, fill --accent, stroke --bg 1px</td></tr>
+    <tr><td class="color-name">Frequency labels</td><td>6px IBM Plex Mono, --fg-muted</td></tr>
+    <tr><td class="color-name">Frequencies</td><td>20, 200, 2k, 20k Hz</td></tr>
+  </tbody>
+</table>
+
+
+<h2>9. Window</h2>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Value</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="color-name">Size (baseline)</td><td>900 × 600px</td></tr>
+    <tr><td class="color-name">Background</td><td>--bg</td></tr>
+    <tr><td class="color-name">Border</td><td>1px solid --border</td></tr>
+    <tr><td class="color-name">Border-radius</td><td>8px</td></tr>
+    <tr><td class="color-name">Shadow</td><td>0 8px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.03)</td></tr>
+    <tr><td class="color-name">Outer bg</td><td>#0d0c0b (slightly darker than window bg)</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>

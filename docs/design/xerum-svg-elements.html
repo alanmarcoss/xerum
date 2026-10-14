@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xerum — SVG Elements & Specs</title>
+<style>
+  :root {
+    --bg:         #111110;
+    --surface:    #1a1917;
+    --surface2:   #222120;
+    --border:     #2a2826;
+    --border-hi:  #3a3836;
+    --fg:         #d4cec4;
+    --fg-dim:     #7a756b;
+    --fg-muted:   #4a4640;
+    --accent:     #e89b30;
+    --accent-dim: #8a5a18;
+    --accent-bg:  rgba(232,155,48,0.10);
+    --red:        #d94848;
+    --green:      #50b868;
+    --font-body:  'DM Sans', -apple-system, sans-serif;
+    --font-mono:  'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: #0d0c0b;
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 40px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  h1 span { color: var(--fg-dim); font-weight: 400; font-size: 16px; margin-left: 12px; }
+  .subtitle {
+    font-size: 12px;
+    color: var(--fg-dim);
+    margin-bottom: 40px;
+    font-family: var(--font-mono);
+  }
+
+  h2 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--fg);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-top: 48px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .element-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+  }
+
+  .element-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    min-width: 200px;
+  }
+
+  .element-states {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .state-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .state-label {
+    font-size: 9px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: var(--font-mono);
+  }
+
+  .element-spec {
+    flex: 1;
+  }
+
+  .spec-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--fg);
+    margin-bottom: 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 12px;
+  }
+  th {
+    font-weight: 700;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding: 4px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 9px;
+    font-family: var(--font-mono);
+  }
+  td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .prop { font-family: var(--font-mono); font-weight: 600; color: var(--accent); font-size: 10px; }
+  .val { font-family: var(--font-mono); color: var(--fg); }
+
+  .svg-code {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre;
+    margin-top: 8px;
+  }
+  .svg-code .tag { color: var(--accent); }
+  .svg-code .attr { color: var(--fg-dim); }
+  .svg-code .val { color: var(--green); }
+
+  .swatch-sm {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    vertical-align: middle;
+    margin-right: 4px;
+  }
+</style>
+</head>
+<body>
+
+<h1>xerum <span>SVG Elements & Spec Tables</span></h1>
+<div class="subtitle">Every control at exact pixel dimensions · vector paths only · ready for JUCE</div>
+
+
+<h2>1. Knob — 44px (default)</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <svg width="44" height="44" viewBox="0 0 44 44">
+        <defs><filter id="k1"><feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-opacity="0.25"/></filter></defs>
+        <circle cx="22" cy="22" r="18" fill="#222120" stroke="#2a2826" stroke-width="1" filter="url(#k1)"/>
+        <circle cx="22" cy="22" r="15" fill="none" stroke="#2a2826" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" fill="none" stroke="#e89b30" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="37.0" cy="22.0" r="2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Default</div>
+    </div>
+    <div class="state-item">
+      <svg width="44" height="44" viewBox="0 0 44 44">
+        <circle cx="22" cy="22" r="18" fill="#222120" stroke="#3a3836" stroke-width="1"/>
+        <circle cx="22" cy="22" r="15" fill="none" stroke="#2a2826" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" fill="none" stroke="#e89b30" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="37.0" cy="22.0" r="2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Hover</div>
+    </div>
+    <div class="state-item">
+      <svg width="44" height="44" viewBox="0 0 44 44">
+        <circle cx="22" cy="22" r="18" fill="#222120" stroke="#8a5a18" stroke-width="1"/>
+        <circle cx="22" cy="22" r="15" fill="none" stroke="#2a2826" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" fill="none" stroke="#e89b30" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="37.0" cy="22.0" r="2" fill="#8a5a18"/>
+      </svg>
+      <div class="state-label">Active</div>
+    </div>
+    <div class="state-item">
+      <svg width="44" height="44" viewBox="0 0 44 44" style="opacity:0.4">
+        <circle cx="22" cy="22" r="18" fill="#222120" stroke="#2a2826" stroke-width="1"/>
+        <circle cx="22" cy="22" r="15" fill="none" stroke="#2a2826" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" fill="none" stroke="#e89b30" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="11.4" cy="11.4" r="2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Disabled</div>
+    </div>
+    <div class="state-item">
+      <svg width="44" height="44" viewBox="0 0 44 44">
+        <circle cx="22" cy="22" r="18" fill="#222120" stroke="#e89b30" stroke-width="1.5"/>
+        <circle cx="22" cy="22" r="15" fill="none" stroke="#2a2826" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" fill="none" stroke="#e89b30" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="37.0" cy="22.0" r="2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Focused</div>
+    </div>
+    <div class="state-item">
+      <svg width="44" height="44" viewBox="0 0 44 44">
+        <defs><filter id="k1m"><feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-opacity="0.25"/></filter></defs>
+        <circle cx="22" cy="22" r="18" fill="#222120" stroke="#2a2826" stroke-width="1" filter="url(#k1m)"/>
+        <circle cx="22" cy="22" r="15" fill="none" stroke="#2a2826" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M11.4,11.4 A15,15 0 0,1 33.4,12.3" fill="none" stroke="#8a5a18" stroke-width="2" stroke-linecap="round"/>
+        <path d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" fill="none" stroke="#e89b30" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="33.4" cy="12.3" r="2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Modulated</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Knob 44px — Spec</div>
+    <table>
+      <tr><td class="prop">ViewBox</td><td class="val">0 0 44 44</td></tr>
+      <tr><td class="prop">Body</td><td class="val">circle cx=22 cy=22 r=18, fill #222120, stroke #2a2826 1px</td></tr>
+      <tr><td class="prop">Body shadow</td><td class="val">feDropShadow dx=0 dy=1 stdDev=1.2 opacity=0.25</td></tr>
+      <tr><td class="prop">Track</td><td class="val">circle cx=22 cy=22 r=15, stroke #2a2826 3.5px round</td></tr>
+      <tr><td class="prop">Value arc</td><td class="val">stroke #e89b30 3.5px round</td></tr>
+      <tr><td class="prop">Mod arc</td><td class="val">stroke #8a5a18 2px round, opacity 0.5 → 1 when modulated</td></tr>
+      <tr><td class="prop">Indicator</td><td class="val">circle cx=22 cy=8 r=2, fill #d4cec4</td></tr>
+      <tr><td class="prop">Arc start</td><td class="val">225° (7 o'clock): x=8.8 y=35.2</td></tr>
+      <tr><td class="prop">Arc end</td><td class="val">315° (5 o'clock): x=35.2 y=35.2</td></tr>
+      <tr><td class="prop">Arc sweep</td><td class="val">~270° clockwise</td></tr>
+      <tr><td class="prop">Hover body</td><td class="val">stroke → #3a3836</td></tr>
+      <tr><td class="prop">Active body</td><td class="val">stroke → #8a5a18, indicator fill → #8a5a18</td></tr>
+      <tr><td class="prop">Focused body</td><td class="val">stroke → #e89b30, width 1.5px</td></tr>
+      <tr><td class="prop">Disabled</td><td class="val">opacity 0.4</td></tr>
+    </table>
+    <div class="svg-code"><span class="tag">&lt;svg</span> <span class="attr">width=</span><span class="val">"44"</span> <span class="attr">height=</span><span class="val">"44"</span> <span class="attr">viewBox=</span><span class="val">"0 0 44 44"</span><span class="tag">&gt;</span>
+  <span class="tag">&lt;defs&gt;&lt;filter</span> <span class="attr">id=</span><span class="val">"ks"</span><span class="tag">&gt;</span>
+    <span class="tag">&lt;feDropShadow</span> <span class="attr">dx=</span><span class="val">"0"</span> <span class="attr">dy=</span><span class="val">"1"</span> <span class="attr">stdDeviation=</span><span class="val">"1.2"</span> <span class="attr">flood-opacity=</span><span class="val">"0.25"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;/filter&gt;&lt;/defs&gt;</span>
+  <span class="tag">&lt;circle</span> <span class="attr">class=</span><span class="val">"knob-body"</span> <span class="attr">cx=</span><span class="val">"22"</span> <span class="attr">cy=</span><span class="val">"22"</span> <span class="attr">r=</span><span class="val">"18"</span> <span class="attr">filter=</span><span class="val">"url(#ks)"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;circle</span> <span class="attr">class=</span><span class="val">"knob-track"</span> <span class="attr">cx=</span><span class="val">"22"</span> <span class="attr">cy=</span><span class="val">"22"</span> <span class="attr">r=</span><span class="val">"15"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;path</span> <span class="attr">class=</span><span class="val">"knob-mod-arc"</span> <span class="attr">d=</span><span class="val">"M11.4,11.4 A15,15 0 0,1 33.4,12.3"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;path</span> <span class="attr">class=</span><span class="val">"knob-value"</span> <span class="attr">d=</span><span class="val">"M11.4,11.4 A15,15 0 0,1 37.0,22.0"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;circle</span> <span class="attr">class=</span><span class="val">"knob-indicator"</span> <span class="attr">cx=</span><span class="val">"22"</span> <span class="attr">cy=</span><span class="val">"8"</span> <span class="attr">r=</span><span class="val">"2"</span><span class="tag">/&gt;</span>
+<span class="tag">&lt;/svg&gt;</span></div>
+  </div>
+</div>
+
+
+<h2>2. Knob-sm — 28px</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <svg width="28" height="28" viewBox="0 0 28 28">
+        <circle cx="14" cy="14" r="11" fill="#222120" stroke="#2a2826" stroke-width="1"/>
+        <circle cx="14" cy="14" r="9" fill="none" stroke="#2a2826" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M7.6,7.6 A9,9 0 0,1 23.0,14.0" fill="none" stroke="#e89b30" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="23.0" cy="14.0" r="1.2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Default</div>
+    </div>
+    <div class="state-item">
+      <svg width="28" height="28" viewBox="0 0 28 28">
+        <circle cx="14" cy="14" r="11" fill="#222120" stroke="#3a3836" stroke-width="1"/>
+        <circle cx="14" cy="14" r="9" fill="none" stroke="#2a2826" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M7.6,7.6 A9,9 0 0,1 23.0,14.0" fill="none" stroke="#e89b30" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="23.0" cy="14.0" r="1.2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Hover</div>
+    </div>
+    <div class="state-item">
+      <svg width="28" height="28" viewBox="0 0 28 28" style="opacity:0.4">
+        <circle cx="14" cy="14" r="11" fill="#222120" stroke="#2a2826" stroke-width="1"/>
+        <circle cx="14" cy="14" r="9" fill="none" stroke="#2a2826" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M7.6,7.6 A9,9 0 0,1 7.6,7.6" fill="none" stroke="#e89b30" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="7.6" cy="7.6" r="1.2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Disabled</div>
+    </div>
+    <div class="state-item">
+      <svg width="28" height="28" viewBox="0 0 28 28">
+        <circle cx="14" cy="14" r="11" fill="#222120" stroke="#2a2826" stroke-width="1"/>
+        <circle cx="14" cy="14" r="9" fill="none" stroke="#2a2826" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M5.8,22.2 A9,9 0 0,1 22.2,5.8" fill="none" stroke="#8a5a18" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M7.6,7.6 A9,9 0 0,1 23.0,14.0" fill="none" stroke="#e89b30" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="22.2" cy="5.8" r="1.2" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Modulated</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Knob-sm 28px — Spec</div>
+    <table>
+      <tr><td class="prop">ViewBox</td><td class="val">0 0 28 28</td></tr>
+      <tr><td class="prop">Body</td><td class="val">circle cx=14 cy=14 r=11, fill #222120, stroke #2a2826 1px</td></tr>
+      <tr><td class="prop">Track</td><td class="val">circle cx=14 cy=14 r=9, stroke #2a2826 2.5px round</td></tr>
+      <tr><td class="prop">Value arc</td><td class="val">stroke #e89b30 2.5px round</td></tr>
+      <tr><td class="prop">Mod arc</td><td class="val">stroke #8a5a18 1.5px round</td></tr>
+      <tr><td class="prop">Indicator</td><td class="val">circle cx=14 cy=6 r=1.2, fill #d4cec4</td></tr>
+      <tr><td class="prop">Arc start</td><td class="val">225°: x=5.8 y=22.2</td></tr>
+      <tr><td class="prop">Arc end</td><td class="val">315°: x=22.2 y=22.2</td></tr>
+    </table>
+    <div class="svg-code"><span class="tag">&lt;svg</span> <span class="attr">width=</span><span class="val">"28"</span> <span class="attr">height=</span><span class="val">"28"</span> <span class="attr">viewBox=</span><span class="val">"0 0 28 28"</span><span class="tag">&gt;</span>
+  <span class="tag">&lt;circle</span> <span class="attr">cx=</span><span class="val">"14"</span> <span class="attr">cy=</span><span class="val">"14"</span> <span class="attr">r=</span><span class="val">"11"</span> <span class="attr">fill=</span><span class="val">"#222120"</span> <span class="attr">stroke=</span><span class="val">"#2a2826"</span> <span class="attr">stroke-width=</span><span class="val">"1"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;circle</span> <span class="attr">cx=</span><span class="val">"14"</span> <span class="attr">cy=</span><span class="val">"14"</span> <span class="attr">r=</span><span class="val">"9"</span> <span class="attr">fill=</span><span class="val">"none"</span> <span class="attr">stroke=</span><span class="val">"#2a2826"</span> <span class="attr">stroke-width=</span><span class="val">"2.5"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;path</span> <span class="attr">d=</span><span class="val">"M7.6,7.6 A9,9 0 0,1 23.0,14.0"</span> <span class="attr">fill=</span><span class="val">"none"</span> <span class="attr">stroke=</span><span class="val">"#e89b30"</span> <span class="attr">stroke-width=</span><span class="val">"2.5"</span><span class="tag">/&gt;</span>
+  <span class="tag">&lt;circle</span> <span class="attr">cx=</span><span class="val">"14"</span> <span class="attr">cy=</span><span class="val">"6"</span> <span class="attr">r=</span><span class="val">"1.2"</span> <span class="attr">fill=</span><span class="val">"#d4cec4"</span><span class="tag">/&gt;</span>
+<span class="tag">&lt;/svg&gt;</span></div>
+  </div>
+</div>
+
+
+<h2>3. Macro Knob — 26px</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <svg width="26" height="26" viewBox="0 0 26 26">
+        <circle cx="13" cy="13" r="10" fill="#222120" stroke="#2a2826" stroke-width="1"/>
+        <circle cx="13" cy="13" r="8" fill="none" stroke="#2a2826" stroke-width="2" stroke-linecap="round"/>
+        <path d="M7.3,7.3 A8,8 0 0,1 21.0,13.0" fill="none" stroke="#e89b30" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="21.0" cy="13.0" r="1" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Default</div>
+    </div>
+    <div class="state-item">
+      <svg width="26" height="26" viewBox="0 0 26 26">
+        <circle cx="13" cy="13" r="10" fill="#222120" stroke="#3a3836" stroke-width="1"/>
+        <circle cx="13" cy="13" r="8" fill="none" stroke="#2a2826" stroke-width="2" stroke-linecap="round"/>
+        <path d="M7.3,7.3 A8,8 0 0,1 21.0,13.0" fill="none" stroke="#e89b30" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="21.0" cy="13.0" r="1" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Hover</div>
+    </div>
+    <div class="state-item">
+      <svg width="26" height="26" viewBox="0 0 26 26" style="opacity:0.4">
+        <circle cx="13" cy="13" r="10" fill="#222120" stroke="#2a2826" stroke-width="1"/>
+        <circle cx="13" cy="13" r="8" fill="none" stroke="#2a2826" stroke-width="2" stroke-linecap="round"/>
+        <path d="M7.3,7.3 A8,8 0 0,1 7.3,7.3" fill="none" stroke="#e89b30" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="7.3" cy="7.3" r="1" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Disabled</div>
+    </div>
+    <div class="state-item">
+      <svg width="26" height="26" viewBox="0 0 26 26">
+        <circle cx="13" cy="13" r="10" fill="#222120" stroke="#2a2826" stroke-width="1"/>
+        <circle cx="13" cy="13" r="8" fill="none" stroke="#2a2826" stroke-width="2" stroke-linecap="round"/>
+        <path d="M7.3,7.3 A8,8 0 1,1 16.1,20.4" fill="none" stroke="#8a5a18" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M7.3,7.3 A8,8 0 0,1 21.0,13.0" fill="none" stroke="#e89b30" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="16.1" cy="20.4" r="1" fill="#d4cec4"/>
+      </svg>
+      <div class="state-label">Modulated</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Macro 26px — Spec</div>
+    <table>
+      <tr><td class="prop">ViewBox</td><td class="val">0 0 26 26</td></tr>
+      <tr><td class="prop">Body</td><td class="val">circle cx=13 cy=13 r=10, fill #222120, stroke #2a2826 1px</td></tr>
+      <tr><td class="prop">Track</td><td class="val">circle cx=13 cy=13 r=8, stroke #2a2826 2px round</td></tr>
+      <tr><td class="prop">Value arc</td><td class="val">stroke #e89b30 2px round</td></tr>
+      <tr><td class="prop">Indicator</td><td class="val">circle cx=13 cy=6 r=1, fill #d4cec4</td></tr>
+      <tr><td class="prop">Arc start</td><td class="val">225°: x=5.8 y=20.2</td></tr>
+      <tr><td class="prop">Arc end</td><td class="val">315°: x=20.2 y=20.2</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>4. Toggle</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <div style="display:inline-flex;align-items:center;gap:3px;font-size:8px;color:#7a756b;padding:2px 6px;border-radius:12px;border:1px solid transparent;">
+        <div style="width:5px;height:5px;border-radius:50%;background:#4a4640;"></div>Phase
+      </div>
+      <div class="state-label">Off</div>
+    </div>
+    <div class="state-item">
+      <div style="display:inline-flex;align-items:center;gap:3px;font-size:8px;color:#e89b30;padding:2px 6px;border-radius:12px;border:1px solid #8a5a18;background:rgba(232,155,48,0.10);">
+        <div style="width:5px;height:5px;border-radius:50%;background:#e89b30;box-shadow:0 0 5px rgba(232,155,48,0.4);"></div>Phase
+      </div>
+      <div class="state-label">On</div>
+    </div>
+    <div class="state-item">
+      <div style="display:inline-flex;align-items:center;gap:3px;font-size:8px;color:#7a756b;padding:2px 6px;border-radius:12px;border:1px solid transparent;opacity:0.4;">
+        <div style="width:5px;height:5px;border-radius:50%;background:#4a4640;"></div>Phase
+      </div>
+      <div class="state-label">Disabled</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Toggle — Spec</div>
+    <table>
+      <tr><td class="prop">Padding</td><td class="val">2px 6px</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">12px (pill)</td></tr>
+      <tr><td class="prop">Border</td><td class="val">1px solid transparent (off) / #8a5a18 (on)</td></tr>
+      <tr><td class="prop">Font</td><td class="val">8px DM Sans, #7a756b (off) / #e89b30 (on)</td></tr>
+      <tr><td class="prop">Dot</td><td class="val">5×5px r=50%, fill #4a4640 (off) / #e89b30 (on)</td></tr>
+      <tr><td class="prop">On glow</td><td class="val">box-shadow 0 0 5px rgba(232,155,48,0.4)</td></tr>
+      <tr><td class="prop">Gap (dot↔text)</td><td class="val">3px</td></tr>
+      <tr><td class="prop">Background</td><td class="val">transparent (off) / rgba(232,155,48,0.10) (on)</td></tr>
+      <tr><td class="prop">Disabled</td><td class="val">opacity 0.4</td></tr>
+      <tr><td class="prop">Hover</td><td class="val">background #222120 (off only)</td></tr>
+      <tr><td class="prop">Active</td><td class="val">transform scale(0.95)</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>5. Button (btn-opt)</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <div style="font-size:8px;font-weight:600;color:#7a756b;padding:2px 7px;border:1px solid #2a2826;border-radius:12px;">Brown</div>
+      <div class="state-label">Default</div>
+    </div>
+    <div class="state-item">
+      <div style="font-size:8px;font-weight:600;color:#d4cec4;padding:2px 7px;border:1px solid #3a3836;border-radius:12px;">Brown</div>
+      <div class="state-label">Hover</div>
+    </div>
+    <div class="state-item">
+      <div style="font-size:8px;font-weight:600;color:#e89b30;padding:2px 7px;border:1px solid #8a5a18;border-radius:12px;background:rgba(232,155,48,0.10);">Pink</div>
+      <div class="state-label">Active</div>
+    </div>
+    <div class="state-item">
+      <div style="font-size:8px;font-weight:600;color:#7a756b;padding:2px 7px;border:1px solid #2a2826;border-radius:12px;opacity:0.4;">Brown</div>
+      <div class="state-label">Disabled</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Button (btn-opt) — Spec</div>
+    <table>
+      <tr><td class="prop">Padding</td><td class="val">2px 7px</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">12px (pill)</td></tr>
+      <tr><td class="prop">Border</td><td class="val">1px solid #2a2826 (default) / #3a3836 (hover) / #8a5a18 (active)</td></tr>
+      <tr><td class="prop">Font</td><td class="val">8px DM Sans 600, #7a756b → #d4cec4 (hover) / #e89b30 (active)</td></tr>
+      <tr><td class="prop">Background</td><td class="val">transparent (default) / rgba(232,155,48,0.10) (active)</td></tr>
+      <tr><td class="prop">Gap (in row)</td><td class="val">2px</td></tr>
+      <tr><td class="prop">Disabled</td><td class="val">opacity 0.4</td></tr>
+      <tr><td class="prop">Active press</td><td class="val">transform scale(0.95)</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>6. FX Card</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <div style="background:#1a1917;border:1px solid #2a2826;border-radius:5px;padding:4px 7px;width:120px;">
+        <div style="font-size:8px;font-weight:700;color:#d4cec4;text-transform:uppercase;letter-spacing:0.4px;">Distort</div>
+        <div style="font-size:7px;color:#7a756b;">Tube · Drive 42%</div>
+      </div>
+      <div class="state-label">Default</div>
+    </div>
+    <div class="state-item">
+      <div style="background:#1a1917;border:1px solid #3a3836;border-radius:5px;padding:4px 7px;width:120px;">
+        <div style="font-size:8px;font-weight:700;color:#d4cec4;text-transform:uppercase;letter-spacing:0.4px;">Distort</div>
+        <div style="font-size:7px;color:#7a756b;">Tube · Drive 42%</div>
+      </div>
+      <div class="state-label">Hover</div>
+    </div>
+    <div class="state-item">
+      <div style="background:#1a1917;border:1px solid #8a5a18;border-radius:5px;padding:4px 7px;width:120px;">
+        <div style="font-size:8px;font-weight:700;color:#d4cec4;text-transform:uppercase;letter-spacing:0.4px;">Distort</div>
+        <div style="font-size:7px;color:#7a756b;">Tube · Drive 42%</div>
+      </div>
+      <div class="state-label">Active</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">FX Card — Spec</div>
+    <table>
+      <tr><td class="prop">Padding</td><td class="val">4px 7px</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">5px</td></tr>
+      <tr><td class="prop">Border</td><td class="val">1px solid #2a2826 → #3a3836 (hover) / #8a5a18 (active)</td></tr>
+      <tr><td class="prop">Background</td><td class="val">#1a1917</td></tr>
+      <tr><td class="prop">FX name</td><td class="val">8px DM Sans 700 uppercase, #d4cec4, letter-spacing 0.4px</td></tr>
+      <tr><td class="prop">FX type</td><td class="val">7px DM Sans 400, #7a756b</td></tr>
+      <tr><td class="prop">Gap (name↔type)</td><td class="val">1px</td></tr>
+      <tr><td class="prop">Inner shadow</td><td class="val">inset 0 0 8px rgba(232,155,48,0.04) (active only)</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>7. Mod Matrix Bypass Dot</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <svg width="10" height="10"><circle cx="5" cy="5" r="3" fill="#4a4640"/></svg>
+      <div class="state-label">Off</div>
+    </div>
+    <div class="state-item">
+      <svg width="10" height="10"><circle cx="5" cy="5" r="3" fill="#50b868"/></svg>
+      <div class="state-label">Active</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Bypass Dot — Spec</div>
+    <table>
+      <tr><td class="prop">Size</td><td class="val">6×6px (SVG 10×10 for padding)</td></tr>
+      <tr><td class="prop">Radius</td><td class="val">r=3 (50%)</td></tr>
+      <tr><td class="prop">Inactive fill</td><td class="val">#4a4640</td></tr>
+      <tr><td class="prop">Active fill</td><td class="val">#50b868</td></tr>
+      <tr><td class="prop">Active glow</td><td class="val">0 0 3px rgba(80,184,104,0.3)</td></tr>
+      <tr><td class="prop">Hover</td><td class="val">transform scale(1.3)</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>8. Import Bar Dot</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <svg width="10" height="10"><circle cx="5" cy="5" r="2.5" fill="#50b868"/></svg>
+      <div class="state-label">Clean</div>
+    </div>
+    <div class="state-item">
+      <svg width="10" height="10"><circle cx="5" cy="5" r="2.5" fill="#d98848"/></svg>
+      <div class="state-label">Warning</div>
+    </div>
+    <div class="state-item">
+      <svg width="10" height="10"><circle cx="5" cy="5" r="2.5" fill="#d94848"/></svg>
+      <div class="state-label">Error</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Import Dot — Spec</div>
+    <table>
+      <tr><td class="prop">Size</td><td class="val">5×5px</td></tr>
+      <tr><td class="prop">Clean</td><td class="val">#50b868</td></tr>
+      <tr><td class="prop">Warning</td><td class="val">#d98848</td></tr>
+      <tr><td class="prop">Error</td><td class="val">#d94848</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>9. Wavetable Name Field</h2>
+<div class="element-block">
+  <div class="state-item">
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#d4cec4;background:#111110;border:1px solid #2a2826;border-radius:3px;padding:2px 7px;width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Analog_Saw_01.wav</div>
+    <div class="state-label">Default</div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Wavetable Name — Spec</div>
+    <table>
+      <tr><td class="prop">Font</td><td class="val">9px IBM Plex Mono, #d4cec4</td></tr>
+      <tr><td class="prop">Background</td><td class="val">#111110</td></tr>
+      <tr><td class="prop">Border</td><td class="val">1px solid #2a2826</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">3px</td></tr>
+      <tr><td class="prop">Padding</td><td class="val">2px 7px</td></tr>
+      <tr><td class="prop">Overflow</td><td class="val">hidden, text-overflow ellipsis</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>10. Arrow Button</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <div style="width:16px;height:16px;display:flex;align-items:center;justify-content:center;background:#111110;border:1px solid #2a2826;border-radius:3px;color:#7a756b;font-size:8px;">◀</div>
+      <div class="state-label">Default</div>
+    </div>
+    <div class="state-item">
+      <div style="width:16px;height:16px;display:flex;align-items:center;justify-content:center;background:#111110;border:1px solid #3a3836;border-radius:3px;color:#d4cec4;font-size:8px;">◀</div>
+      <div class="state-label">Hover</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Arrow Button — Spec</div>
+    <table>
+      <tr><td class="prop">Size</td><td class="val">16×16px</td></tr>
+      <tr><td class="prop">Background</td><td class="val">#111110</td></tr>
+      <tr><td class="prop">Border</td><td class="val">1px solid #2a2826 → #3a3836 (hover)</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">3px</td></tr>
+      <tr><td class="prop">Arrow color</td><td class="val">#7a756b → #d4cec4 (hover)</td></tr>
+      <tr><td class="prop">Arrow size</td><td class="val">8px</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>11. Header Tab</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <div style="font-size:9px;font-weight:600;color:#7a756b;padding:3px 10px;border-radius:16px;text-transform:uppercase;letter-spacing:0.5px;">Device</div>
+      <div class="state-label">Default</div>
+    </div>
+    <div class="state-item">
+      <div style="font-size:9px;font-weight:600;color:#d4cec4;padding:3px 10px;border-radius:16px;text-transform:uppercase;letter-spacing:0.5px;background:#222120;">Device</div>
+      <div class="state-label">Hover</div>
+    </div>
+    <div class="state-item">
+      <div style="font-size:9px;font-weight:600;color:#e89b30;padding:3px 10px;border-radius:16px;text-transform:uppercase;letter-spacing:0.5px;background:rgba(232,155,48,0.10);">Device</div>
+      <div class="state-label">Active</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Tab — Spec</div>
+    <table>
+      <tr><td class="prop">Padding</td><td class="val">3px 10px</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">16px (pill)</td></tr>
+      <tr><td class="prop">Font</td><td class="val">9px DM Sans 600 uppercase, letter-spacing 0.5px</td></tr>
+      <tr><td class="prop">Default</td><td class="val">#7a756b, bg transparent</td></tr>
+      <tr><td class="prop">Hover</td><td class="val">#d4cec4, bg #222120</td></tr>
+      <tr><td class="prop">Active</td><td class="val">#e89b30, bg rgba(232,155,48,0.10)</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>12. Panel</h2>
+<div class="element-block">
+  <div class="state-item">
+    <div style="background:#1a1917;border:1px solid #2a2826;border-radius:5px;padding:5px 7px;width:160px;height:60px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);">
+      <div style="font-size:9px;font-weight:700;color:#d4cec4;text-transform:uppercase;letter-spacing:0.6px;">Panel Title</div>
+    </div>
+    <div class="state-label">Default</div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Panel — Spec</div>
+    <table>
+      <tr><td class="prop">Background</td><td class="val">#1a1917</td></tr>
+      <tr><td class="prop">Border</td><td class="val">1px solid #2a2826</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">5px</td></tr>
+      <tr><td class="prop">Padding</td><td class="val">5px 7px</td></tr>
+      <tr><td class="prop">Inner gap</td><td class="val">3px</td></tr>
+      <tr><td class="prop">Shadow</td><td class="val">inset 0 1px 0 rgba(255,255,255,0.02)</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>13. Tag</h2>
+<div class="element-block">
+  <div class="element-states">
+    <div class="state-item">
+      <span style="font-size:7px;font-weight:600;color:#e89b30;background:rgba(232,155,48,0.10);padding:1px 5px;border-radius:8px;letter-spacing:0.3px;">Active</span>
+      <div class="state-label">Tag</div>
+    </div>
+    <div class="state-item">
+      <span style="font-size:7px;font-weight:600;color:#e89b30;background:rgba(232,155,48,0.10);padding:1px 5px;border-radius:8px;letter-spacing:0.3px;">LP 24dB</span>
+      <div class="state-label">Tag</div>
+    </div>
+    <div class="state-item">
+      <span style="font-size:7px;font-weight:600;color:#e89b30;background:rgba(232,155,48,0.10);padding:1px 5px;border-radius:8px;letter-spacing:0.3px;">8 / 64</span>
+      <div class="state-label">Tag</div>
+    </div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Tag — Spec</div>
+    <table>
+      <tr><td class="prop">Font</td><td class="val">7px DM Sans 600, #e89b30</td></tr>
+      <tr><td class="prop">Background</td><td class="val">rgba(232,155,48,0.10)</td></tr>
+      <tr><td class="prop">Padding</td><td class="val">1px 5px</td></tr>
+      <tr><td class="prop">Border-radius</td><td class="val">8px</td></tr>
+      <tr><td class="prop">Letter-spacing</td><td class="val">0.3px</td></tr>
+    </table>
+  </div>
+</div>
+
+
+<h2>14. Section Title</h2>
+<div class="element-block">
+  <div class="state-item">
+    <div style="font-size:8px;font-weight:700;color:#4a4640;text-transform:uppercase;letter-spacing:1.5px;">Effects Chain</div>
+    <div class="state-label">Section title</div>
+  </div>
+  <div class="element-spec">
+    <div class="spec-title">Section Title — Spec</div>
+    <table>
+      <tr><td class="prop">Font</td><td class="val">8px DM Sans 700 uppercase</td></tr>
+      <tr><td class="prop">Color</td><td class="val">#4a4640</td></tr>
+      <tr><td class="prop">Letter-spacing</td><td class="val">1.5px</td></tr>
+    </table>
+  </div>
+</div>
+
+</body>
+</html>

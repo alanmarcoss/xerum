@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xerum · Warm Analog</title>
+<style>
+  :root {
+    --bg:         #111110;
+    --surface:    #1a1917;
+    --surface2:   #222120;
+    --border:     #2a2826;
+    --border-hi:  #3a3836;
+    --fg:         #d4cec4;
+    --fg-dim:     #7a756b;
+    --fg-muted:   #4a4640;
+    --accent:     #e89b30;
+    --accent-dim: #8a5a18;
+    --accent-bg:  rgba(232,155,48,0.10);
+    --red:        #d94848;
+    --orange:     #d98848;
+    --green:      #50b868;
+    --knob-size:  44px;
+    --knob-stroke: 3.5px;
+    --knob-track: #2a2826;
+    --knob-arc:   var(--accent);
+    --radius:     5px;
+    --font-body:  'DM Sans', -apple-system, sans-serif;
+    --font-mono:  'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: #0d0c0b;
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 11px;
+    line-height: 1.3;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 24px;
+    min-height: 100vh;
+  }
+
+  .synth {
+    width: 900px;
+    height: 600px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+
+  .header {
+    height: 34px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface2) 0%, var(--surface) 100%);
+    flex-shrink: 0;
+    gap: 12px;
+  }
+  .logo {
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  .preset-name {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+    padding: 2px 8px;
+    background: var(--bg);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  .header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tab {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    padding: 3px 10px;
+    border-radius: 16px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.15s;
+  }
+  .tab:hover { color: var(--fg); background: var(--surface2); }
+  .tab.active { color: var(--accent); background: var(--accent-bg); }
+  .vpo-readout {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+    padding: 2px 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .vpo-readout span { color: var(--accent); }
+
+  .content {
+    flex: 1;
+    padding: 5px 10px 4px;
+    display: grid;
+    grid-template-rows: auto auto auto 1fr auto auto;
+    gap: 3px;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .section-title {
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    padding: 0 2px;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 5px 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+  }
+  .panel-title {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  .tag {
+    font-size: 7px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-bg);
+    padding: 1px 5px;
+    border-radius: 8px;
+    letter-spacing: 0.3px;
+  }
+
+  .osc-row { display: flex; gap: 6px; }
+  .osc-panel { flex: 1; }
+  .osc-wavetable {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+  }
+  .wavetable-name {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 7px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wavetable-arrows { display: flex; gap: 1px; }
+  .arrow-btn {
+    width: 16px; height: 16px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--fg-dim);
+    font-size: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .arrow-btn:hover { border-color: var(--border-hi); color: var(--fg); }
+
+  .osc-knobs { display: flex; gap: 4px; align-items: flex-start; }
+  .osc-controls { display: flex; gap: 3px; flex-wrap: wrap; align-items: center; }
+
+  .knob-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+  .knob-svg { width: var(--knob-size); height: var(--knob-size); }
+  .knob-body {
+    fill: var(--surface2);
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+  .knob-track { fill: none; stroke: var(--knob-track); stroke-width: var(--knob-stroke); stroke-linecap: round; }
+  .knob-value { fill: none; stroke: var(--knob-arc); stroke-width: var(--knob-stroke); stroke-linecap: round; }
+  .knob-mod-arc { fill: none; stroke: var(--accent-dim); stroke-width: 2px; stroke-linecap: round; opacity: 0.5; }
+  .knob-indicator { fill: var(--fg); }
+  .knob-label { font-size: 8px; color: var(--fg-dim); text-align: center; white-space: nowrap; }
+  .knob-readout {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--fg);
+    text-align: center;
+    min-width: 24px;
+    font-weight: 500;
+  }
+
+  .knob-sm { --knob-size: 28px; --knob-stroke: 2.5px; }
+  .knob-sm .knob-label { font-size: 7px; }
+  .knob-sm .knob-readout { font-size: 8px; }
+
+  .knob-wrap.modulated .knob-value { stroke: var(--accent); }
+  .knob-wrap.modulated .knob-mod-arc { opacity: 1; }
+  .knob-wrap:hover .knob-body { stroke: var(--border-hi); }
+  .knob-wrap:active .knob-body { stroke: var(--accent-dim); }
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 8px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 12px;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+  .toggle:hover { color: var(--fg); background: var(--surface2); }
+  .toggle.on { color: var(--accent); background: var(--accent-bg); border-color: var(--accent-dim); }
+  .toggle-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--fg-muted);
+    transition: all 0.15s;
+  }
+  .toggle.on .toggle-dot { background: var(--accent); box-shadow: 0 0 5px rgba(232,155,48,0.4); }
+  .toggle:active { transform: scale(0.95); }
+
+  .btn-row { display: flex; gap: 2px; }
+  .btn-opt {
+    font-size: 8px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: transparent;
+  }
+  .btn-opt:hover { border-color: var(--border-hi); color: var(--fg); }
+  .btn-opt.active { border-color: var(--accent-dim); color: var(--accent); background: var(--accent-bg); }
+  .btn-opt:active { transform: scale(0.95); }
+
+  .filter-section { display: flex; gap: 6px; }
+  .filter-main { flex: 1; display: flex; gap: 6px; align-items: flex-start; }
+  .filter-controls { display: flex; gap: 6px; align-items: flex-start; }
+  .filter-viz { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .filter-display {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    flex: 1;
+  }
+  .filter-sidebar { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .filter-type-picker { display: flex; gap: 2px; }
+  .filter-type-btn {
+    font-size: 8px;
+    color: var(--fg-dim);
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: transparent;
+  }
+  .filter-type-btn:hover { border-color: var(--border-hi); color: var(--fg); }
+  .filter-type-btn.active { border-color: var(--accent-dim); color: var(--accent); background: var(--accent-bg); }
+
+  .mod-panel { min-height: 0; flex: 1; }
+  .mod-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8px;
+  }
+  .mod-table th {
+    font-weight: 700;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 2px 5px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 7px;
+  }
+  .mod-table td {
+    padding: 2px 5px;
+    border-bottom: 1px solid var(--border);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 8px;
+  }
+  .mod-table tr:hover td { background: var(--surface2); }
+  .mod-src { color: var(--accent); }
+  .mod-amt { text-align: right; }
+  .mod-amt.pos { color: var(--green); }
+  .mod-amt.neg { color: var(--red); }
+  .mod-dest { color: var(--fg-dim); }
+  .mod-bypass {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--fg-muted);
+    display: inline-block;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mod-bypass.active { background: var(--green); box-shadow: 0 0 3px rgba(80,184,104,0.3); }
+  .mod-bypass:hover { transform: scale(1.3); }
+  .mod-polarity {
+    font-size: 7px; color: var(--fg-muted); cursor: pointer;
+    transition: color 0.15s;
+  }
+  .mod-polarity:hover { color: var(--accent); }
+
+  .bottom-row { display: flex; gap: 6px; align-items: stretch; }
+  .fx-section { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .fx-row { display: flex; gap: 4px; }
+  .fx-card {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .fx-card:hover { border-color: var(--border-hi); }
+  .fx-card.active { border-color: var(--accent-dim); box-shadow: inset 0 0 8px rgba(232,155,48,0.04); }
+  .fx-card .fx-name { font-size: 8px; font-weight: 700; color: var(--fg); text-transform: uppercase; letter-spacing: 0.4px; }
+  .fx-card .fx-type { font-size: 7px; color: var(--fg-dim); }
+
+  .macro-section { display: flex; flex-direction: column; gap: 3px; align-items: center; }
+  .macro-strip { display: flex; gap: 6px; }
+  .macro-item { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+  .macro-label { font-size: 7px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+
+  .import-bar {
+    height: 22px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 8px;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .import-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
+  .import-dot.warn { background: var(--orange); }
+  .import-dot.error { background: var(--red); }
+  .import-text { color: var(--fg-dim); font-family: var(--font-mono); font-size: 8px; }
+  .import-counts { margin-left: auto; display: flex; gap: 8px; font-family: var(--font-mono); font-size: 8px; }
+  .import-counts .hi { color: var(--red); }
+  .import-counts .info { color: var(--fg-muted); }
+  .import-link {
+    color: var(--accent);
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .import-link:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+
+<div class="synth">
+  <div class="header">
+    <span class="logo">xerum</span>
+    <span class="preset-name">Init — Default</span>
+    <div class="header-right">
+      <div class="vpo-readout">VPO <span>440.0</span> Hz</div>
+      <div class="vpo-readout">Bend <span>±2</span> st</div>
+      <div class="tab active">Device</div>
+      <div class="tab">Mod</div>
+      <div class="tab">FX</div>
+      <div class="tab">Import</div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="osc-row">
+      <div class="panel osc-panel">
+        <div class="panel-title">OSC A <span class="tag">Active</span></div>
+        <div class="osc-wavetable">
+          <div class="wavetable-name">Analog_Saw_01.wav</div>
+          <div class="wavetable-arrows">
+            <div class="arrow-btn">◀</div>
+            <div class="arrow-btn">▶</div>
+          </div>
+        </div>
+        <div class="osc-knobs">
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <defs><filter id="ks"><feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-opacity="0.25"/></filter></defs>
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 35.9,27.7" />
+              <circle class="knob-indicator" cx="35.9" cy="27.7" r="2"/>
+            </svg>
+            <div class="knob-readout">+2st</div>
+            <div class="knob-label">Tune</div>
+          </div>
+          <div class="knob-wrap modulated">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-mod-arc" d="M11.4,11.4 A15,15 0 0,1 33.4,12.3"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 37.0,22.0" />
+              <circle class="knob-indicator" cx="33.4" cy="12.3" r="2"/>
+            </svg>
+            <div class="knob-readout">50%</div>
+            <div class="knob-label">Position</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Warp 1</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Warp 2</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 27.7,8.1" />
+              <circle class="knob-indicator" cx="27.7" cy="8.1" r="2"/>
+            </svg>
+            <div class="knob-readout">4</div>
+            <div class="knob-label">Unison</div>
+          </div>
+        </div>
+        <div class="osc-controls">
+          <div class="toggle on"><div class="toggle-dot"></div>Phase</div>
+          <div class="toggle"><div class="toggle-dot"></div>Retrig</div>
+          <div class="toggle"><div class="toggle-dot"></div>Mono</div>
+        </div>
+      </div>
+
+      <div class="panel osc-panel">
+        <div class="panel-title">OSC B</div>
+        <div class="osc-wavetable">
+          <div class="wavetable-name">Vocode_Metal_03.wav</div>
+          <div class="wavetable-arrows">
+            <div class="arrow-btn">◀</div>
+            <div class="arrow-btn">▶</div>
+          </div>
+        </div>
+        <div class="osc-knobs">
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Tune</div>
+          </div>
+          <div class="knob-wrap modulated">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-mod-arc" d="M8.8,35.2 A15,15 0 1,1 22,7"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 1,1 25.7,36.5" />
+              <circle class="knob-indicator" cx="22.0" cy="7.0" r="2"/>
+            </svg>
+            <div class="knob-readout">78%</div>
+            <div class="knob-label">Position</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Warp 1</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Warp 2</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 14.9,8.8" />
+              <circle class="knob-indicator" cx="14.9" cy="8.8" r="2"/>
+            </svg>
+            <div class="knob-readout">1</div>
+            <div class="knob-label">Unison</div>
+          </div>
+        </div>
+        <div class="osc-controls">
+          <div class="toggle"><div class="toggle-dot"></div>Phase</div>
+          <div class="toggle"><div class="toggle-dot"></div>Retrig</div>
+          <div class="toggle"><div class="toggle-dot"></div>Mono</div>
+        </div>
+      </div>
+
+      <div class="panel osc-panel">
+        <div class="panel-title">OSC C</div>
+        <div class="osc-wavetable">
+          <div class="wavetable-name">— off —</div>
+          <div class="wavetable-arrows">
+            <div class="arrow-btn">◀</div>
+            <div class="arrow-btn">▶</div>
+          </div>
+        </div>
+        <div class="osc-knobs">
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Tune</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0%</div>
+            <div class="knob-label">Position</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Warp 1</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+              <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Warp 2</div>
+          </div>
+          <div class="knob-wrap">
+            <svg class="knob-svg" viewBox="0 0 44 44">
+              <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+              <circle class="knob-track" cx="22" cy="22" r="15"/>
+              <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 14.9,8.8" />
+              <circle class="knob-indicator" cx="14.9" cy="8.8" r="2"/>
+            </svg>
+            <div class="knob-readout">1</div>
+            <div class="knob-label">Unison</div>
+          </div>
+        </div>
+        <div class="osc-controls">
+          <div class="toggle"><div class="toggle-dot"></div>Phase</div>
+          <div class="toggle"><div class="toggle-dot"></div>Retrig</div>
+          <div class="toggle"><div class="toggle-dot"></div>Mono</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="osc-row">
+      <div class="panel" style="flex:1;">
+        <div class="panel-title">Noise</div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <div class="knob-wrap knob-sm">
+            <svg class="knob-svg" viewBox="0 0 28 28">
+              <circle class="knob-body" cx="14" cy="14" r="11"/>
+              <circle class="knob-track" cx="14" cy="14" r="9"/>
+              <path class="knob-value" d="M7.6,7.6 A9,9 0 0,1 13.3,5.0" />
+              <circle class="knob-indicator" cx="13.3" cy="5.0" r="1.2"/>
+            </svg>
+            <div class="knob-readout">-12dB</div>
+            <div class="knob-label">Level</div>
+          </div>
+          <div class="knob-wrap knob-sm">
+            <svg class="knob-svg" viewBox="0 0 28 28">
+              <circle class="knob-body" cx="14" cy="14" r="11"/>
+              <circle class="knob-track" cx="14" cy="14" r="9"/>
+              <path class="knob-value" d="M7.6,7.6 A9,9 0 0,1 23.0,14.0" />
+              <circle class="knob-indicator" cx="23.0" cy="14.0" r="1.2"/>
+            </svg>
+            <div class="knob-readout">50%</div>
+            <div class="knob-label">Colour</div>
+          </div>
+          <div class="btn-row" style="margin-left:4px;">
+            <div class="btn-opt">Brown</div>
+            <div class="btn-opt active">Pink</div>
+            <div class="btn-opt">White</div>
+            <div class="btn-opt">Geiger</div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" style="flex:1;">
+        <div class="panel-title">Sub</div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <div class="knob-wrap knob-sm">
+            <svg class="knob-svg" viewBox="0 0 28 28">
+              <circle class="knob-body" cx="14" cy="14" r="11"/>
+              <circle class="knob-track" cx="14" cy="14" r="9"/>
+              <path class="knob-value" d="M7.6,7.6 A9,9 0 0,1 19.3,6.7" />
+              <circle class="knob-indicator" cx="19.3" cy="6.7" r="1.2"/>
+            </svg>
+            <div class="knob-readout">-6dB</div>
+            <div class="knob-label">Level</div>
+          </div>
+          <div class="knob-wrap knob-sm">
+            <svg class="knob-svg" viewBox="0 0 28 28">
+              <circle class="knob-body" cx="14" cy="14" r="11"/>
+              <circle class="knob-track" cx="14" cy="14" r="9"/>
+              <path class="knob-value" d="M7.6,7.6 A9,9 0 0,1 7.6,7.6" />
+              <circle class="knob-indicator" cx="7.6" cy="7.6" r="1.2"/>
+            </svg>
+            <div class="knob-readout">0</div>
+            <div class="knob-label">Octave</div>
+          </div>
+          <div class="btn-row" style="margin-left:4px;">
+            <div class="btn-opt active">Sine</div>
+            <div class="btn-opt">Tri</div>
+            <div class="btn-opt">Saw</div>
+            <div class="btn-opt">Sqr</div>
+            <div class="btn-opt">Pulse</div>
+            <div class="btn-opt">RRect</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="filter-section">
+      <div class="panel" style="flex:1;">
+        <div class="panel-title">Filter 1 <span class="tag">LP 24dB</span></div>
+        <div class="filter-main">
+          <div class="filter-controls">
+            <div class="knob-wrap">
+              <svg class="knob-svg" viewBox="0 0 44 44">
+                <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+                <circle class="knob-track" cx="22" cy="22" r="15"/>
+                <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 33.4,12.3" />
+                <circle class="knob-indicator" cx="33.4" cy="12.3" r="2"/>
+              </svg>
+              <div class="knob-readout">1.2kHz</div>
+              <div class="knob-label">Cutoff</div>
+            </div>
+            <div class="knob-wrap">
+              <svg class="knob-svg" viewBox="0 0 44 44">
+                <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+                <circle class="knob-track" cx="22" cy="22" r="15"/>
+                <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 33.4,12.3" />
+                <circle class="knob-indicator" cx="33.4" cy="12.3" r="2"/>
+              </svg>
+              <div class="knob-readout">35%</div>
+              <div class="knob-label">Resonance</div>
+            </div>
+            <div class="knob-wrap">
+              <svg class="knob-svg" viewBox="0 0 44 44">
+                <circle class="knob-body" cx="22" cy="22" r="18" filter="url(#ks)"/>
+                <circle class="knob-track" cx="22" cy="22" r="15"/>
+                <path class="knob-value" d="M11.4,11.4 A15,15 0 0,1 11.4,11.4" />
+                <circle class="knob-indicator" cx="11.4" cy="11.4" r="2"/>
+              </svg>
+              <div class="knob-readout">0%</div>
+              <div class="knob-label">Drive</div>
+            </div>
+          </div>
+          <div class="filter-viz">
+            <div class="section-title">Response</div>
+            <div class="filter-display">
+              <svg width="100%" height="100%" viewBox="0 0 400 70" preserveAspectRatio="none">
+                <line x1="0" y1="35" x2="400" y2="35" stroke="#2a2826" stroke-width="0.5"/>
+                <line x1="100" y1="0" x2="100" y2="70" stroke="#2a2826" stroke-width="0.5"/>
+                <line x1="200" y1="0" x2="200" y2="70" stroke="#2a2826" stroke-width="0.5"/>
+                <line x1="300" y1="0" x2="300" y2="70" stroke="#2a2826" stroke-width="0.5"/>
+                <path d="M0,8 Q60,8 120,12 T200,18 T280,60 L400,65" fill="none" stroke="#e89b30" stroke-width="1.5"/>
+                <circle cx="120" cy="12" r="3" fill="#e89b30" stroke="#111110" stroke-width="1"/>
+                <text x="8" y="66" fill="#4a4640" font-size="6" font-family="IBM Plex Mono, monospace">20</text>
+                <text x="88" y="66" fill="#4a4640" font-size="6" font-family="IBM Plex Mono, monospace">200</text>
+                <text x="186" y="66" fill="#4a4640" font-size="6" font-family="IBM Plex Mono, monospace">2k</text>
+                <text x="286" y="66" fill="#4a4640" font-size="6" font-family="IBM Plex Mono, monospace">20k</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" style="width:180px;">
+        <div class="panel-title">Filter 2</div>
+        <div class="filter-sidebar">
+          <div class="filter-type-picker">
+            <div class="filter-type-btn active">LP 24dB</div>
+            <div class="filter-type-btn">HP 12dB</div>
+            <div class="filter-type-btn">BP 6dB</div>
+            <div class="filter-type-btn">Notch</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:flex-start;">
+            <div class="knob-wrap knob-sm">
+              <svg class="knob-svg" viewBox="0 0 28 28">
+                <circle class="knob-body" cx="14" cy="14" r="11"/>
+                <circle class="knob-track" cx="14" cy="14" r="9"/>
+                <path class="knob-value" d="M7.6,7.6 A9,9 0 0,1 22.0,18.1" />
+                <circle class="knob-indicator" cx="22.0" cy="18.1" r="1.2"/>
+              </svg>
+              <div class="knob-readout">8kHz</div>
+              <div class="knob-label">Cutoff</div>
+            </div>
+            <div class="knob-wrap knob-sm">
+              <svg class="knob-svg" viewBox="0 0 28 28">
+                <circle class="knob-body" cx="14" cy="14" r="11"/>
+                <circle class="knob-track" cx="14" cy="14" r="9"/>
+                <path class="knob-value" d="M7.6,7.6 A9,9 0 0,1 15.4,5.1" />
+                <circle class="knob-indicator" cx="15.4" cy="5.1" r="1.2"/>
+              </svg>
+              <div class="knob-readout">20%</div>
+              <div class="knob-label">Res</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel mod-panel">
+      <div class="panel-title">Mod Matrix <span class="tag">8 / 64</span></div>
+      <table class="mod-table">
+        <thead>
+          <tr>
+            <th style="width:16px">●</th>
+            <th>Source</th>
+            <th style="width:44px">Aux</th>
+            <th style="width:50px">Amount</th>
+            <th style="width:14px">±</th>
+            <th style="width:14px">㎐</th>
+            <th>Destination</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="mod-bypass active"></span></td>
+            <td class="mod-src">Env 1</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-amt pos">+72</td>
+            <td class="mod-polarity">+</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">Osc A → Position</td>
+          </tr>
+          <tr>
+            <td><span class="mod-bypass active"></span></td>
+            <td class="mod-src">LFO 1</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-amt pos">+45</td>
+            <td class="mod-polarity">+</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">Filter 1 → Cutoff</td>
+          </tr>
+          <tr>
+            <td><span class="mod-bypass"></span></td>
+            <td class="mod-src">Macro 1</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-amt neg">−30</td>
+            <td class="mod-polarity">−</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">Osc B → Tune</td>
+          </tr>
+          <tr>
+            <td><span class="mod-bypass active"></span></td>
+            <td class="mod-src">Velo</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-amt pos">+88</td>
+            <td class="mod-polarity">+</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">Amp → Volume</td>
+          </tr>
+          <tr>
+            <td><span class="mod-bypass active"></span></td>
+            <td class="mod-src">LFO 3</td>
+            <td class="mod-dest">Note#</td>
+            <td class="mod-amt pos">+15</td>
+            <td class="mod-polarity">+</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">Osc A → Position</td>
+          </tr>
+          <tr>
+            <td><span class="mod-bypass"></span></td>
+            <td class="mod-src">Env 2</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-amt neg">−60</td>
+            <td class="mod-polarity">−</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">FX Send → Reverb Mix</td>
+          </tr>
+          <tr>
+            <td><span class="mod-bypass active"></span></td>
+            <td class="mod-src">LFO 2</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-amt pos">+25</td>
+            <td class="mod-polarity">+</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">Filter 2 → Reso</td>
+          </tr>
+          <tr>
+            <td><span class="mod-bypass active"></span></td>
+            <td class="mod-src">Note#</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-amt pos">+40</td>
+            <td class="mod-polarity">+</td>
+            <td class="mod-dest">—</td>
+            <td class="mod-dest">Osc A → Tune</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bottom-row">
+      <div class="fx-section">
+        <div class="section-title">Effects Chain</div>
+        <div class="fx-row">
+          <div class="fx-card active">
+            <div class="fx-name">Distort</div>
+            <div class="fx-type">Tube · Drive 42%</div>
+          </div>
+          <div class="fx-card">
+            <div class="fx-name">Delay</div>
+            <div class="fx-type">Stereo · 1/4 · FB 30%</div>
+          </div>
+          <div class="fx-card">
+            <div class="fx-name">Reverb</div>
+            <div class="fx-type">Plate · Decay 2.1s</div>
+          </div>
+          <div class="fx-card">
+            <div class="fx-name">EQ</div>
+            <div class="fx-type">4-Band · HP 80Hz</div>
+          </div>
+        </div>
+      </div>
+      <div class="macro-section">
+        <div class="section-title">Macros</div>
+        <div class="macro-strip">
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 0,1 16.1,5.6" />
+              <circle class="knob-indicator" cx="16.1" cy="5.6" r="1"/>
+            </svg>
+            <div class="macro-label">M1</div>
+          </div>
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 0,1 21.0,13.0" />
+              <circle class="knob-indicator" cx="21.0" cy="13.0" r="1"/>
+            </svg>
+            <div class="macro-label">M2</div>
+          </div>
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 1,1 16.1,20.4" />
+              <circle class="knob-indicator" cx="16.1" cy="20.4" r="1"/>
+            </svg>
+            <div class="macro-label">M3</div>
+          </div>
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 0,1 7.3,7.3" />
+              <circle class="knob-indicator" cx="7.3" cy="7.3" r="1"/>
+            </svg>
+            <div class="macro-label">M4</div>
+          </div>
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 1,1 16.1,20.4" />
+              <circle class="knob-indicator" cx="16.1" cy="20.4" r="1"/>
+            </svg>
+            <div class="macro-label">M5</div>
+          </div>
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 0,1 7.3,7.3" />
+              <circle class="knob-indicator" cx="7.3" cy="7.3" r="1"/>
+            </svg>
+            <div class="macro-label">M6</div>
+          </div>
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 0,1 16.1,5.6" />
+              <circle class="knob-indicator" cx="16.1" cy="5.6" r="1"/>
+            </svg>
+            <div class="macro-label">M7</div>
+          </div>
+          <div class="macro-item">
+            <svg style="width:26px;height:26px;" viewBox="0 0 26 26">
+              <circle class="knob-body" cx="13" cy="13" r="10"/>
+              <circle class="knob-track" cx="13" cy="13" r="8"/>
+              <path class="knob-value" d="M7.3,7.3 A8,8 0 0,1 7.3,7.3" />
+              <circle class="knob-indicator" cx="7.3" cy="7.3" r="1"/>
+            </svg>
+            <div class="macro-label">M8</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="import-bar">
+    <div class="import-dot warn"></div>
+    <span class="import-text">3 entries — 1 high, 2 info</span>
+    <div class="import-counts">
+      <span class="hi">● 1 high</span>
+      <span class="info">● 2 info</span>
+      <span class="import-link">view report →</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
