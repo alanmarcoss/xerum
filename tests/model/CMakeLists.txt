@@ -4,7 +4,8 @@ add_executable(xerum-model-tests
     cbor_test.cpp
     container_test.cpp
     legacy_test.cpp
-    document_test.cpp)
+    document_test.cpp
+    write_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model

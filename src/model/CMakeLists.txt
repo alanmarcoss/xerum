@@ -2,7 +2,10 @@ add_library(xerum_model STATIC
     schema.cpp
     value.cpp
     cbor.cpp
+    cbor_write.cpp
     legacy.cpp
+    zstd_write.cpp
+    write.cpp
     json.cpp
     container.cpp
     document.cpp
