@@ -10,11 +10,13 @@
 # recorded in plugin/README.md.
 
 add_executable(xerum-plugin-tests
+    AllocationCounter.cpp
     bridge_test.cpp
     state_test.cpp
     audio_test.cpp
     preset_test.cpp
-    realtime_test.cpp)
+    realtime_test.cpp
+    interface_test.cpp)
 
 target_sources(xerum-plugin-tests PRIVATE ${XERUM_PLUGIN_SOURCES})
 

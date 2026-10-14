@@ -10,82 +10,24 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "AllocationCounter.h"
 #include "XerumAudioProcessor.h"
 
-#include <atomic>
-#include <cstdlib>
 #include <memory>
 #include <new>
 #include <vector>
 
 using namespace xerum::plugin;
+using namespace xerum::plugin::tests;
 
 // --------------------------------------------------------------- tracking allocator
 //
-// Inert until a test turns `g_tracking` on, so Catch2's own allocations are not counted; when on, every
-// allocation in this binary is counted.
+// The hook itself is `AllocationCounter.cpp`, shared with the interface's own check that nothing on the
+// audio path reaches the interface. It is inert until a test turns `g_tracking` on, so Catch2's own
+// allocations are not counted; when on, every allocation in this binary is counted.
 
 namespace
 {
-std::atomic<long> g_allocations { 0 };
-std::atomic<bool> g_tracking { false };
-
-void noteAllocation()
-{
-    if (g_tracking.load (std::memory_order_relaxed))
-        g_allocations.fetch_add (1, std::memory_order_relaxed);
-}
-
-void* trackedAllocate (std::size_t size)
-{
-    noteAllocation();
-
-    if (void* p = std::malloc (size == 0 ? 1 : size))
-        return p;
-
-    throw std::bad_alloc();
-}
-} // namespace
-
-void* operator new (std::size_t size) { return trackedAllocate (size); }
-void* operator new[] (std::size_t size) { return trackedAllocate (size); }
-void* operator new (std::size_t size, const std::nothrow_t&) noexcept
-{
-    noteAllocation();
-    return std::malloc (size == 0 ? 1 : size);
-}
-void* operator new[] (std::size_t size, const std::nothrow_t&) noexcept
-{
-    noteAllocation();
-    return std::malloc (size == 0 ? 1 : size);
-}
-void* operator new (std::size_t size, std::align_val_t alignment)
-{
-    noteAllocation();
-
-    void* p = nullptr;
-
-    if (posix_memalign (&p, static_cast<std::size_t> (alignment), size == 0 ? 1 : size) != 0)
-        throw std::bad_alloc();
-
-    return p;
-}
-void* operator new[] (std::size_t size, std::align_val_t alignment) { return operator new (size, alignment); }
-
-void operator delete (void* p) noexcept { std::free (p); }
-void operator delete[] (void* p) noexcept { std::free (p); }
-void operator delete (void* p, std::size_t) noexcept { std::free (p); }
-void operator delete[] (void* p, std::size_t) noexcept { std::free (p); }
-void operator delete (void* p, const std::nothrow_t&) noexcept { std::free (p); }
-void operator delete[] (void* p, const std::nothrow_t&) noexcept { std::free (p); }
-void operator delete (void* p, std::align_val_t) noexcept { std::free (p); }
-void operator delete[] (void* p, std::align_val_t) noexcept { std::free (p); }
-void operator delete (void*, std::size_t, std::align_val_t) noexcept {}
-void operator delete[] (void*, std::size_t, std::align_val_t) noexcept {}
-
-namespace
-{
-
 constexpr int kBlockSize = 512;
 constexpr int kBlocks = 200;
 
@@ -157,17 +99,7 @@ TEST_CASE ("a full render performs no heap allocation", "[plugin][realtime]")
 
     // The positive control. Without it, "zero allocations" is a claim about a hook that might not be
     // installed at all.
-    g_allocations.store (0, std::memory_order_relaxed);
-    g_tracking.store (true, std::memory_order_relaxed);
-
-    {
-        auto probe = std::make_unique<int> (7);
-        REQUIRE (*probe == 7);
-    }
-
-    g_tracking.store (false, std::memory_order_relaxed);
-
-    CHECK (g_allocations.load (std::memory_order_relaxed) >= 1);
+    CHECK (hookIsLive());
 }
 
 TEST_CASE ("applying a document while audio runs does not free the table the audio thread is reading",
