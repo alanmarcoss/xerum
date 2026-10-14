@@ -30,7 +30,10 @@ set(XERUM_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/XerumAudioProcessorEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/InterfacePlan.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ParameterPanels.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Source/ImportReportView.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/DeviceStrip.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/ImportReportView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/ModulationMatrixView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/PoleZeroPlane.cpp)
 
 target_sources(xerum PRIVATE ${XERUM_PLUGIN_SOURCES})
 

@@ -63,7 +63,13 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ParameterControl)
 };
 
-/// A titled box holding one spec group's controls, in table order.
+/// A page: one spec group's controls, in table order, laid out in the columns the plan balanced its rows
+/// into.
+///
+/// Ticket `44` made a panel a *page* — one device behind the strip — so the panel is now the thing the
+/// user sees filling the window, and `setColumns` is how the plan's balance reaches the screen: the
+/// panel places rows, it does not decide which column a row lands in. A panel with no columns set lays
+/// its rows out in one column, which is what a test that only wants the controls does.
 class ParameterPanel final : public juce::Component
 {
 public:
@@ -71,8 +77,16 @@ public:
 
     void addControl (std::unique_ptr<ParameterControl> control);
 
+    /// The plan's row columns: `columns[c]` lists the row indices column `c` holds, in reading order.
+    /// Every row appears exactly once — the plan asserts it rather than this class repairing it.
+    void setColumns (std::vector<std::vector<int>> columns);
+
     int rows() const { return controls_.size(); }
+    int columnCount() const { return columns_.empty() ? 1 : static_cast<int> (columns_.size()); }
     const std::string& title() const { return title_; }
+
+    /// The control at a row index, or nullptr. The panel's own order is the plan's row order.
+    ParameterControl* controlAtRow (int row) const;
 
     /// The control bound to `id`, or nullptr. Used by the editor's own coverage check and by the tests.
     ParameterControl* controlFor (std::string_view id) const;
@@ -83,6 +97,7 @@ public:
 private:
     std::string title_;
     juce::OwnedArray<ParameterControl> controls_;
+    std::vector<std::vector<int>> columns_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ParameterPanel)
 };

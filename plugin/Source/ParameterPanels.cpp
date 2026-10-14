@@ -122,6 +122,17 @@ void ParameterPanel::addControl (std::unique_ptr<ParameterControl> control)
     controls_.add (control.release());
 }
 
+void ParameterPanel::setColumns (std::vector<std::vector<int>> columns)
+{
+    columns_ = std::move (columns);
+    resized();
+}
+
+ParameterControl* ParameterPanel::controlAtRow (const int row) const
+{
+    return row >= 0 && row < controls_.size() ? controls_[row] : nullptr;
+}
+
 ParameterControl* ParameterPanel::controlFor (const std::string_view id) const
 {
     for (auto* control : controls_)
@@ -156,10 +167,37 @@ void ParameterPanel::resized()
 
     area.removeFromTop (kPanelHeaderHeight);
 
-    for (auto* control : controls_)
+    // No columns set means one column: the plan always sets them, but a panel built by hand (a test) must
+    // still be laid out rather than left with every control at zero size.
+    if (columns_.empty())
     {
-        control->setBounds (area.removeFromTop (kRowHeight));
-        area.removeFromTop (kRowGap);
+        for (auto* control : controls_)
+        {
+            control->setBounds (area.removeFromTop (kRowHeight));
+            area.removeFromTop (kRowGap);
+        }
+
+        return;
+    }
+
+    const auto columns = static_cast<int> (columns_.size());
+    const auto columnWidth = (area.getWidth() - kColumnGap * (columns - 1)) / columns;
+
+    auto remaining = area;
+
+    for (const auto& column : columns_)
+    {
+        auto slot = remaining.removeFromLeft (columnWidth);
+        remaining.removeFromLeft (kColumnGap);
+
+        for (const auto row : column)
+        {
+            if (auto* control = controlAtRow (row))
+            {
+                control->setBounds (slot.removeFromTop (kRowHeight));
+                slot.removeFromTop (kRowGap);
+            }
+        }
     }
 }
 

@@ -1,19 +1,31 @@
 // xerum::plugin — the layout plan.
 //
-// Ticket `31`. Ticket `13` fixed the rule the interface must obey: **the layout is designed, the binding
-// is model-driven**. So the geometry below is derived from the parameter table and nothing else:
+// Ticket `31` fixed the rule the interface must obey: **the layout is designed, the binding is
+// model-driven**. So the geometry below is derived from the parameter table and nothing else:
 //
 //   * which control a parameter gets is a function of its model type (`controlKindFor`), total over
 //     `ParamType` — a new model type is a compile error here rather than a parameter that quietly gets
 //     no control;
 //   * which panel a parameter lands in is its `ParamSpec::group`, in the table's own order, so a module
 //     added to the table appears in the interface without anyone editing a layout;
-//   * which column a panel lands in is a balance over the panels, so a new panel is placed rather than
-//     forgotten.
+//   * which column a control lands in is a balance over its panel's rows, so nothing is dropped from the
+//     layout and a new parameter is placed rather than forgotten.
 //
-// The point is that this file, like the bridge, has no list of parameters in it. What it does have is
-// the *design*: row heights, the number of columns, and the rule that keeps the columns even. That is
-// the half ticket `13` says is allowed to be xerum's own taste.
+// ## What ticket `44` changed, and what it did not
+//
+// Ticket `43` settled the structure as variant 3, "Devices": **one device per page, behind a strip that
+// always shows the others**. A device is a **panel** — one `ParamSpec::group`, which is the model's own
+// grouping and the same granularity the reference uses for its tabs — so the plan's panels *are* the
+// pages. The rule above is untouched: a control is still a function of the model type, a panel is still
+// a group in the table's order.
+//
+// The balance moved. It used to distribute *panels* across the editor's columns, because the editor was
+// one long sheet; now a page holds one panel, so the same greedy balance distributes that panel's *rows*
+// across its columns. The point of the balance is unchanged and is the reason it is not hand-placed:
+// every row lands in exactly one column, so a parameter cannot be dropped from a page by a layout edit.
+//
+// `columnsForRows` is the design's own number: a 13-control page is two columns rather than one very
+// long one, and a four-control page is one column rather than three absurdly narrow ones.
 
 #pragma once
 
@@ -51,28 +63,60 @@ constexpr ControlKind controlKindFor (const ParamType type)
 //==============================================================================
 // The design's numbers, in one place.
 
-constexpr int kRowHeight = 24;        ///< one parameter's row inside a panel
-constexpr int kRowGap = 2;
-constexpr int kPanelHeaderHeight = 22;
-constexpr int kPanelPadding = 6;
-constexpr int kPanelGap = 10;
-constexpr int kRowLabelWidth = 156;   ///< the label column of a row (a toggle takes the whole row)
+constexpr int kRowHeight = 26;         ///< one parameter's row inside a page
+constexpr int kRowGap = 4;
+constexpr int kPanelHeaderHeight = 26; ///< the page's own title bar
+constexpr int kPanelPadding = 10;
+constexpr int kColumnGap = 12;         ///< between the columns of one page
+constexpr int kRowLabelWidth = 156;    ///< the label column of a row (a toggle takes the whole row)
+constexpr int kPageHeaderHeight = 30;  ///< the editor's line above the page: device name and module
+constexpr int kRowsPerColumn = 8;      ///< how tall a column is allowed to get before one more is started
 
-/// One panel: the group's title, and the parameters in it, in table order.
+/// How many columns a page's rows are spread over: one for a short page, otherwise enough to keep a
+/// column at or under `kRowsPerColumn`, capped at the editor's `columnCount`.
+inline int columnsForRows (const int rows, const int columnCount)
+{
+    if (rows <= 4 || columnCount <= 1)
+        return 1;
+
+    const int wanted = (rows + kRowsPerColumn - 1) / kRowsPerColumn;
+
+    return wanted < columnCount ? wanted : columnCount;
+}
+
+/// One page: the group's title, the model module its parameters live in, its parameters in table order,
+/// and the column each row landed in.
 struct PanelPlan
 {
-    std::string title;
-    std::vector<const ParamSpec*> specs;
+    std::string title;                          ///< the group — xerum's own name for the device page
+    std::string module;                         ///< e.g. `Oscillator0`, `VoiceFilter1`, `Global0`
+    std::vector<const ParamSpec*> specs;        ///< in table order
+    std::vector<std::vector<int>> columns;      ///< row indices per column, balanced
 
-    int height() const { return kPanelHeaderHeight + kPanelPadding * 2 + rows() * (kRowHeight + kRowGap) - kRowGap; }
     int rows() const { return static_cast<int> (specs.size()); }
+
+    int columnsCount() const { return static_cast<int> (columns.size()); }
+
+    /// The tallest column, which is the page's natural height.
+    int height() const
+    {
+        std::size_t tallest = 0;
+
+        for (const auto& column : columns)
+            tallest = column.size() > tallest ? column.size() : tallest;
+
+        if (tallest == 0)
+            tallest = static_cast<std::size_t> (rows());
+
+        return kPanelHeaderHeight + kPanelPadding * 2
+                   + static_cast<int> (tallest) * (kRowHeight + kRowGap) - kRowGap;
+    }
 };
 
-/// The whole layout: the panels, and how they are distributed across the columns.
+/// The whole layout: one page per group, in table order.
 struct InterfacePlan
 {
-    std::vector<PanelPlan> panels;           ///< in table order
-    std::vector<std::vector<int>> columns;   ///< panel indices, top to bottom, one vector per column
+    std::vector<PanelPlan> panels;   ///< one device page each, in the table's group order
 
     int rows() const
     {
@@ -84,14 +128,26 @@ struct InterfacePlan
         return total;
     }
 
+    /// The widest page, in columns: what the editor's natural width is derived from.
+    int widestPanel() const
+    {
+        int widest = 1;
+
+        for (const auto& panel : panels)
+            widest = panel.columnsCount() > widest ? panel.columnsCount() : widest;
+
+        return widest;
+    }
+
     /// The parameter ids the plan covers, in reading order — the interface's own coverage, stated.
     std::vector<std::string> ids() const;
 };
 
-/// Build the plan from the parameter table: one panel per group, in first-appearance order, distributed
-/// across `columnCount` columns by a greedy balance (each panel to the currently shortest column).
+/// Build the plan from the parameter table: one page per group, in first-appearance order, its rows
+/// distributed across at most `columnCount` columns by a greedy balance (each row to the currently
+/// shortest column, ties to the left).
 ///
-/// Every spec lands in exactly one panel, and every panel in exactly one column: a parameter cannot be
+/// Every spec lands in exactly one row and every row in exactly one column: a parameter cannot be
 /// dropped from the layout, and the test asserts it.
 InterfacePlan planInterface (const std::vector<ParamSpec>& specs, int columnCount);
 

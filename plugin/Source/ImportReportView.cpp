@@ -1,4 +1,4 @@
-// xerum::plugin — the import report view, in code. See ImportReportView.h.
+// xerum::plugin — the import report surface, in code. See ImportReportView.h.
 
 #include "ImportReportView.h"
 
@@ -12,8 +12,7 @@ namespace xerum::plugin::ui
 namespace
 {
 constexpr int kPad = 8;
-constexpr int kSummaryHeight = 20;
-constexpr int kPresetLineHeight = 15;
+constexpr int kLegendHeight = 16;    // names the four fields once, at the top of the drawer
 constexpr int kRowFirstLine = 16;    // the chip and path line
 constexpr int kRowLineHeight = 13;   // each wrapped line of the item and the reason
 constexpr int kRowGap = 7;
@@ -25,16 +24,96 @@ juce::Font monoFont (const float size)
 }
 } // namespace
 
+//==============================================================================
+ReportBar::ReportBar()
+{
+    toggle_.setButtonText ("Details");
+    toggle_.setColour (juce::TextButton::buttonColourId, look::track);
+    toggle_.setColour (juce::TextButton::textColourOffId, look::dimText);
+    toggle_.setColour (juce::TextButton::textColourOnId, look::text);
+    toggle_.onClick = [this]
+    {
+        if (onToggleRequested)
+            onToggleRequested();
+    };
+
+    addAndMakeVisible (toggle_);
+}
+
+void ReportBar::setReport (juce::String summary, juce::String presetName,
+                           const model::ImportReport& report, juce::String lastError)
+{
+    summary_ = std::move (summary);
+    preset_ = std::move (presetName);
+    worst_ = report.worst();
+    clean_ = report.clean();
+    failed_ = lastError.isNotEmpty();
+    repaint();
+}
+
+void ReportBar::setDrawerOpen (const bool open)
+{
+    open_ = open;
+    toggle_.setButtonText (open ? "Hide details" : "Details");
+    repaint();
+}
+
+void ReportBar::toggle()
+{
+    if (onToggleRequested)
+        onToggleRequested();
+}
+
+void ReportBar::resized()
+{
+    auto area = getLocalBounds().reduced (kPad, 4);
+    toggle_.setBounds (area.removeFromRight (juce::jmin (108, juce::jmax (72, area.getWidth() / 4))));
+}
+
+void ReportBar::paint (juce::Graphics& graphics)
+{
+    auto area = getLocalBounds();
+
+    graphics.setColour (look::barFill);
+    graphics.fillRoundedRectangle (area.toFloat(), 5.0f);
+    graphics.setColour (look::panelBorder);
+    graphics.drawRoundedRectangle (area.toFloat().reduced (0.5f), 5.0f, 1.0f);
+
+    auto line = area.reduced (kPad, 0);
+
+    // The state dot. Four states, four colours: a load failure, each severity, and *clean* — because a
+    // clean import is a state and must not be drawn like "no data".
+    auto dot = line.removeFromLeft (10).withSizeKeepingCentre (8, 8).toFloat();
+    graphics.setColour (failed_ ? look::severityHigh
+                                : (clean_ ? look::ok : look::severityColour (worst_)));
+    graphics.fillEllipse (dot);
+
+    line.removeFromLeft (6);
+
+    const auto toggleWidth = toggle_.getWidth() + kPad;
+    auto presetArea = line.removeFromRight (juce::jmin (juce::jmax (toggleWidth, line.getWidth() / 3),
+                                                       toggleWidth + 220));
+
+    graphics.setColour (look::text);
+    graphics.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+    graphics.drawText (summary_, line, juce::Justification::centredLeft, true);
+
+    graphics.setColour (look::dimText);
+    graphics.setFont (monoFont (10.5f));
+    graphics.drawText (preset_.isEmpty() ? juce::String ("preset: init") : "preset: " + preset_,
+                       presetArea.reduced (kPad, 0), juce::Justification::centredRight, true);
+}
+
+//==============================================================================
 ImportReportView::ImportReportView()
 {
     setInterceptsMouseClicks (false, false);
 }
 
-void ImportReportView::setReport (const model::ImportReport& report, juce::String presetName,
-                                  juce::String lastError, const std::vector<juce::String>& contentRoots)
+void ImportReportView::setReport (const model::ImportReport& report, juce::String lastError,
+                                  const std::vector<juce::String>& contentRoots)
 {
     rows_.clear();
-    preset_ = std::move (presetName);
     lastError_ = std::move (lastError);
 
     rows_.reserve (report.entries.size());
@@ -50,8 +129,6 @@ void ImportReportView::setReport (const model::ImportReport& report, juce::Strin
                    + row.item + "\n" + row.reason;
         rows_.push_back (std::move (row));
     }
-
-    worst_ = report.worst();
 
     if (lastError_.isNotEmpty())
         summary_ = "Load failed — " + lastError_;
@@ -98,7 +175,7 @@ std::size_t ImportReportView::severityCount (const model::Severity severity) con
 
 int ImportReportView::preferredHeight() const
 {
-    auto height = kPad * 2 + kSummaryHeight + kPresetLineHeight;
+    auto height = kPad * 2 + kLegendHeight;
 
     for (const auto& row : rows_)
         height += row.height + kRowGap;
@@ -166,18 +243,28 @@ void ImportReportView::paint (juce::Graphics& graphics)
 {
     auto area = getLocalBounds().reduced (kPad);
 
-    // The summary: the worst severity's colour, or the load failure's. Always present, so a clean report
-    // and an absent report cannot be mistaken for each other.
-    graphics.setColour (lastError_.isNotEmpty()
-                            ? look::severityHigh
-                            : (rows_.empty() ? look::dimText : look::severityColour (worst_)));
-    graphics.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    graphics.drawText (summary_, area.removeFromTop (kSummaryHeight), juce::Justification::centredLeft, true);
-
+    // The four things a row carries, named once. The rows themselves are the loader's own strings, so the
+    // legend is the only hand-written text in the drawer and it says what the reader is looking at.
     graphics.setColour (look::dimText);
-    graphics.setFont (juce::FontOptions (11.0f));
-    graphics.drawText (preset_.isEmpty() ? juce::String ("preset: init") : "preset: " + preset_,
-                       area.removeFromTop (kPresetLineHeight), juce::Justification::centredLeft, true);
+    graphics.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    graphics.drawText ("SEVERITY  ·  MODULE PATH  ·  ITEM  ·  REASON", area.removeFromTop (kLegendHeight),
+                       juce::Justification::centredLeft, true);
+
+    if (lastError_.isNotEmpty())
+    {
+        graphics.setColour (look::severityHigh);
+        graphics.setFont (juce::FontOptions (12.0f));
+        graphics.drawText ("Load failed — " + lastError_, area.removeFromTop (kRowFirstLine),
+                           juce::Justification::centredLeft, true);
+    }
+    else if (rows_.empty())
+    {
+        graphics.setColour (look::ok);
+        graphics.setFont (juce::FontOptions (12.0f));
+        graphics.drawText ("Nothing to report: every module, parameter and asset this preset asks for is one "
+                           "xerum implements.",
+                           area.removeFromTop (kRowFirstLine), juce::Justification::centredLeft, true);
+    }
 
     for (const auto& row : rows_)
     {

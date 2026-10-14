@@ -5,6 +5,10 @@
 // these are xerum's colours, chosen here and used nowhere else. Graphite panels, one teal accent, and a
 // severity ramp for the import report that is a ramp rather than three words.
 //
+// Ticket `44` added the report *bar*'s own two colours — `ok` for a clean import and `barFill` for the
+// bar the drawer opens out of — because the report surface is a bar plus a drawer and a bar that floats
+// over the page needs to read as furniture rather than as page content.
+//
 // It is a header of constants rather than a `LookAndFeel` subclass on purpose: a custom look-and-feel
 // rewrites how every widget draws, and this interface needs to colour its own components and leave the
 // standard widgets behaving the way JUCE's tests and validators expect.
@@ -26,6 +30,14 @@ inline const juce::Colour text { 0xffe6e9ee };
 inline const juce::Colour dimText { 0xff8d97a6 };
 inline const juce::Colour accent { 0xff54c9b4 };
 inline const juce::Colour track { 0xff2b313a };
+
+/// The device strip, and the report bar that opens the drawer.
+inline const juce::Colour barFill { 0xff1a1e24 };
+inline const juce::Colour selectedTab { 0xff262d35 };
+
+/// A clean import's colour, the fourth of the report's states: nothing to report is a *state*, and it
+/// must not be drawn in the colour of a severity or in the colour of "no data".
+inline const juce::Colour ok { 0xff5fae7a };
 
 inline const juce::Colour severityHigh { 0xffe2604f };
 inline const juce::Colour severityMedium { 0xffd9a13c };

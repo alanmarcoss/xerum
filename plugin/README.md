@@ -297,7 +297,9 @@ cover it; and the real-time invariant.
 * **Pitch bend is ±2 semitones**, the reference's init state's bend range (ticket `38`'s table), and
   `kParamBendRangeUp/Dn` are not exposed. Stated, not measured.
 * **The editor is minimal on purpose**: the parameter surface plus the import report. The report is
-  what ticket `30` needed the interface for.
+  what ticket `30` needed the interface for. Ticket `44` implemented the *design* of ticket `43` on
+  top of that surface — device pages, the matrix, the pole/zero plane, the report bar and drawer — and
+  that is the section at the end of this file.
 
 ## JUCE observations worth keeping
 
@@ -321,4 +323,158 @@ Found by building and driving the plugin through the harness, not by reading the
    is the one host-visible number in this slice that is explained by observation rather than by
    mechanism.
 4. The standalone app runs (launched for a 5-second smoke test, no output, no crash); a GUI needs a
-   person, so that is all this records.
+   person, so that is all this records. Ticket `44` went further and *measured* the running standalone
+   — the audio thread by `sample`, the window by a screen capture and a pixel histogram — see the
+   ticket `44` section below.
+
+---
+
+# Ticket 44 — the interface design, implemented
+
+Ticket `43` settled the design (variant 3, "Devices") and ticket `31`'s binding already reached every
+parameter. This section records what implementing the design changed, and — the part that matters —
+where the direction and the model do not meet.
+
+```sh
+cmake -S . -B build-44 -DCMAKE_BUILD_TYPE=Release && cmake --build build-44 -j8
+build-44/plugin/tests/xerum-plugin-tests "[interface]"             # 12 cases, 1,746 assertions
+build-44/plugin/tests/xerum-plugin-tests "[interface][headless]"   # the no-editor assertion
+build-44/plugin/tests/xerum-plugin-tests "[interface][ui]"         # the cases that open the interface
+```
+
+## One device per page, behind a strip that always shows the others
+
+A **device is a panel**, and a panel is a `ParamSpec::group` — the model's own grouping, which is also
+the granularity the reference uses for its tabs. So the pages are *derived* from the parameter table
+and nothing is hand-listed: `Osc A`, `Osc B`, `Osc C`, `Noise`, `Sub Osc`, `Filter 1`, `Filter 2`,
+`Global`, `Amp Envelope`. `ui::DeviceStrip` draws one tab per device, always all of them, with a
+severity dot on any device whose module the import report named — so a half-loaded preset is located
+where it happened and not only collected in the drawer.
+
+**The plan's balance moved, and it moved because the design did.** `InterfacePlan`'s rule is unchanged
+— a control is a function of the model type, a panel is a group in the table's order, and columns are
+balanced — but a page now holds *one* panel, so the greedy balance that used to distribute panels
+across the editor's columns distributes that page's **rows** across its columns. The point of the
+balance is what it always was: every row lands in exactly one column, so a parameter cannot be dropped
+from a page by a layout edit, and `plugin/tests/interface_test.cpp` asserts exactly that for every
+panel. `columnsForRows` is the one design number: a page keeps one column until it has more than eight
+rows, so a 13-control page is two columns rather than one very long one, and a four-control page is one
+column rather than three absurdly narrow ones.
+
+**The strip is flat.** The prototype grouped its tabs under family headings (`OSC`, `FILTER`, `MOD`,
+`GLOBAL`). Those headers are not reproduced, and the reason is not aesthetic: the table's grouping is
+flat, so the only derivable family name is the model's module stem (`Oscillator`, `VoiceFilter`,
+`Global`, `Env`) and their *display* names would be new hand-written vocabulary — the one thing
+`InterfacePlan` exists to avoid. The strip's job (showing what else exists) is met without them.
+
+## The two hard surfaces — and what they are, exactly
+
+Both are **views**, and that is measured rather than preferred:
+
+| Surface | Shows | Why it is not a control surface |
+|---|---|---|
+| `ui::ModulationMatrixView` — 64 rows × 12 columns | the loaded preset's `ModSlot0`…`ModSlot63`: source and aux source **named** from `dsp::modSourceName` (the 60-name table ticket `27` recovered — the correction ticket `43` recorded against the prototype's conclusion that the interface could not name a source), amount (signed: the sign *is* the polarity), bipolar, bypass, both curve knobs, the destination `(class, instance, parameter)` triple, and the engine's own verdict from `dsp::modDestinationUnresolvedReason` / `dsp::modSourceIsImplemented` | `ParameterBridge` binds 75 parameters and **no modulation ones**, and the plugin never hands the engine's `ModulationMatrix` a slot — `VoiceEngine::setModulationSlots` is called by `tests/dsp/voice_test.cpp` and by nothing in `plugin/`. A slider here would write a value nothing reads: the placeholder smell the bridge's own header forbids |
+| `ui::PoleZeroPlane` — up to 32 sections | the sections a preset draws (`VoiceFilter{n}/PZs[]`, four objects of eight), pole above the axis and zero below, marker size from the section's Q | the engine's `VoiceSettings` carries a `FilterSpec` and no pole/zero table, so the plugin **reports** a drawn response at `high` — the plane's own caption says so where the sections are, rather than looking like a promise |
+
+The rows are the reference's own 64 whether or not a preset stores them: an empty slot is a **row**
+(the reference writes all 64 in every preset), it is drawn as em-dashes, and its note is empty.
+
+## The report is a bar plus a drawer, never a modal
+
+`ui::ReportBar` is always on screen — a state dot (four states: a load failure, each severity, and
+*clean*), the summary, the preset it belongs to, and the handle that opens `ui::ImportReportView`
+above it. `Nothing to report` is on the bar **with the drawer shut**, which is the acceptance: a clean
+import is a state, and empty and absent do not look alike. Neither surface is a dialog:
+`plugin/tests/interface_test.cpp` asserts both are components of the editor's own window, which is what
+"never a modal" measures to.
+
+## The coverage readout, because a gap should be visible
+
+The header shows `75 of 776 schema leaves bound` — `controlCount()` over `Schema::instance().leafCount()`,
+so the number cannot drift from what is on the pages. This is the ticket's honest measure of the gap,
+stated where a user can see it rather than implied away, and it is also why a device page is short: the
+bridge implements a fraction of the model. The empty area under a short page is where the drawer opens.
+
+## The standalone, run and observed
+
+```sh
+open build-44/plugin/xerum_artefacts/Release/Standalone/xerum.app
+pgrep -fl xerum                       # pid 21390
+sample 21390 3 -file /tmp/xerum-sample.txt
+```
+
+**Observed.** The audio thread is running the render path: `com.apple.audio.IOThread.client` →
+`HALC_ProxyIOContext::IOWorkLoop` → `juce::PlaybackHandler::audioDeviceProcessorCallback` →
+`AudioProcessorPlayer::audioDeviceIOCallbackWithContext` → `XerumAudioProcessor::processBlock` →
+`dsp::VoiceEngine::process`.
+
+**And no interface frame is on the audio path.** The sample above was taken with the editor open and
+being laid out (`JUCE v9.0.4: Message Thread` has 11 `ParameterPanel` frames in it), and of every
+`XerumAudioProcessorEditor`/`ParameterPanel`/`ModulationMatrixView`/`PoleZeroPlane`/`DeviceStrip`/
+`ImportReportView` frame in the file, **0 fall inside the `com.apple.audio.IOThread.client` block** —
+all 11 are on the message thread. That is the acceptance criterion "no interface code on the audio
+path" measured on the running product rather than argued from the source.
+
+The **window** was observed by capture rather than by eye (this session had no visual channel), and by
+capturing the window itself rather than the screen, because the desktop is shared and a screen capture
+measures whatever is on top:
+
+```sh
+xcrun swift /tmp/winid.swift          # CGWindowListCopyWindowInfo -> the xerum window's number
+screencapture -x -o -l<id> /tmp/xerum-win.png
+ffmpeg -y -i /tmp/xerum-win.png -f rawvideo -pix_fmt rgb24 /tmp/xerum-win.raw   # then histogram it
+```
+
+The window is 1242×688 at (659, 348), on screen, named `xerum` — and it is this interface. Every colour
+the layout paints in this state is in the capture, at its own share of the window's pixels (the report's
+severity colours are absent because this session's report is clean, and `ok` appears only as the bar's
+8×8 state dot):
+
+| Constant | On screen | Share of the window |
+|---|---|---|
+| `background` (21, 23, 26) | identical | 48.19 % |
+| `panelFill` (30, 34, 40) | (31, 34, 40) | 31.80 % |
+| `barFill` (26, 30, 36) | (27, 30, 36) | 8.96 % |
+| `panelBorder` (46, 52, 64) | (47, 52, 63) | 0.76 % |
+| `selectedTab` (38, 45, 53) | (39, 45, 52) | 0.51 % |
+| `dimText` (141, 151, 166) | (143, 151, 165) | 0.29 % |
+| `text` (230, 233, 238) | (231, 233, 238) | 0.26 % |
+| **`accent`** (84, 201, 180) | **(118, 197, 181)** | **1.37 %** |
+
+Every value is off by one or two counts because `screencapture` writes the display's colour profile;
+the accent is off by 34 in red, which is what a saturated colour does under that conversion. Where the
+accent is *drawn* is the design's own geometry: 46,808 accent pixels in three groups — device rows
+140–141 (logical y 42, full width: `kHeaderHeight - 1`), 222–225 (logical y 83–84, 236 pixels wide:
+the selected tab's two-pixel rule at the bottom of a 42-pixel strip, one tab wide), and 288–787 (the
+controls' slider tracks and the panels' accent edges). A coarse map of the capture also shows the
+structure in the right places: a 42-pixel strip, a 30-pixel page header, a ~252-pixel device panel, and
+the report bar across the bottom inside its margin.
+
+The same measurement is a test now (`the interface draws xerum's own identity, and the pages draw`),
+which renders the editor into an image and counts the palette in it — against the constants exactly,
+with no capture in between — including each of the matrix's twelve column titles drawn in its own
+x-range.
+
+**Not observed, and stated rather than implied.** Nobody looked at the window: nothing here says the
+interface *looks* right — only that it is drawn, in this palette, at these positions. Clicking a tab,
+opening the drawer and importing a preset file in the standalone were not driven by hand; those paths
+are covered in-process (`showDevice`, `setReportDrawerOpen`, `loadPresetFromFile`). The window's empty
+lower area in the capture is the ~250 logical pixels below a device page — see *the coverage readout*
+above for why a page is short, and note that it is also where the report drawer opens.
+
+## What could not be implemented as recorded
+
+* **The matrix as editable columns.** The direction calls for "real columns (64 rows × 12 controls)".
+  The columns are real and there are twelve of them; the *controls* are not, for the reason in the
+  table above — the bridge binds no matrix parameter and the engine's matrix is not fed by the plugin.
+  Making them editable is a job in two other layers (bridge parameters, and `setModulationSlots` on the
+  preset path), not a design change here, and pretending otherwise would have produced 768 dead
+  controls.
+* **Editing the drawn filter.** Same shape of gap: `dsp::VoiceFilter::setPoleZero` exists, nothing in
+  `plugin/` reaches it, and the plugin reports the drawn response as unapplied.
+* **The prototype's device families** (`OSC`/`FILTER`/`MOD`/`GLOBAL` headings in the strip) — see
+  above: their display names would be invented vocabulary.
+* **The parameter-and-leaf inventory behind the design** (452 controls, 280 arrays, 42 containers) is
+  still not on screen. Ticket `43`'s finding stands: the arrays and containers are addressed by the
+  pages they belong to, and this interface shows only what the bridge binds — 75 controls — with the
+  gap stated in the header rather than a page of raw arrays with no engine behind them.
