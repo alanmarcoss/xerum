@@ -6,7 +6,8 @@ add_executable(xerum-model-tests
     legacy_test.cpp
     document_test.cpp
     write_test.cpp
-    warp_coverage_test.cpp)
+    warp_coverage_test.cpp
+    filter_coverage_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model

@@ -67,9 +67,34 @@ const SupportCatalogue& SupportCatalogue::v1()
 
         // PROVISIONAL. Ticket 26 owns the real model table; these are the family prefixes behind the
         // ~90% of corpus usage ticket 12 measured.
-        c.filterModels = { "MgL", "Ladder", "DirtyMg", "LBH", "LNH", "LPH", "L",
-                           "H", "HP", "BP", "BN", "BandReject", "PP",
-                           "Comb", "Diffuser", "Flange", "Phase", "PZ" };
+        // Ticket 26's model table: the **exact** names this build implements, not prefixes.
+        //
+        // Prefixes were the obvious first move and they over-claim. `FlangeP` is a real type, and so is
+        // `FlangePhase12HL6P`, which starts with it — so a prefix list claimed a filter the engine
+        // deliberately does not build, and the report stayed quiet about it. Warp names need prefixes
+        // because they carry a source suffix; filter names are a closed 83-name vocabulary with no
+        // suffixes, so they are matched exactly and this list is the claim.
+        //
+        // The 17 it leaves out are individually authored circuits whose behaviour no name decomposes
+        // (`RM`, `Reverb1`, `Wsp`, `Exp`, `ExpBPF`, `Scream*`, `Formant*`, `DJMixer`, `ADD_BASS`,
+        // `ZDF_A`) plus the two hybrids whose second half is not modelled. The coverage test holds this
+        // list and `dsp::filterSpecFromName` to each other over the whole vocabulary.
+        c.filterModels = {
+            "Allpasses", "B12", "B24", "BN12", "BP12",
+            "BPN12", "BPN24", "BandReject", "Comb2", "CombH6N",
+            "CombH6P", "CombHL6N", "CombHL6P", "CombL6N", "CombN",
+            "CombP", "Combs", "Diffuser", "DirtyMg", "DistComb1BP",
+            "DistComb1LP", "DistComb2BP", "DistComb2LP", "FlangeH6P", "FlangeHL6N",
+            "FlangeHL6P", "FlangeL6P", "FlangeN", "FlangeP", "H12",
+            "H18", "H24", "H6", "HB12", "HEQ12",
+            "HN12", "HP12", "L12", "L18", "L24",
+            "L6", "LB12", "LBH12", "LBH24", "LH12",
+            "LN12", "LNH12", "LNH24", "LPH24", "LadderAcid",
+            "LadderEMS", "LadderMg", "MgL18", "MgL24", "MgL6",
+            "N12", "N24", "NN12", "PP12", "PZ_SVF",
+            "Phase24N", "Phase24P", "Phase36N", "Phase36P", "Phase48N",
+            "Phase48P",
+        };
 
         c.effects = { "FXEQ", "FXComp", "FXReverb", "FXDelay", "FXDistortion", "FXFilter",
                       "FXConv", "FXUtils", "FXChorus", "FXHyperD", "FXBode", "FXPhaser",
@@ -311,8 +336,32 @@ struct Walker
         }
     }
 
+    /// A filter's type, reported when we do not ship that family.
+    void checkFilterType (const std::string& where, const Value& params)
+    {
+        const auto* type = params.find ("kParamType");
+
+        if (type != nullptr && type->isText() && ! contains (catalogue.filterModels, type->text))
+            note (Severity::High, where, type->text, "filter family is not shipped in v1");
+    }
+
     void checkWarpsAndFilters (const std::string& name, const Value& module)
     {
+        // **A voice filter keeps its parameters in its own `plainParams`**, unlike an oscillator, whose
+        // engines are nested one level below it:
+        //
+        //     VoiceFilter0/plainParams/kParamType        ← the filter itself
+        //     Oscillator0/WTOsc0/plainParams/kParamWarpMenu   ← nested
+        //
+        // So this has to look at the module's own parameters *as well as* its children's. The first
+        // version only looked at children, with the filter test gated on the outer module being a voice
+        // filter — which no nested module ever is. The result was that **no voice filter type was ever
+        // checked**: seven types in use across the factory bank could be dropped without a report, in
+        // the one place the contract says must never drop anything silently.
+        if (const auto* own = module.find ("plainParams"); own != nullptr && own->isMap())
+            if (name.starts_with ("VoiceFilter"))
+                checkFilterType (name, *own);
+
         for (const auto& [key, value] : module.entries)
         {
             if (! value.isMap() || key == "plainParams")
@@ -331,10 +380,10 @@ struct Walker
                 if (! startsWithAny (warp2->text, catalogue.warpPrefixes))
                     note (Severity::High, name + "/" + key, warp2->text, "warp family is not shipped in v1");
 
-            if (name.starts_with ("VoiceFilter"))
-                if (const auto* type = params->find ("kParamType"); type != nullptr && type->isText())
-                    if (! startsWithAny (type->text, catalogue.filterModels))
-                        note (Severity::High, name, type->text, "filter family is not shipped in v1");
+            // The master filter runs identically to the voice filter but sits in a rack, under its own
+            // keyed module, so its type is checked on the same terms.
+            if (key == "FXFilter")
+                checkFilterType (name + "/" + key, *params);
         }
     }
 };

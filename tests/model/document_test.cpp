@@ -438,14 +438,6 @@ TEST_CASE ("every factory preset produces a document and a report", "[document][
                                         << "]: " << escaped);
     }
 
-    // The whole set, so the analysis is reproducible rather than eyeballed off a test log.
-    {
-        std::ofstream out ("/tmp/xerum-unresolved.txt");
-
-        for (const auto& [path, count] : unresolvedRanked)
-            out << count << "\t" << path << "\n";
-    }
-
     CHECK (uninterpretedParameters.empty());
 
     std::vector<std::pair<std::size_t, std::string>> ranked;
