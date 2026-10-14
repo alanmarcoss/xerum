@@ -36,11 +36,20 @@ PLUGIN="/Library/Audio/Plug-Ins/VST3/Serum2.vst3"
 
 # set parameters (values are normalised 0..1) and render again
 "$BIN" --plugin "$PLUGIN" --set "Main Vol=0.25" --out /tmp/quiet.wav --seconds 1
+
+# automate a parameter across the render, block by block, the way a host's automation lane does
+"$BIN" --plugin "$PLUGIN" --automate "Main Vol=0.05:1" --out /tmp/swept.wav --seconds 2
 ```
 
 `--set` matches the plugin's own parameter names, case-insensitively, and reports an error for a
 name it cannot find rather than silently ignoring it. The render summary always prints peak
 amplitude and flags silence explicitly, so a broken render cannot look like a successful one.
+
+`--automate "name=from:to"` (added for ticket 30) is `--set` *during* the render rather than before it:
+at each block the parameter is written to the value the linear ramp has reached, which is the path a
+DAW's automation takes into a plugin. It is repeatable, it reports an unknown name the same way
+`--set` does, and it is byte-deterministic across runs — which is what makes "the plugin automates"
+a measurement rather than a claim.
 
 ## What it has produced so far (Serum 2 2.1.5, 2026-10-13)
 

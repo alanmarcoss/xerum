@@ -49,3 +49,7 @@ add_subdirectory(host)
 
 # Offline authoring tools (ticket 34). After `src`, because they link xerum_dsp.
 add_subdirectory(tools)
+
+# The plugin (ticket 30). After `src` and `host`, and it brings its own tests with it: they link the
+# plugin's own translation units rather than a plugin target, so they need no wrapper and no host.
+add_subdirectory(plugin)

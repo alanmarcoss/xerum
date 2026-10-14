@@ -44,6 +44,7 @@ struct Args
     int settleMs = 0;       // ticket 20: wall-clock ms to wait after instantiation/state load
     juce::String className; // pick a specific VST3 class instead of the first
     juce::String dumpParams; // ticket 38: write the parameter surface's current values as TSV, then exit
+    juce::StringArray automates; // ticket 30: "name=from:to", ramped across the render as a host would
 };
 
 void printUsage()
@@ -55,6 +56,8 @@ void printUsage()
         "  --list-params          print the plugin's parameter surface, then exit\n"
         "  --list-programs        print the plugin's program list, then exit\n"
         "  --set \"name=value\"     set a parameter by name (value is normalised 0..1)\n"
+        "  --automate \"n=from:to\" ramp a parameter across the render, block by block, as a host's\n"
+        "                         automation does (values are normalised 0..1; repeatable)\n"
         "  --program <n>          select program n before rendering\n"
         "  --out <file.wav>       render this many seconds to a WAV\n"
         "  --seconds <n>          render length, default 2\n"
@@ -91,6 +94,7 @@ bool parseArgs (Args& a, const juce::StringArray& argv)
         else if (arg == "--note")         a.note = next().getIntValue();
         else if (arg == "--program")      a.program = next().getIntValue();
         else if (arg == "--set")          a.sets.add (next());
+        else if (arg == "--automate")     a.automates.add (next());
         else if (arg == "--list-params")  a.listParams = true;
         else if (arg == "--list-programs")a.listPrograms = true;
         else if (arg == "--quiet")        a.quiet = true;
@@ -330,6 +334,42 @@ int main (int argc, char* argv[])
         }
     }
 
+    // Ticket 30. A host's automation writes a parameter *between blocks*, not once before rendering, so
+    // the harness has to be able to do the same or "the plugin automates" is untested. Each spec is
+    // resolved to its parameter once, then ramped linearly across the render.
+    struct Automation
+    {
+        juce::AudioProcessorParameter* parameter { nullptr };
+        float from { 0.0f };
+        float to { 1.0f };
+    };
+
+    juce::Array<Automation> automations;
+
+    for (const auto& spec : args.automates)
+    {
+        const auto name = spec.upToFirstOccurrenceOf ("=", false, false).trim();
+        const auto range = spec.fromFirstOccurrenceOf ("=", false, false).trim();
+        const auto from = range.upToFirstOccurrenceOf (":", false, false).trim().getFloatValue();
+        const auto to = range.fromFirstOccurrenceOf (":", false, false).trim().getFloatValue();
+
+        bool matched = false;
+
+        for (auto* p : instance->getParameters())
+        {
+            if (p != nullptr && parameterName (*p).equalsIgnoreCase (name))
+            {
+                automations.add ({ p, from, to });
+                std::cout << "automating \"" << name << "\" from " << from << " to " << to << "\n";
+                matched = true;
+                break;
+            }
+        }
+
+        if (! matched)
+            std::cerr << "no parameter named \"" << name << "\"\n";
+    }
+
     if (! args.dumpState.isEmpty() || args.stateHex)
     {
         // Parameters set through the VST3 wrapper are queued as parameter changes and only
@@ -505,6 +545,13 @@ int main (int argc, char* argv[])
     while (written < totalSamples)
     {
         const auto thisBlock = (int) juce::jmin ((juce::int64) blockSize, totalSamples - written);
+
+        if (! automations.isEmpty())
+            for (auto& automation : automations)
+                automation.parameter->setValueNotifyingHost (
+                    automation.from
+                    + (automation.to - automation.from)
+                          * (float) ((double) written / (double) totalSamples));
 
         buffer.clear();
         midi.clear();
