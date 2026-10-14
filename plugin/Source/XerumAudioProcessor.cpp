@@ -44,6 +44,62 @@ constexpr int kHandshakeTimeoutMs = 250;
 
 constexpr int kAmpEnvelopeSlot = 0;
 
+/// The document value one **modulation field's** live value stands for, or `nullopt` when nothing should
+/// be written. `spec` must come from `bridge.modulationSpecs()`, and the result is the exact leaf the
+/// document stores the field under — an int for a row's source (the reference's 1-based enum), a token
+/// string for its destination class, a number for the rest.
+///
+/// `nullopt` is the destination class's **sentinel**: the preset named a class outside xerum's
+/// vocabulary, the interface shows it as "not in xerum's set", and rewriting the document's own name
+/// with a class we cannot spell would drop data. So the document's value is preserved, as ticket `32`
+/// requires of every token the plugin does not understand.
+std::optional<model::Value> modulationDocumentValue (const ParameterBridge& bridge, const ParamSpec& spec,
+                                                     const double live)
+{
+    if (spec.choiceSet == ChoiceSet::ModSource)
+    {
+        model::Value value;
+        value.type = model::Value::Type::Int;
+        value.integer = static_cast<std::int64_t> (std::llround (live));
+        return value;
+    }
+
+    if (spec.type == ParamType::Choice)
+    {
+        const auto& choices = bridge.choices (spec.choiceSet);
+        const auto index = static_cast<int> (std::lround (live));
+
+        if (index < 0 || index == choices.sentinel)
+            return std::nullopt;
+
+        const auto& token = choices.modelNames[static_cast<std::size_t> (index)];
+
+        if (token.empty())
+            return std::nullopt;
+
+        model::Value value;
+        value.type = model::Value::Type::String;
+        value.text = token;
+        return value;
+    }
+
+    const auto* leaf = model::Schema::instance().describe (spec.schemaPath);
+    model::Value value;
+
+    if (leaf != nullptr && leaf->kind == model::LeafKind::Int)
+    {
+        value.type = model::Value::Type::Int;
+        value.integer = static_cast<std::int64_t> (std::llround (live));
+    }
+    else
+    {
+        value.type = model::Value::Type::Float;
+        value.real = live;
+    }
+
+    return value;
+}
+
 } // namespace
 
 XerumAudioProcessor::XerumAudioProcessor()
@@ -65,15 +121,80 @@ XerumAudioProcessor::XerumAudioProcessor()
     library_.addRoot (home.getChildFile ("Library/Application Support/xerum/content").getFullPathName().toStdString());
     library_.addRoot (sourceContentDir().getFullPathName().toStdString());
 
-    values_.assign (bridge_.specs().size(), std::numeric_limits<double>::quiet_NaN());
-    applied_.assign (bridge_.specs().size(), std::numeric_limits<double>::quiet_NaN());
+    // Both arrays cover the *whole* parameter table — the interface surface and the matrix surface — and
+    // a spec's `paramIndex` is the index into them.
+    values_.assign (static_cast<std::size_t> (bridge_.parameterCount()),
+                    std::numeric_limits<double>::quiet_NaN());
+    applied_.assign (static_cast<std::size_t> (bridge_.parameterCount()),
+                     std::numeric_limits<double>::quiet_NaN());
+
+    // Ticket 45: the matrix's own parameters. A change on the message thread republishes the engine's rows
+    // at once; a change from any other thread sets the flag the timer drains.
+    for (const auto& spec : bridge_.modulationSpecs())
+        bridge_.parameters()[static_cast<std::size_t> (spec.paramIndex)]->addListener (this);
+
+    // Only when a message loop exists and this is its thread — a bare `XerumAudioProcessor` in a unit
+    // test has neither, and a host has both. The timer is what drains the coalesced matrix flag.
+    ensureTimer();
 
     // The init patch: no document at all, so every parameter resolves through `resolveAbsent`, and the
     // default content is resolved so the plugin makes a sound before anything is loaded.
     applyDocument ({}, {}, 0);
 }
 
-XerumAudioProcessor::~XerumAudioProcessor() = default;
+XerumAudioProcessor::~XerumAudioProcessor()
+{
+    stopTimer();
+
+    for (const auto& spec : bridge_.modulationSpecs())
+        bridge_.parameters()[static_cast<std::size_t> (spec.paramIndex)]->removeListener (this);
+}
+
+void XerumAudioProcessor::parameterValueChanged (const int parameterIndex, float)
+{
+    // The interface surface is the head of the table and the audio thread's own poll owns it; only the
+    // modulation surface is republished here. (`getParameterIndex()` is the flattened tree order, which
+    // is the insertion order: `specs_` first, `modulationSpecs_` after.)
+    if (parameterIndex < static_cast<int> (bridge_.specs().size()))
+        return;
+
+    // A preset or a state restore writes the whole matrix in one batch; `applyDocument` publishes once
+    // when it is done, and republishing per write would rebuild the engine 512 times.
+    if (applyingDocument_.load (std::memory_order_acquire))
+        return;
+
+    // **Coalesced, deliberately.** A host's UI can move every parameter in one message (pluginval's
+    // thread-safety test does exactly that, 500 times over), and republishing per write would rebuild the
+    // engine's 64 rows a quarter of a million times. The flag is the whole of the listener's job — the
+    // message thread's timer, or `flushModulation()`, applies it once. Nothing here can allocate or lock,
+    // because this can run on the audio thread.
+    modulationDirty_.store (true, std::memory_order_release);
+}
+
+void XerumAudioProcessor::parameterGestureChanged (int, bool) {}
+
+void XerumAudioProcessor::timerCallback()
+{
+    flushModulation();
+}
+
+void XerumAudioProcessor::ensureTimer()
+{
+    if (! isTimerRunning() && juce::MessageManager::existsAndIsCurrentThread())
+        startTimerHz (20);
+}
+
+void XerumAudioProcessor::flushModulation()
+{
+    if (! modulationDirty_.exchange (false, std::memory_order_acq_rel))
+        return;
+
+    // Both are idempotent reads of the document, and either can defer the other's retry by re-raising the
+    // flag — so drain the pair rather than assuming only the matrix moved. Message thread (the timer, or
+    // a caller); never the audio thread.
+    publishPoleZero();
+    publishModulationSlots();
+}
 
 void XerumAudioProcessor::resolveLayout()
 {
@@ -155,6 +276,12 @@ void XerumAudioProcessor::resolveLayout()
 int XerumAudioProcessor::indexOfParameter (const std::string_view modelPath) const
 {
     for (const auto& spec : bridge_.specs())
+        if (spec.modelPath == modelPath)
+            return spec.paramIndex;
+
+    // The matrix's rows are addressed the same way, which is what makes `setParameterValue
+    // ("ModSlot0/plainParams/kParamAmount", …)` an edit that the listener then publishes.
+    for (const auto& spec : bridge_.modulationSpecs())
         if (spec.modelPath == modelPath)
             return spec.paramIndex;
 
@@ -320,10 +447,34 @@ void XerumAudioProcessor::refreshSettingsFromParameters() noexcept
         filter.resonance = amount (layout.reso);
         filter.drive = amount (layout.drive);
         filter.morph = amount (layout.var) / 100.0;
+
+        // The **drawn response**, copied from the off-thread table. A plain member copy: the table is
+        // written only while the audio thread is held out (`publishPoleZero`), so this read is safe, and
+        // it allocates nothing.
+        filter.poleZero = poleZero_[static_cast<std::size_t> (slot)];
     }
 
     engine_.setSettings (next);
     settings_ = next;
+}
+
+void XerumAudioProcessor::refreshModulationParameters() noexcept
+{
+    // A change here rebuilds the matrix, which allocates, so the audio thread only **flags** it for the
+    // message thread. The comparison runs every block like the settings poll, so a host automating a
+    // matrix cell is noticed even though the listener is not called for `setValue`.
+    for (const auto& spec : bridge_.modulationSpecs())
+    {
+        const auto index = static_cast<std::size_t> (spec.paramIndex);
+        const auto value = ParameterBridge::currentModelValue (*bridge_.parameters()[index], spec,
+                                                              bridge_.choices (spec.choiceSet));
+
+        if (value != values_[index])
+        {
+            values_[index] = value;
+            modulationDirty_.store (true, std::memory_order_release);
+        }
+    }
 }
 
 void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -357,7 +508,10 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // alive (the message thread is waiting for this block to end), so render with them and let the next
     // block pick up the new parameters.
     if (! frozen_.load (std::memory_order_acquire))
+    {
         refreshSettingsFromParameters();
+        refreshModulationParameters();
+    }
 
     for (const auto metadata : midi)
     {
@@ -434,11 +588,13 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 //==============================================================================
 void XerumAudioProcessor::setParameterTo (const int paramIndex, const double modelValue)
 {
-    if (paramIndex < 0)
+    const auto* found = bridge_.specForParameter (paramIndex);
+
+    if (found == nullptr)
         return;
 
     auto* parameter = bridge_.parameters()[static_cast<std::size_t> (paramIndex)];
-    const auto& spec = bridge_.specs()[static_cast<std::size_t> (paramIndex)];
+    const auto& spec = *found;
 
     double value = modelValue;
 
@@ -682,8 +838,8 @@ void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
 void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
 {
     // The model's `loadPreset` reports what the *importer* cannot honour: unknown modules, unknown
-    // parameters, unimplemented engines, warps, filters and effects. These three are things only the
-    // plugin knows, because they are about which values the *bridge* carries to the engine — and the
+    // parameters, unimplemented engines, warps, filters and effects. What is left here is what only the
+    // plugin knows, because it is about which values the *bridge* carries to the engine — and the
     // contract's rule is that nothing is dropped silently, so each gets said out loud.
     const auto text = [&document] (const std::string& path) -> std::string
     {
@@ -750,35 +906,11 @@ void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
         }
     }
 
-    for (int slot = 0; slot < dsp::kFilterSlots; ++slot)
-    {
-        const auto prefix = "VoiceFilter" + std::to_string (slot);
-        const auto type = text (prefix + "/plainParams/kParamType");
-
-        if (type.empty())
-            continue;
-
-        // `PZ_SVF` is an implemented filter *model* whose response is drawn in the preset. The engine's
-        // `FilterSettings` carries a `FilterSpec` and no pole/zero table, so the type reaches the engine
-        // and the response does not — a substitution worth naming, because the filter will sound wrong
-        // rather than be missing.
-        if (dsp::filterSpecFromName (type).model == dsp::FilterModel::PoleZero)
-        {
-            bool drawn = false;
-
-            for (const auto& [path, value] : document.parameters)
-                if (path.starts_with (prefix + "/PZs["))
-                {
-                    drawn = true;
-                    break;
-                }
-
-            if (drawn)
-                addReportEntry (report_, model::Severity::High, prefix, type,
-                                "the filter's response is drawn in the preset; xerum's engine takes a filter "
-                                "model and no pole/zero sections, so the type is applied without its response");
-        }
-    }
+    // **The drawn response is not reported any more, and that is deliberate.** It used to say, at `high`,
+    // that `PZ_SVF`'s response was shown and not applied. Ticket `45` made it reach
+    // `dsp::VoiceFilter::setPoleZero`, so that entry was true before and false after — which is worse
+    // than no entry, and exactly why ticket `41` retracted `interpolateAfterLoad`. `plugin/README.md`
+    // records the retraction; `preset_test.cpp` asserts the entry is gone (it used to assert it present).
 
     // --- The two fixed single-engine slots (ticket 40) -------------------------------------------------
     //
@@ -841,10 +973,239 @@ void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
     }
 }
 
+std::vector<dsp::ModSlot> XerumAudioProcessor::modulationRowsFromParameters() const
+{
+    // The **eight editable fields** come from the parameters — the live store, which `applyDocument`
+    // fills from the document and a host can automate. The two the interface does not edit come from the
+    // document: the row's **curves** (`kParamCurveIn`/`Out`, which the engine evaluates) and its
+    // **destination name** (the redundant-with-the-id field ticket 03 showed is the only stable identity
+    // across schema versions). Reading them here rather than defaulting them keeps a preset's own curve
+    // and name intact through an edit.
+    std::vector<dsp::ModSlot> slots (static_cast<std::size_t> (kMatrixRows));
+
+    const auto numberAt = [this] (const std::string& path, const double fallback)
+    {
+        const auto found = document_.parameters.find (path);
+        double value = fallback;
+        return found != document_.parameters.end() && found->second.numberAsDouble (value) ? value : fallback;
+    };
+
+    const auto textAt = [this] (const std::string& path)
+    {
+        const auto found = document_.parameters.find (path);
+        return found != document_.parameters.end() && found->second.isText() ? found->second.text
+                                                                            : std::string();
+    };
+
+    const auto liveOf = [this] (const int row, const ModRowField field)
+    {
+        const auto* spec = bridge_.modulationSpec (row, field);
+        return ParameterBridge::currentModelValue (*bridge_.parameters()[static_cast<std::size_t> (spec->paramIndex)],
+                                                   *spec, bridge_.choices (spec->choiceSet));
+    };
+
+    const auto intOf = [&liveOf] (const int row, const ModRowField field)
+    { return static_cast<int> (std::lround (liveOf (row, field))); };
+
+    for (int row = 0; row < kMatrixRows; ++row)
+    {
+        const auto prefix = "ModSlot" + std::to_string (row) + "/";
+        auto& slot = slots[static_cast<std::size_t> (row)];
+
+        slot.source = intOf (row, ModRowField::Source);
+        slot.auxSource = intOf (row, ModRowField::AuxSource);
+        slot.amount = liveOf (row, ModRowField::Amount);
+        slot.bipolar = liveOf (row, ModRowField::Bipolar) != 0.0;
+        slot.bypassed = liveOf (row, ModRowField::Bypass) != 0.0;
+        slot.destinationInstance = intOf (row, ModRowField::DestinationInstance);
+        slot.destinationParameter = intOf (row, ModRowField::DestinationParameter);
+
+        const auto& classes = bridge_.choices (ChoiceSet::DestinationClass);
+        const auto classIndex = intOf (row, ModRowField::DestinationClass);
+        slot.destinationClass = classIndex >= 0 && classIndex < classes.size() && classIndex != classes.sentinel
+                                    ? classes.modelNames[static_cast<std::size_t> (classIndex)]
+                                    : textAt (prefix + "destModuleTypeString");
+
+        slot.destinationName = textAt (prefix + "destModuleParamName");
+        slot.curveIn = numberAt (prefix + "plainParams/kParamCurveIn", slot.curveIn);
+        slot.curveOut = numberAt (prefix + "plainParams/kParamCurveOut", slot.curveOut);
+
+        // A row with no source contributes nothing and is not a row the engine evaluates; that is also
+        // what keeps the 40-odd empty slots of a preset from becoming destinations that all sum to zero.
+        slot.used = slot.source != 0;
+    }
+
+    return slots;
+}
+
+void XerumAudioProcessor::writeChangedModulationRowsToDocument()
+{
+    const auto fieldList = { ModRowField::Source,      ModRowField::AuxSource,   ModRowField::Amount,
+                             ModRowField::Bipolar,     ModRowField::Bypass,      ModRowField::DestinationClass,
+                             ModRowField::DestinationInstance, ModRowField::DestinationParameter };
+
+    for (int row = 0; row < kMatrixRows; ++row)
+    {
+        auto changed = false;
+
+        for (const auto field : fieldList)
+        {
+            const auto* spec = bridge_.modulationSpec (row, field);
+            const auto index = static_cast<std::size_t> (spec->paramIndex);
+            const auto live = ParameterBridge::currentModelValue (*bridge_.parameters()[index], *spec,
+                                                                  bridge_.choices (spec->choiceSet));
+
+            if (live != applied_[index])
+            {
+                changed = true;
+                break;
+            }
+        }
+
+        if (! changed)
+            continue;
+
+        // The **whole row** is written, not just the field that moved: a row the preset did not carry
+        // must land in the document as a complete row, and one that did is unchanged for the fields that
+        // did not move.
+        for (const auto field : fieldList)
+        {
+            const auto* spec = bridge_.modulationSpec (row, field);
+            const auto index = static_cast<std::size_t> (spec->paramIndex);
+            const auto live = ParameterBridge::currentModelValue (*bridge_.parameters()[index], *spec,
+                                                                  bridge_.choices (spec->choiceSet));
+            applied_[index] = live;
+
+            if (const auto value = modulationDocumentValue (bridge_, *spec, live))
+                document_.parameters[spec->modelPath] = *value;
+        }
+    }
+}
+
+bool XerumAudioProcessor::freezeAndWait() noexcept
+{
+    frozen_.store (true, std::memory_order_release);
+
+    for (int waited = 0; waited < kHandshakeTimeoutMs; ++waited)
+    {
+        if (inBlock_.load (std::memory_order_acquire) == 0)
+            return true;
+
+        juce::Thread::sleep (1);
+    }
+
+    frozen_.store (false, std::memory_order_release);
+    return false;
+}
+
+void XerumAudioProcessor::publishModulationSlots()
+{
+    const juce::ScopedLock lock (stateLock_);
+
+    // The document first, so the row this edit produced is the row the engine is then given — an edit is
+    // a **preset edit**, not a parallel state.
+    writeChangedModulationRowsToDocument();
+
+    auto slots = modulationRowsFromParameters();
+
+    if (! freezeAndWait())
+    {
+        // A block never ended within the bound — a host that will not leave `processBlock`, or one that
+        // runs it on this thread. The flag is what makes this a retry rather than a silent drop; the timer
+        // drains it when the block is finally out of the way.
+        modulationDirty_.store (true, std::memory_order_release);
+        return;
+    }
+
+    engine_.setModulationSlots (std::move (slots));
+
+    frozen_.store (false, std::memory_order_release);
+
+    sendChangeMessage();
+}
+
+void XerumAudioProcessor::publishPoleZero()
+{
+    const juce::ScopedLock lock (stateLock_);
+
+    std::array<dsp::PoleZeroDescription, dsp::kFilterSlots> next;
+
+    for (int slot = 0; slot < dsp::kFilterSlots; ++slot)
+        next[static_cast<std::size_t> (slot)] = poleZeroFromDocument (document_, slot);
+
+    if (! freezeAndWait())
+    {
+        // Deferred, not dropped: `settingsDirty_` is already raised by the edit path, and the timer
+        // republishes once the block is out of the way. `modulationDirty_` carries the retry too, so a
+        // deferred pole/zero write is not lost when only it moved.
+        modulationDirty_.store (true, std::memory_order_release);
+        return;
+    }
+
+    poleZero_ = next;
+
+    frozen_.store (false, std::memory_order_release);
+
+    // The audio thread copies `poleZero_` into the settings when it next rebuilds, and the drawn response
+    // only reaches the filter through `VoiceFilter::setPoleZero` — which `Voice::setSettings` calls when
+    // the model is `PoleZero`.
+    settingsDirty_.store (true, std::memory_order_release);
+}
+
+void XerumAudioProcessor::setPoleZeroSection (const int filterSlot, const int section,
+                                              const dsp::PoleZeroSection& sectionValue)
+{
+    if (filterSlot < 0 || filterSlot >= dsp::kFilterSlots || section < 0
+        || section >= static_cast<int> (dsp::PoleZeroDescription::kMaxSections))
+        return;
+
+    {
+        const juce::ScopedLock lock (stateLock_);
+
+        // Eight sections per object, eight objects max — the reference's own shape, so a section index
+        // maps onto `PZs[object]/field[index]` arithmetically.
+        const auto perObject = static_cast<int> (dsp::PoleZeroDescription::kSectionsPerObject);
+        const auto object = section / perObject;
+        const auto index = section % perObject;
+        const auto prefix = "VoiceFilter" + std::to_string (filterSlot) + "/PZs[" + std::to_string (object) + "]";
+        const auto leaf = [&prefix, index] (const char* field)
+        { return prefix + "/" + field + "[" + std::to_string (index) + "]"; };
+
+        const auto setNumber = [this] (const std::string& path, const double number)
+        {
+            model::Value value;
+            value.type = model::Value::Type::Float;
+            value.real = number;
+            document_.parameters[path] = std::move (value);
+        };
+
+        setNumber (leaf ("fp"), sectionValue.poleFrequency);
+        setNumber (leaf ("fz"), sectionValue.zeroFrequency);
+        setNumber (leaf ("qp"), sectionValue.poleQ);
+        setNumber (leaf ("qz"), sectionValue.zeroQ);
+        setNumber (leaf ("gain"), sectionValue.gain);
+
+        if (document_.parameters.find (leaf ("types")) == document_.parameters.end())
+        {
+            model::Value value;
+            value.type = model::Value::Type::Int;
+            value.integer = sectionValue.type;
+            document_.parameters[leaf ("types")] = std::move (value);
+        }
+    }
+
+    publishPoleZero();
+    sendChangeMessage();
+}
+
 void XerumAudioProcessor::applyDocument (const model::PresetDocument& document, const model::ImportReport& report,
                                          const int reportEntriesFromModel)
 {
     const juce::ScopedLock lock (stateLock_);
+
+    // Every matrix write below fires the listener; collapsing them keeps this a batch. Cleared before the
+    // single publish at the end.
+    applyingDocument_.store (true, std::memory_order_release);
 
     document_ = document;
     report_ = report;
@@ -879,13 +1240,62 @@ void XerumAudioProcessor::applyDocument (const model::PresetDocument& document, 
             }
         }
 
-        setParameterTo (static_cast<int> (i), target);
-        applied_[i] = ParameterBridge::currentModelValue (*bridge_.parameters()[i], spec,
-                                                          bridge_.choices (spec.choiceSet));
+        setParameterTo (spec.paramIndex, target);
+        applied_[static_cast<std::size_t> (spec.paramIndex)] =
+            ParameterBridge::currentModelValue (*bridge_.parameters()[static_cast<std::size_t> (spec.paramIndex)],
+                                                spec, bridge_.choices (spec.choiceSet));
+    }
+
+    // The **modulation surface** too, or a preset's rows would be overwritten by whatever the last edit
+    // left. This is ticket 40's finding applied to the matrix: a parameter `applyDocument` does not write
+    // is dead the moment a preset arrives.
+    for (const auto& spec : bridge_.modulationSpecs())
+    {
+        double target = ParameterBridge::resolveAbsent (spec);
+        const auto found = document.parameters.find (spec.modelPath);
+
+        if (found != document.parameters.end())
+        {
+            if (spec.choiceSet == ChoiceSet::ModSource)
+            {
+                // A row's source is the reference's 1-based enum stored as a number, so the document's
+                // value *is* the choice index.
+                double number = 0.0;
+
+                if (modelNumber (found->second, number))
+                    target = number;
+            }
+            else if (spec.type == ParamType::Choice)
+            {
+                std::string text;
+
+                if (modelText (found->second, text))
+                    target = choiceIndexForText (bridge_.choices (spec.choiceSet), spec.choiceSet, text);
+            }
+            else
+            {
+                double number = 0.0;
+
+                if (modelNumber (found->second, number))
+                    target = number;
+            }
+        }
+
+        setParameterTo (spec.paramIndex, target);
+        applied_[static_cast<std::size_t> (spec.paramIndex)] =
+            ParameterBridge::currentModelValue (*bridge_.parameters()[static_cast<std::size_t> (spec.paramIndex)],
+                                                spec, bridge_.choices (spec.choiceSet));
     }
 
     resolveContent (document);
     completeReport (document);
+
+    applyingDocument_.store (false, std::memory_order_release);
+
+    // The two paths ticket `45` built. Both are off the audio thread and both hand the engine their state
+    // while holding it out — the same handshake the tables use, because both allocate.
+    publishPoleZero();
+    publishModulationSlots();
 
     // The active voice count is a `prepare()` argument (ticket 28), and re-preparing the pool allocates
     // (the modulation matrix), so it is applied here — off the audio thread, with the tables' handshake
@@ -966,13 +1376,13 @@ juce::String XerumAudioProcessor::lastError() const
 double XerumAudioProcessor::parameterValue (const std::string_view modelPath) const
 {
     const auto index = indexOfParameter (modelPath);
+    const auto* spec = bridge_.specForParameter (index);
 
-    if (index < 0)
+    if (spec == nullptr)
         return 0.0;
 
-    const auto& spec = bridge_.specs()[static_cast<std::size_t> (index)];
-    return ParameterBridge::currentModelValue (*bridge_.parameters()[static_cast<std::size_t> (index)], spec,
-                                             bridge_.choices (spec.choiceSet));
+    return ParameterBridge::currentModelValue (*bridge_.parameters()[static_cast<std::size_t> (index)], *spec,
+                                             bridge_.choices (spec->choiceSet));
 }
 
 void XerumAudioProcessor::setParameterValue (const std::string_view modelPath, const double modelValue)
@@ -1059,6 +1469,22 @@ void XerumAudioProcessor::getStateInformation (juce::MemoryBlock& destination)
         merged.parameters[spec.modelPath] = std::move (value);
     }
 
+    // The **matrix**, the same rule: a row the user moved is written into the document the state carries,
+    // and one they did not is left as the preset wrote it. Without this an edit would live only in the
+    // parameters and vanish on save.
+    for (const auto& spec : bridge_.modulationSpecs())
+    {
+        const auto index = static_cast<std::size_t> (spec.paramIndex);
+        const auto live = ParameterBridge::currentModelValue (*bridge_.parameters()[index], spec,
+                                                             bridge_.choices (spec.choiceSet));
+
+        if (live == applied_[index])
+            continue;
+
+        if (const auto value = modulationDocumentValue (bridge_, spec, live))
+            merged.parameters[spec.modelPath] = *value;
+    }
+
     const auto bytes = encodeStateBlock (merged, report_, modelReportEntries_);
     destination.replaceAll (bytes.data(), bytes.size());
 }
@@ -1107,6 +1533,9 @@ void XerumAudioProcessor::changeProgramName (const int, const juce::String&) {}
 
 juce::AudioProcessorEditor* XerumAudioProcessor::createEditor()
 {
+    // The editor is created on the message thread, which is where the drain timer lives.
+    ensureTimer();
+
     return new XerumAudioProcessorEditor (*this);
 }
 

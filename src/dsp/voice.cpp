@@ -188,6 +188,12 @@ void Voice::setSettings (const VoiceSettings& settings)
             filter.setResonance (clampDouble (fs.resonance, 0.0, 100.0));
             filter.setDrive (clampDouble (fs.drive, 0.0, 100.0));
             filter.setMorph (clampDouble (fs.morph, 0.0, 1.0));
+
+            // The drawn response is the *filter* for a `PoleZero` spec, so it is bound here, with the
+            // model, rather than left for whoever built the settings to remember. It is a no-op for the
+            // other models, which `process` never routes through `processPoleZero`.
+            if (fs.spec.model == FilterModel::PoleZero)
+                filter.setPoleZero (fs.poleZero);
         }
     }
 

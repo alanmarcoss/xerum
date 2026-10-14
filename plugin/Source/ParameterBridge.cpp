@@ -241,6 +241,72 @@ std::string parameterIdFromPath (std::string_view modelPath)
     return out;
 }
 
+std::string modulationFieldPath (const int row, const ModRowField field)
+{
+    const auto prefix = "ModSlot" + std::to_string (row) + "/";
+
+    switch (field)
+    {
+        case ModRowField::Source:              return prefix + "source[0]";
+        case ModRowField::AuxSource:           return prefix + "source[1]";
+        case ModRowField::Amount:              return prefix + "plainParams/kParamAmount";
+        case ModRowField::Bipolar:             return prefix + "plainParams/kParamBipolar";
+        case ModRowField::Bypass:              return prefix + "plainParams/kParamBypass";
+        case ModRowField::DestinationClass:    return prefix + "destModuleTypeString";
+        case ModRowField::DestinationInstance: return prefix + "destModuleID";
+        case ModRowField::DestinationParameter: return prefix + "destModuleParamID";
+    }
+
+    return prefix;
+}
+
+dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& document, const int filterSlot)
+{
+    using Section = dsp::PoleZeroDescription;
+
+    dsp::PoleZeroDescription description;
+
+    const auto slot = "VoiceFilter" + std::to_string (filterSlot);
+
+    for (std::size_t object = 0; object < Section::kMaxObjects; ++object)
+    {
+        const auto prefix = slot + "/PZs[" + std::to_string (object) + "]";
+
+        // `fp[0]` is the object's presence: the reference writes all eight sections of an object or none
+        // of it, so a partial object is not a case this has to read.
+        if (document.parameters.find (prefix + "/fp[0]") == document.parameters.end())
+            break;
+
+        double poleFrequency[Section::kSectionsPerObject] {};
+        double zeroFrequency[Section::kSectionsPerObject] {};
+        double poleQ[Section::kSectionsPerObject] {};
+        double zeroQ[Section::kSectionsPerObject] {};
+        double gain[Section::kSectionsPerObject] {};
+        int type[Section::kSectionsPerObject] {};
+
+        const std::pair<std::string_view, double*> numericFields[] = {
+            { "fp", poleFrequency }, { "fz", zeroFrequency }, { "qp", poleQ }, { "qz", zeroQ },
+            { "gain", gain },
+        };
+
+        for (const auto& [field, out] : numericFields)
+            for (std::size_t i = 0; i < Section::kSectionsPerObject; ++i)
+                if (const auto found = document.parameters.find (prefix + "/" + std::string (field) + "["
+                                                                 + std::to_string (i) + "]");
+                    found != document.parameters.end())
+                    found->second.numberAsDouble (out[i]);
+
+        for (std::size_t i = 0; i < Section::kSectionsPerObject; ++i)
+            if (const auto found = document.parameters.find (prefix + "/types[" + std::to_string (i) + "]");
+                found != document.parameters.end() && found->second.type == model::Value::Type::Int)
+                type[i] = static_cast<int> (found->second.integer);
+
+        dsp::appendPoleZeroObject (description, poleFrequency, zeroFrequency, poleQ, zeroQ, gain, type);
+    }
+
+    return description;
+}
+
 std::string describeFilterSpec (const dsp::FilterSpec& spec)
 {
     char buffer[256];
@@ -361,6 +427,18 @@ int choiceIndexForText (const ChoiceList& choices, const ChoiceSet set, std::str
         return choices.sentinel;
     }
 
+    if (set == ChoiceSet::DestinationClass)
+    {
+        // The class is stored by name, and the model's own enum is the vocabulary — so the token *is* the
+        // match, and a name the schema does not carry (the model knows one more, `FXSplitMS`) selects the
+        // sentinel and is preserved rather than rewritten.
+        for (int i = 0; i < choices.size(); ++i)
+            if (i != choices.sentinel && choices.modelNames[static_cast<std::size_t> (i)] == text)
+                return i;
+
+        return choices.sentinel;
+    }
+
     return 0;
 }
 
@@ -370,21 +448,46 @@ ParameterBridge::ParameterBridge()
     // only known once that list exists.
     buildChoices();
     buildSpecs();
+    buildModulationSpecs();
     buildParameters();
+}
+
+bool ParameterBridge::choiceStoredAsNumber (const ChoiceSet set)
+{
+    // A row's `source[0]`/`source[1]` is the reference's **1-based enum stored as an int**, so the
+    // document's value is the source number itself rather than a token string. Every other choice is
+    // stored as the name of the thing it selects.
+    return set == ChoiceSet::ModSource;
 }
 
 const ChoiceList& ParameterBridge::choices (const ChoiceSet set) const
 {
     switch (set)
     {
-        case ChoiceSet::WarpMode:   return warp_;
-        case ChoiceSet::FilterType: return filter_;
-        case ChoiceSet::NoiseType:  return noise_;
-        case ChoiceSet::SubShape:   return sub_;
-        case ChoiceSet::None:       break;
+        case ChoiceSet::WarpMode:         return warp_;
+        case ChoiceSet::FilterType:       return filter_;
+        case ChoiceSet::NoiseType:        return noise_;
+        case ChoiceSet::SubShape:         return sub_;
+        case ChoiceSet::ModSource:        return modSource_;
+        case ChoiceSet::DestinationClass: return destinationClass_;
+        case ChoiceSet::None:             break;
     }
 
     return warp_;
+}
+
+const ParamSpec* ParameterBridge::modulationSpec (const int row, const ModRowField field) const
+{
+    if (row < 0 || row >= kMatrixRows)
+        return nullptr;
+
+    const auto wanted = modulationFieldPath (row, field);
+
+    for (const auto& spec : modulationSpecs_)
+        if (spec.modelPath == wanted)
+            return &spec;
+
+    return nullptr;
 }
 
 double ParameterBridge::resolveAbsent (const ParamSpec& spec)
@@ -423,24 +526,38 @@ double ParameterBridge::currentModelValue (const juce::RangedAudioParameter& par
     return static_cast<double> (static_cast<const juce::AudioParameterFloat&> (parameter).get());
 }
 
+ParamSpec& ParameterBridge::appendSpec (std::vector<ParamSpec>& list, std::string modelPath,
+                                        std::string label, std::string group, const ParamType type,
+                                        const ChoiceSet set, const double min, const double max,
+                                        const double init)
+{
+    ParamSpec spec;
+    spec.modelPath = std::move (modelPath);
+    spec.schemaPath = model::Schema::instance().normalise (spec.modelPath);
+    spec.id = parameterIdFromPath (spec.modelPath);
+    spec.label = std::move (label);
+    spec.group = std::move (group);
+    spec.type = type;
+    spec.choiceSet = set;
+    spec.min = min;
+    spec.max = max;
+    spec.init = init;
+
+    // `specs_` comes first in the parameter table, so the modulation surface's indices continue from it.
+    spec.paramIndex = &list == &specs_ ? static_cast<int> (specs_.size())
+                                       : static_cast<int> (specs_.size() + modulationSpecs_.size());
+
+    list.push_back (std::move (spec));
+    return list.back();
+}
+
 void ParameterBridge::buildSpecs()
 {
     const auto add = [this] (std::string modelPath, std::string label, std::string group, const ParamType type,
                              const ChoiceSet set, const double min, const double max, const double init)
     {
-        ParamSpec spec;
-        spec.modelPath = std::move (modelPath);
-        spec.schemaPath = model::Schema::instance().normalise (spec.modelPath);
-        spec.id = parameterIdFromPath (spec.modelPath);
-        spec.label = std::move (label);
-        spec.group = std::move (group);
-        spec.type = type;
-        spec.choiceSet = set;
-        spec.min = min;
-        spec.max = max;
-        spec.init = init;
-        spec.paramIndex = static_cast<int> (specs_.size());
-        specs_.push_back (std::move (spec));
+        appendSpec (specs_, std::move (modelPath), std::move (label), std::move (group), type, set, min, max,
+                    init);
     };
 
     const auto addGlobal = [&add] (const char* leaf, std::string label, const ParamType type, const double min,
@@ -716,6 +833,85 @@ void ParameterBridge::buildChoices()
         sub_.labels.add ("not in xerum's set");
         sub_.modelNames.emplace_back();
     }
+
+    // --- A matrix row's source -----------------------------------------------------------------------
+    //
+    // The reference's own 1-based 60-name table, which ticket `27` recovered and `modSourceName` owns:
+    // **the label IS the model value's name**, so the two cannot drift. Index 0 is the reference's "no
+    // source", which the table has no name for. There is no sentinel — every value 0..60 is
+    // representable, and one v1 does not evaluate is still selectable and reported where it is used.
+    {
+        modSource_.labels.add ("none");
+
+        for (int value = 1; value <= dsp::kReferenceSourceCount; ++value)
+            modSource_.labels.add (juce::String (std::string (dsp::modSourceName (value))));
+
+        modSource_.sentinel = modSource_.labels.size();   // unreachable: the enum is closed
+    }
+
+    // --- A matrix row's destination class ------------------------------------------------------------
+    //
+    // The model's own closed enum, so a class the reference uses is selectable and a class the model
+    // does not carry is preserved by the sentinel rather than rewritten.
+    {
+        for (const auto& name : enumFor ("ModSlot{N}/destModuleTypeString"))
+        {
+            destinationClass_.labels.add (juce::String (std::string (name)));
+            destinationClass_.modelNames.emplace_back (name);
+        }
+
+        destinationClass_.sentinel = destinationClass_.labels.size();
+        destinationClass_.labels.add ("not in xerum's set");
+        destinationClass_.modelNames.emplace_back();
+    }
+}
+
+void ParameterBridge::buildModulationSpecs()
+{
+    // One spec per field of each of the 64 rows. The **model paths are the document's own keys** — the
+    // very paths `modulationRowsFromDocument` reads and `ModSlot` is decoded from — so a parameter edit,
+    // a document row and the engine's row all address the same key. That is ticket 45's requirement:
+    // these are the *parameters the bridge writes*, and without them a preset would overwrite every edit
+    // through `applyDocument` (ticket 40's finding, applied to the matrix).
+    const auto add = [this] (const int row, const ModRowField field, std::string label, const ParamType type,
+                             const ChoiceSet set, const double min, const double max, const double init)
+    {
+        appendSpec (modulationSpecs_, modulationFieldPath (row, field), std::move (label), "Matrix", type, set,
+                    min, max, init);
+    };
+
+    for (int row = 0; row < kMatrixRows; ++row)
+    {
+        const auto index = std::to_string (row);
+
+        // The source is the reference's 0..60 enum; the schema observes 0..59 and the reference's own
+        // table runs to 60 (`ModSlot`, which no preset routes), so xerum's range is the engine's own.
+        add (row, ModRowField::Source, "Row " + index + " Source", ParamType::Choice, ChoiceSet::ModSource,
+             0, 0, 0);
+        add (row, ModRowField::AuxSource, "Row " + index + " Aux Source", ParamType::Choice,
+             ChoiceSet::ModSource, 0, 0, 0);
+
+        // `kParamAmount`'s range is the schema's own (-100..100, percent, signed — the sign is the
+        // polarity), and 0 is the reference's init.
+        add (row, ModRowField::Amount, "Row " + index + " Amount", ParamType::Float, ChoiceSet::None,
+             -100, 100, 0);
+        add (row, ModRowField::Bipolar, "Row " + index + " Polarity", ParamType::Bool, ChoiceSet::None,
+             0, 1, 0);
+        add (row, ModRowField::Bypass, "Row " + index + " Bypass", ParamType::Bool, ChoiceSet::None, 0, 1, 0);
+
+        add (row, ModRowField::DestinationClass, "Row " + index + " Destination", ParamType::Choice,
+             ChoiceSet::DestinationClass, 0, 0, destinationClass_.sentinel);
+
+        // The instance and the parameter id are the engine's own addressing (`destModuleID`,
+        // `destModuleParamID`); the ranges are the schema's observed maxima. The *name* is not editable
+        // and is preserved from the document: the id is what the engine addresses, and the name is the
+        // only stable identity across schema versions (ticket 03), so rewriting one without the other
+        // would break both.
+        add (row, ModRowField::DestinationInstance, "Row " + index + " Instance", ParamType::Int,
+             ChoiceSet::None, 0, 207, 0);
+        add (row, ModRowField::DestinationParameter, "Row " + index + " Destination Param", ParamType::Int,
+             ChoiceSet::None, 0, 59, 0);
+    }
 }
 
 void ParameterBridge::buildParameters()
@@ -726,7 +922,7 @@ void ParameterBridge::buildParameters()
     // the way the table reads.
     std::map<std::string, juce::AudioProcessorParameterGroup*> groups;
 
-    for (auto& spec : specs_)
+    const auto create = [this, &groups] (const ParamSpec& spec)
     {
         const juce::ParameterID parameterID { spec.id, 1 };
         const juce::String parameterName { spec.label };
@@ -773,7 +969,13 @@ void ParameterBridge::buildParameters()
 
         // The group owns the parameter; the tree owns the group and is handed to the processor.
         group->addChild (std::move (parameter));
-    }
+    };
+
+    for (const auto& spec : specs_)
+        create (spec);
+
+    for (const auto& spec : modulationSpecs_)
+        create (spec);
 }
 
 } // namespace xerum::plugin

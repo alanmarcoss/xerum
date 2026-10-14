@@ -78,6 +78,11 @@ public:
     int controlCount() const;
     ui::ParameterControl* controlFor (std::string_view id) const;
 
+    /// `controlCount()` **plus the 512 bound matrix cells**: every control on screen, which is what the
+    /// header's coverage readout counts. Ticket `45` — leaving the matrix cells out would understate what
+    /// is bound by 512 now that the cells are real controls.
+    int boundControlCount() const;
+
     /// How many schema leaves the interface *does not* bind. Shown in the header, so the gap is visible
     /// rather than implied away.
     int schemaLeafCount() const { return schemaLeaves_; }
@@ -111,6 +116,10 @@ public:
     const ui::ModulationMatrixView& matrixView() const { return matrix_; }
     ui::ModulationMatrixView& matrixView() { return matrix_; }
     const ui::PoleZeroPlane& poleZeroPlane (int filterSlot) const;
+
+    /// Non-const, because the plane **edits** since ticket `45`: a test drives a drag through it the way
+    /// the mouse does, rather than reaching past it to the processor.
+    ui::PoleZeroPlane& poleZeroPlane (int filterSlot);
 
     //==============================================================================
     // The report surface: a bar plus a drawer, never a modal.

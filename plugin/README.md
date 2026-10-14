@@ -29,11 +29,17 @@ VST3 has no such registry; the bundle id and the class UID JUCE derives from `PL
 
 ## The parameter bridge
 
-A host sees **75 parameters**, plus the VST3 `Bypass` parameter JUCE necessarily adds. Not 776 and
-not the reference's 2623: the surface is exactly what the engine implements. Exposing the rest would
-put controls in a host that write a value nothing reads — the placeholder-fallback smell this project
-forbids — and a preset's other parameters are not lost, because they stay in the document and in the
-import report.
+A host sees **587 parameters**, plus the VST3 `Bypass` parameter JUCE necessarily adds. That is the 75
+of the interface surface — the parameters the engine implements — and, since ticket `45`, the **512**
+of the modulation surface: the eight editable fields of each of the matrix's 64 rows. Not 776 and not
+the reference's 2623: a parameter with no engine behind it would put a control in a host that writes a
+value nothing reads — the placeholder-fallback smell this project forbids — and a preset's other
+parameters are not lost, because they stay in the document and in the import report.
+
+The two surfaces are separate lists on purpose. `ParameterBridge::specs()` is the interface surface
+(75), and `InterfacePlan` turns it into device pages; `ParameterBridge::modulationSpecs()` is the
+matrix surface, which `InterfacePlan` deliberately never sees — a 512-row page is not a matrix.
+Everything that feeds the engine or the document iterates both.
 
 * **Ids are derived, not written by hand.** `parameterIdFromPath` states the rule — lower case, drop
   `plainParams`, drop the `kParam` prefix, join with `.` — so
@@ -367,17 +373,82 @@ flat, so the only derivable family name is the model's module stem (`Oscillator`
 `Global`, `Env`) and their *display* names would be new hand-written vocabulary — the one thing
 `InterfacePlan` exists to avoid. The strip's job (showing what else exists) is met without them.
 
-## The two hard surfaces — and what they are, exactly
+## The two hard surfaces — and they are editors now
 
-Both are **views**, and that is measured rather than preferred:
+Ticket `44` built both as **views**, and its reason was measured rather than preferred: `ParameterBridge`
+bound no modulation parameter and nothing in `plugin/` reached `VoiceFilter::setPoleZero`, so a control
+would have written a value nothing read. **Ticket `45` built the missing path**, and both surfaces edit:
 
-| Surface | Shows | Why it is not a control surface |
-|---|---|---|
-| `ui::ModulationMatrixView` — 64 rows × 12 columns | the loaded preset's `ModSlot0`…`ModSlot63`: source and aux source **named** from `dsp::modSourceName` (the 60-name table ticket `27` recovered — the correction ticket `43` recorded against the prototype's conclusion that the interface could not name a source), amount (signed: the sign *is* the polarity), bipolar, bypass, both curve knobs, the destination `(class, instance, parameter)` triple, and the engine's own verdict from `dsp::modDestinationUnresolvedReason` / `dsp::modSourceIsImplemented` | `ParameterBridge` binds 75 parameters and **no modulation ones**, and the plugin never hands the engine's `ModulationMatrix` a slot — `VoiceEngine::setModulationSlots` is called by `tests/dsp/voice_test.cpp` and by nothing in `plugin/`. A slider here would write a value nothing reads: the placeholder smell the bridge's own header forbids |
-| `ui::PoleZeroPlane` — up to 32 sections | the sections a preset draws (`VoiceFilter{n}/PZs[]`, four objects of eight), pole above the axis and zero below, marker size from the section's Q | the engine's `VoiceSettings` carries a `FilterSpec` and no pole/zero table, so the plugin **reports** a drawn response at `high` — the plane's own caption says so where the sections are, rather than looking like a promise |
+| Surface | Shows and edits |
+|---|---|
+| `ui::ModulationMatrixView` — 64 rows × 12 columns | the loaded preset's `ModSlot0`…`ModSlot63`. Source and aux source are **named** from `dsp::modSourceName` (the 60-name table ticket `27` recovered — the correction ticket `43` recorded against the prototype's conclusion that the interface could not name a source); amount (signed: the sign *is* the polarity), bipolar, bypass, both curve knobs, the destination `(class, instance, parameter)` triple, and the engine's own verdict from `dsp::modDestinationUnresolvedReason` / `dsp::modSourceIsImplemented`. **Eight of the twelve columns are `ParameterControl`s bound to the bridge's own parameter objects** — the source pair, amount, polarity, bypass and the destination triple — and the other four (the slot, the two curve knobs and the note) stay painted from the document. |
+| `ui::PoleZeroPlane` — up to 32 sections | the sections a preset draws (`VoiceFilter{n}/PZs[]`, four objects of eight), pole above the axis and zero below, marker size from the section's Q. It **edits**: dragging a pole or zero marker sets that marker's frequency, and dragging it up or down sets its Q. An edit calls `XerumAudioProcessor::setPoleZeroSection`, which writes the document's `PZs[n]` object and republishes the response to the engine. |
 
 The rows are the reference's own 64 whether or not a preset stores them: an empty slot is a **row**
-(the reference writes all 64 in every preset), it is drawn as em-dashes, and its note is empty.
+(the reference writes all 64 in every preset), it is drawn as em-dashes, and its note is empty. Every
+row's cells are bound, so an unstored row is editable too.
+
+### Where the edited rows live, and how they reach the engine
+
+**The parameters are the live store; the document is where the edit lands.** The `ModSlot` row paths are
+addressed the same way every other parameter is, so a matrix edit is a *preset edit* rather than a
+parallel state:
+
+* `ParameterBridge::modulationSpecs()` declares one parameter per editable field, with the **document's
+  own model path** (`ModSlot3/plainParams/kParamAmount`) as its key. That is what makes a row a
+  *declared* parameter, which ticket `40` measured to be load-bearing: `applyDocument` only writes the
+  parameters the bridge declares, so an undeclared row would be dead the moment a preset arrived.
+* `applyDocument` writes those 512 from the loaded document; `getStateInformation` writes every one the
+  user moved back into the state block. So a row survives a save, a restore and a preset load.
+* `XerumAudioProcessor::publishModulationSlots` rebuilds the engine's rows from the live parameters —
+  with each row's **curves** and **destination name** taken from the document, since neither is an
+  editable parameter — writes any changed row back into the document, and hands the engine the table.
+* **Neither rebuild happens on the audio thread.** `VoiceEngine::setModulationSlots` allocates, so the
+  audio thread only *flags* a change (`refreshModulationParameters` sees a host's automation; a
+  parameter listener sees the editor's). A message-thread timer drains the flag, and a change made on
+  the message thread republishes immediately. The render therefore still allocates nothing.
+* The drawn response reaches the engine the same way: `publishPoleZero` reads `VoiceFilter{n}/PZs[]` into
+  `FilterSettings::poleZero` while the audio thread is held out, and `Voice::setSettings` — with the rest
+  of the settings — calls `VoiceFilter::setPoleZero` when the model is `PoleZero`.
+
+The measurement that says the path is real is a **render difference**, not a parameter value:
+`plugin/tests/interface_test.cpp` shows a row at full depth opening a shut filter, and every way of
+neutralising it — zero amount, no source, bypass, a zero aux source, a destination the voice does not
+read — making it quiet; a live edit of the amount changing a render; and a pole/zero drag changing one.
+
+### The retraction
+
+The report used to name a drawn response at **`high`**, because the response was shown and not applied.
+That is no longer true, so the entry is **retracted** in the same change — the rule ticket `41` applied to
+`interpolateAfterLoad`: an entry true before and false after is worse than no entry.
+`plugin/tests/interface_test.cpp` asserts no report entry mentions the response being unapplied, and that
+the plane still draws and edits its sections.
+
+### One field that is not editable, reported rather than approximated
+
+A row's **destination name** (`destModuleParamName`) has no parameter: the engine addresses a destination
+by `(class, instance, parameter-id)`, and the name is the reference's own label, preserved from the
+document. So the eight editable fields are the address, and a row that a preset does **not** carry cannot
+be given a name through the interface — such a row is reported by the matrix as naming no destination
+until a preset supplies one. That is the honest boundary; inventing a name would be inventing the address.
+
+### Why an edit is coalesced, and the measurement that forced it
+
+A parameter change is **not** republished synchronously. The listener's whole job is an atomic flag; a
+20 Hz message-thread timer (or `XerumAudioProcessor::flushModulation()`) drains it. That is not a
+micro-optimisation — it was forced by `pluginval`:
+
+* the first implementation republished on every change. At strictness level 10, pluginval's *Parameter
+  thread safety* test calls `setValueNotifyingHost` on **all 587 parameters, 500 times over**, in one
+  message — a quarter of a million writes. Rebuilding 64 matrix rows per write timed the test out at
+  30 s. Coalesced, the same test finishes in seconds and `--strictness-level 10 --validate` on the VST3
+  returns **SUCCESS, exit 0** (re-run on the ticket `45` change; the whole run took 17 s).
+* the 250 ms handshake bound matters for the same reason: a publish that cannot get the block within the
+  bound **defers** (re-raises the flag) rather than spinning, so a host that calls `processBlock` on the
+  message thread — or one that never leaves it — cannot hang the message thread.
+
+The cost of coalescing is at most 50 ms between an edit and hearing it; the render's allocation
+behaviour is unchanged, which the `[realtime]` and `[interface][realtime]` cases still measure at zero.
 
 ## The report is a bar plus a drawer, never a modal
 
@@ -390,10 +461,12 @@ import is a state, and empty and absent do not look alike. Neither surface is a 
 
 ## The coverage readout, because a gap should be visible
 
-The header shows `75 of 776 schema leaves bound` — `controlCount()` over `Schema::instance().leafCount()`,
-so the number cannot drift from what is on the pages. This is the ticket's honest measure of the gap,
-stated where a user can see it rather than implied away, and it is also why a device page is short: the
-bridge implements a fraction of the model. The empty area under a short page is where the drawer opens.
+The header shows `587 of 776 schema leaves bound` — `boundControlCount()` over
+`Schema::instance().leafCount()`, so the number cannot drift from what is on screen. It is the plan's 75
+controls **plus the matrix's 512 bound cells** (ticket `45` made the cells real controls; leaving them out
+would have understated the surface by 512). This is the honest measure of the gap, stated where a user can
+see it rather than implied away, and it is also why a device page is short: the bridge implements a
+fraction of the model. The empty area under a short page is where the drawer opens.
 
 ## The standalone, run and observed
 
@@ -464,17 +537,19 @@ above for why a page is short, and note that it is also where the report drawer 
 
 ## What could not be implemented as recorded
 
-* **The matrix as editable columns.** The direction calls for "real columns (64 rows × 12 controls)".
-  The columns are real and there are twelve of them; the *controls* are not, for the reason in the
-  table above — the bridge binds no matrix parameter and the engine's matrix is not fed by the plugin.
-  Making them editable is a job in two other layers (bridge parameters, and `setModulationSlots` on the
-  preset path), not a design change here, and pretending otherwise would have produced 768 dead
-  controls.
-* **Editing the drawn filter.** Same shape of gap: `dsp::VoiceFilter::setPoleZero` exists, nothing in
-  `plugin/` reaches it, and the plugin reports the drawn response as unapplied.
+Ticket `45` closed the first two of ticket `44`'s gaps: the **matrix is editable** (eight columns bound
+to declared parameters, edits reaching `VoiceEngine::setModulationSlots` and heard) and the **drawn filter
+is applied** (`VoiceFilter::setPoleZero`, with the `high` report retracted). What is left:
+
+* **A row's destination name is not editable.** It has no parameter, and it is preserved from the
+  document rather than invented — see the retraction's own section. A row a preset does not carry is
+  reported by the matrix as naming no destination.
+* **The matrix's two curve knobs are not editable either**, though the engine *does* evaluate them. They
+  are carried from the document into the engine's rows untouched, so a preset's own curve survives an
+  edit; making them editable is another two parameters per row, and nothing in the acceptance needs them.
 * **The prototype's device families** (`OSC`/`FILTER`/`MOD`/`GLOBAL` headings in the strip) — see
   above: their display names would be invented vocabulary.
 * **The parameter-and-leaf inventory behind the design** (452 controls, 280 arrays, 42 containers) is
   still not on screen. Ticket `43`'s finding stands: the arrays and containers are addressed by the
-  pages they belong to, and this interface shows only what the bridge binds — 75 controls — with the
-  gap stated in the header rather than a page of raw arrays with no engine behind them.
+  pages they belong to, and this interface shows what the bridge binds — 75 page controls and 512 matrix
+  cells — with the gap stated in the header rather than a page of raw arrays with no engine behind them.

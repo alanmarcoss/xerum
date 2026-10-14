@@ -8,7 +8,7 @@ namespace xerum::plugin::ui
 {
 
 ParameterControl::ParameterControl (const ParamSpec& spec, juce::RangedAudioParameter& parameter,
-                                    const ChoiceList& choices)
+                                    const ChoiceList& choices, const bool showLabel)
     : spec_ (spec),
       parameter_ (parameter)
 {
@@ -17,8 +17,8 @@ ParameterControl::ParameterControl (const ParamSpec& spec, juce::RangedAudioPara
     if (kind == ControlKind::Toggle)
     {
         // A boolean row is the toggle itself: the button's text is the label, so the row needs no label
-        // column and the panel reads as a list of switches.
-        toggle_.setButtonText (label());
+        // column and the panel reads as a list of switches. A matrix cell has the column header instead.
+        toggle_.setButtonText (showLabel ? label() : juce::String());
         toggle_.setClickingTogglesState (true);
         toggle_.setColour (juce::ToggleButton::textColourId, look::text);
         toggle_.setColour (juce::ToggleButton::tickColourId, look::accent);
@@ -28,7 +28,9 @@ ParameterControl::ParameterControl (const ParamSpec& spec, juce::RangedAudioPara
     }
     else if (kind == ControlKind::Choice)
     {
-        label_.setText (label(), juce::dontSendNotification);
+        if (showLabel)
+            label_.setText (label(), juce::dontSendNotification);
+
         label_.setJustificationType (juce::Justification::centredLeft);
         label_.setFont (juce::FontOptions (12.5f));
         label_.setColour (juce::Label::textColourId, look::dimText);
@@ -48,7 +50,9 @@ ParameterControl::ParameterControl (const ParamSpec& spec, juce::RangedAudioPara
     }
     else
     {
-        label_.setText (label(), juce::dontSendNotification);
+        if (showLabel)
+            label_.setText (label(), juce::dontSendNotification);
+
         label_.setJustificationType (juce::Justification::centredLeft);
         label_.setFont (juce::FontOptions (12.5f));
         label_.setColour (juce::Label::textColourId, look::dimText);
@@ -98,6 +102,13 @@ void ParameterControl::resized()
     if (controlKindFor (spec_.type) == ControlKind::Toggle)
     {
         toggle_.setBounds (area.reduced (0, 1));
+        return;
+    }
+
+    // A cell with no label hands the whole width to the widget — the matrix's case.
+    if (label_.getText().isEmpty())
+    {
+        widget_->setBounds (area.reduced (2, 3));
         return;
     }
 

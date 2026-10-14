@@ -236,6 +236,14 @@ struct FilterSettings
     double resonance { 0.0 };   ///< `kParamReso`, percent
     double drive { 0.0 };       ///< `kParamDrive`, percent
     double morph { 0.0 };       ///< `kParamVar`, 0..1
+
+    /// The **drawn response**, for a `PoleZero` spec: the sections a preset inlines under `PZs[]`.
+    ///
+    /// Carried here rather than read from the document per block because `VoiceFilter::setPoleZero` is
+    /// the only way the response reaches the engine, and the audio thread may not touch a document map.
+    /// Empty for every other model, and for a `PoleZero` slot whose preset drew nothing — which is a
+    /// pass-through, not a substituted filter.
+    PoleZeroDescription poleZero {};
 };
 
 /// The NOISE slot's preset settings (`Oscillator3`).

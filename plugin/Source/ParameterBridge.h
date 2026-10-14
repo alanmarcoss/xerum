@@ -46,9 +46,14 @@ namespace xerum::plugin
 enum class ParamType { Bool, Float, Int, Choice };
 
 /// Which table the choice strings come from. The model paths that are discrete-valued and need a
-/// vocabulary: the warp menu, the filter type, and ticket 40's two fixed slots — NOISE's colour menu and
-/// SUB's waveform menu.
-enum class ChoiceSet { None, WarpMode, FilterType, NoiseType, SubShape };
+/// vocabulary: the warp menu, the filter type, ticket 40's two fixed slots — NOISE's colour menu and
+/// SUB's waveform menu — and ticket 45's two **modulation** vocabularies: a row's source (the reference's
+/// 60-name table) and its destination class (the model's own closed enum).
+enum class ChoiceSet { None, WarpMode, FilterType, NoiseType, SubShape, ModSource, DestinationClass };
+
+/// The reference's matrix capacity and the fields of a row the interface edits. Ticket 45: the rows are
+/// `ModSlot0`…`ModSlot63`, and a row is edited through the same eight model leaves the document stores.
+inline constexpr int kMatrixRows = 64;
 
 /// A built choice list: xerum's labels, and the model token each choice stands for.
 struct ChoiceList
@@ -89,6 +94,27 @@ struct ParamSpec
     int paramIndex { -1 };    ///< into `ParameterBridge::parameters()`
 };
 
+/// The eight fields of a modulation row the interface edits, in the matrix's column order. Ticket 45:
+/// exactly the fields the acceptance names — the source pair, amount, polarity, bypass and the
+/// destination triple — and each is a document leaf the bridge declares as a parameter.
+enum class ModRowField
+{
+    Source,
+    AuxSource,
+    Amount,
+    Bipolar,
+    Bypass,
+    DestinationClass,
+    DestinationInstance,
+    DestinationParameter,
+};
+
+inline constexpr int kModRowFieldCount = 8;
+
+/// The model path of one field of one row — the very concrete path the document is keyed by, so the
+/// parameter, the document row and the engine's `ModSlot` all address the same key.
+std::string modulationFieldPath (int row, ModRowField field);
+
 /// The parameter surface: the table, the JUCE parameters and the group tree.
 class ParameterBridge
 {
@@ -96,8 +122,41 @@ public:
     ParameterBridge();
 
     const std::vector<ParamSpec>& specs() const { return specs_; }
+
+    /// The **modulation surface**, ticket 45: one spec per field of each of the 64 rows.
+    ///
+    /// Kept apart from `specs()` on purpose. `specs()` is what `InterfacePlan` turns into device pages,
+    /// and the matrix is deliberately *not* a page the parameter table derives (ticket 44) — it is one
+    /// grid whose cells bind to these parameters. Everything that feeds the engine or the document
+    /// iterates both lists; only the plan iterates `specs()`.
+    const std::vector<ParamSpec>& modulationSpecs() const { return modulationSpecs_; }
+
     const std::vector<juce::RangedAudioParameter*>& parameters() const { return parameters_; }
     const ChoiceList& choices (ChoiceSet set) const;
+
+    /// The spec for one row's field, or nullptr — the matrix binds its editable cells through this.
+    const ParamSpec* modulationSpec (int row, ModRowField field) const;
+
+    /// Every parameter the bridge exposes, in parameter-index order: `specs()` then `modulationSpecs()`.
+    int parameterCount() const { return static_cast<int> (parameters_.size()); }
+
+    /// The spec a parameter index belongs to, or nullptr — the two lists are contiguous and in index
+    /// order, so this is arithmetic rather than a search.
+    const ParamSpec* specForParameter (const int paramIndex) const
+    {
+        if (paramIndex < 0 || paramIndex >= parameterCount())
+            return nullptr;
+
+        return paramIndex < static_cast<int> (specs_.size())
+                   ? &specs_[static_cast<std::size_t> (paramIndex)]
+                   : &modulationSpecs_[static_cast<std::size_t> (paramIndex
+                                                                  - static_cast<int> (specs_.size()))];
+    }
+
+    /// Whether a choice set's values are stored in the document as a **number** rather than as text.
+    /// A row's source is the reference's 1-based enum, so the document holds `source[0]` as an int — the
+    /// one choice whose model form is numeric.
+    static bool choiceStoredAsNumber (ChoiceSet set);
 
     /// Hand the group tree to the processor. `setParameterTree` takes it by value, so it is moved once.
     juce::AudioProcessorParameterGroup releaseTree() { return std::move (*tree_); }
@@ -115,16 +174,25 @@ public:
 
 private:
     void buildSpecs();
+    void buildModulationSpecs();
     void buildChoices();
     void buildParameters();
 
-    std::vector<ParamSpec> specs_;
+    /// One `add` shared by both spec builders: fills the id, schema path and parameter index and appends.
+    ParamSpec& appendSpec (std::vector<ParamSpec>& list, std::string modelPath, std::string label,
+                           std::string group, ParamType type, ChoiceSet set, double min, double max,
+                           double init);
+
+    std::vector<ParamSpec> specs_;            ///< the interface surface (ticket 31)
+    std::vector<ParamSpec> modulationSpecs_;  ///< the matrix surface (ticket 45)
     std::vector<juce::RangedAudioParameter*> parameters_;
     std::unique_ptr<juce::AudioProcessorParameterGroup> tree_;
     ChoiceList warp_;
     ChoiceList filter_;
     ChoiceList noise_;
     ChoiceList sub_;
+    ChoiceList modSource_;         ///< the reference's 60 source names, 1-based, plus "none"
+    ChoiceList destinationClass_;  ///< the model's own closed destination-class enum
 };
 
 /// The rule that turns a module path into xerum's parameter id, stated once:
@@ -136,6 +204,15 @@ std::string parameterIdFromPath (std::string_view modelPath);
 /// xerum's own description of a filter spec — the *only* place a filter choice's label is produced, so a
 /// label cannot disagree with the spec the engine will build.
 std::string describeFilterSpec (const dsp::FilterSpec& spec);
+
+/// Read a voice filter's drawn response out of a loaded document — `VoiceFilter{slot}/PZs[]`, which is
+/// where a preset inlines it. Empty when the preset carries none, and never a partial object: the
+/// reference stores eight sections per object or none.
+///
+/// Ticket 45 moved this from the interface into the preset→engine path: the plane *shows* the response,
+/// but the response must also reach `dsp::VoiceFilter::setPoleZero`, so its reader belongs in the layer
+/// the processor can use rather than in a widget header.
+dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& document, int filterSlot);
 
 /// Read a number out of a document value. Returns false for anything that is not numeric.
 bool modelNumber (const model::Value& value, double& out);

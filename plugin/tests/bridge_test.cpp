@@ -39,8 +39,9 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
 
     std::set<std::string> ids;
     std::set<std::string> modelPaths;
+    int lastParamIndex = -1;
 
-    for (const auto& spec : bridge.specs())
+    const auto check = [&] (const ParamSpec& spec)
     {
         // The id is *derived*, not hand-written: the rule in `parameterIdFromPath` is the definition, and
         // this asserts the table cannot drift from it.
@@ -54,12 +55,39 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
         CHECK (ids.insert (spec.id).second);
         CHECK (modelPaths.insert (spec.modelPath).second);
         CHECK (spec.paramIndex >= 0);
-    }
 
-    CHECK (bridge.parameters().size() == bridge.specs().size());
+        // The two surfaces are contiguous and in index order, so `specForParameter` is arithmetic.
+        CHECK (spec.paramIndex == lastParamIndex + 1);
+        lastParamIndex = spec.paramIndex;
+    };
 
-    // The surface is what the engine implements, and it is not the reference's 2623-parameter VST3 space
-    // nor the model's 776 leaves. A fixed count is the point: it is a claim, not an accident.
+    for (const auto& spec : bridge.specs())
+        check (spec);
+
+    // **Ticket 45's second surface**: the matrix's rows. The same rules hold — a derived id, a schema
+    // path, a unique key — because these are the parameters the bridge now *writes*, and a duplicate key
+    // would silently bind a cell to the wrong row.
+    for (const auto& spec : bridge.modulationSpecs())
+        check (spec);
+
+    CHECK (bridge.parameterCount() == bridge.parameters().size());
+    CHECK (bridge.parameterCount() == static_cast<int> (bridge.specs().size())
+                                          + static_cast<int> (bridge.modulationSpecs().size()));
+    CHECK (bridge.parameters().size() == static_cast<std::size_t> (bridge.parameterCount()));
+
+    // The matrix surface is exactly the acceptance's field list: the source pair, the amount, the
+    // polarity, the bypass and the destination triple — eight per row, for the reference's 64 rows.
+    CHECK (bridge.modulationSpecs().size() == 8u * 64u);
+    CHECK (bridge.modulationSpec (0, ModRowField::Source) != nullptr);
+    CHECK (bridge.modulationSpec (0, ModRowField::Source)->modelPath == "ModSlot0/source[0]");
+    CHECK (bridge.modulationSpec (63, ModRowField::DestinationParameter)->modelPath
+           == "ModSlot63/destModuleParamID");
+    CHECK (bridge.modulationSpec (64, ModRowField::Source) == nullptr);
+
+    // The interface surface is what the engine implements, and it is not the reference's 2623-parameter
+    // VST3 space nor the model's 776 leaves. A fixed count is the point: it is a claim, not an accident.
+    // The modulation surface is deliberately **not** in `specs()` — `InterfacePlan` is what turns specs
+    // into device pages, and a 512-row page is not a matrix (ticket 45).
     CHECK (bridge.specs().size() == 75);
     CHECK (schema.leafCount() > bridge.specs().size());
 }

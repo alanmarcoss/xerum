@@ -122,6 +122,102 @@ void ModulationMatrixView::setRows (std::vector<MatrixRow> rows)
     repaint();
 }
 
+bool ModulationMatrixView::columnIsEditable (const int column)
+{
+    // The eight the acceptance names, and only those: the curves and the note stay painted.
+    switch (column)
+    {
+        case 1: case 2: case 3: case 4: case 5: case 8: case 9: case 10:
+            return true;
+        default:
+            return false;
+    }
+}
+
+ModRowField ModulationMatrixView::fieldForColumn (const int column)
+{
+    switch (column)
+    {
+        case 1:  return ModRowField::Source;
+        case 2:  return ModRowField::AuxSource;
+        case 3:  return ModRowField::Amount;
+        case 4:  return ModRowField::Bipolar;
+        case 5:  return ModRowField::Bypass;
+        case 8:  return ModRowField::DestinationClass;
+        case 9:  return ModRowField::DestinationInstance;
+        default: return ModRowField::DestinationParameter;   // column 10
+    }
+}
+
+void ModulationMatrixView::bindToBridge (const ParameterBridge& bridge)
+{
+    if (isBound())
+        return;
+
+    cells_.clear();
+    cells_.resize (static_cast<std::size_t> (kModulationSlots * kColumnCount));
+
+    for (int row = 0; row < kModulationSlots; ++row)
+        for (int column = 0; column < kColumnCount; ++column)
+        {
+            if (! columnIsEditable (column))
+                continue;
+
+            const auto* spec = bridge.modulationSpec (row, fieldForColumn (column));
+
+            if (spec == nullptr || spec->paramIndex < 0
+                || spec->paramIndex >= static_cast<int> (bridge.parameters().size()))
+                continue;
+
+            auto control = std::make_unique<ParameterControl> (
+                *spec, *bridge.parameters()[static_cast<std::size_t> (spec->paramIndex)],
+                bridge.choices (spec->choiceSet), /* showLabel */ false);
+
+            cells_[static_cast<std::size_t> (row * kColumnCount + column)] = std::move (control);
+            addAndMakeVisible (*cells_[static_cast<std::size_t> (row * kColumnCount + column)]);
+        }
+
+    resized();
+    repaint();
+}
+
+int ModulationMatrixView::boundCellCount() const
+{
+    int count = 0;
+
+    for (const auto& cell : cells_)
+        count += cell != nullptr ? 1 : 0;
+
+    return count;
+}
+
+ParameterControl* ModulationMatrixView::controlForCell (const int row, const int column) const
+{
+    if (row < 0 || row >= kModulationSlots || column < 0 || column >= kColumnCount)
+        return nullptr;
+
+    const auto index = static_cast<std::size_t> (row * kColumnCount + column);
+
+    return index < cells_.size() ? cells_[index].get() : nullptr;
+}
+
+void ModulationMatrixView::resized()
+{
+    for (int row = 0; row < kModulationSlots; ++row)
+    {
+        int x = 0;
+
+        for (int column = 0; column < kColumnCount; ++column)
+        {
+            if (auto* control = controlForCell (row, column))
+                control->setBounds (x + 3, kHeaderHeight + row * kRowHeight + 1,
+                                    kColumns[column].width - 6, kRowHeight - 2);
+
+            x += kColumns[column].width;
+        }
+    }
+}
+
 int ModulationMatrixView::columnCount() { return kColumnCount; }
 
 juce::String ModulationMatrixView::columnTitle (const int column)
@@ -279,6 +375,14 @@ void ModulationMatrixView::paint (juce::Graphics& graphics)
         {
             const auto cell = juce::Rectangle<int> (x, rowArea.getY(), kColumns[column].width, kRowHeight)
                                   .reduced (6, 0);
+
+            // An editable cell that is bound draws itself (a widget over this background), so the painted
+            // text would double it. The row background stays: the grid still reads as a grid.
+            if (isBound() && columnIsEditable (column))
+            {
+                x += kColumns[column].width;
+                continue;
+            }
 
             if (column == 11)
                 graphics.setColour (note.isEmpty() ? look::dimText : look::severityMedium);

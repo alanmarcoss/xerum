@@ -25,7 +25,10 @@ namespace xerum::plugin::ui
 class ParameterControl final : public juce::Component
 {
 public:
-    ParameterControl (const ParamSpec& spec, juce::RangedAudioParameter& parameter, const ChoiceList& choices);
+    /// `showLabel` is false for a **matrix cell**, where the column header is the label and a per-cell one
+    /// would be repeated 64 times down the grid.
+    ParameterControl (const ParamSpec& spec, juce::RangedAudioParameter& parameter, const ChoiceList& choices,
+                      bool showLabel = true);
 
     const ParamSpec& spec() const { return spec_; }
     juce::RangedAudioParameter& parameter() const { return parameter_; }

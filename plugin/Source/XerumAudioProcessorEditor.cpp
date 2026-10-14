@@ -81,7 +81,14 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
     // called hard. Two planes, one per voice filter, each on the device page whose module it belongs to.
     for (int slot = 0; slot < dsp::kFilterSlots; ++slot)
     {
-        addChildComponent (*planes_.add (new ui::PoleZeroPlane()));
+        auto* plane = planes_.add (new ui::PoleZeroPlane());
+        addChildComponent (*plane);
+
+        // Ticket 45: the plane edits, so a section dragged here reaches `VoiceFilter::setPoleZero` through
+        // the processor, which writes the document's `PZs[]` object and republishes the response.
+        plane->setEditable (true);
+        plane->onSectionChanged = [this, slot] (const int section, const dsp::PoleZeroSection& value)
+        { processor_.setPoleZeroSection (slot, section, value); };
 
         const auto module = "VoiceFilter" + std::to_string (slot);
 
@@ -90,13 +97,18 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
                 device.plane = planes_.size() - 1;
     }
 
-    // The matrix page. **The one device the table does not derive**, and the reason is the bridge's own
-    // rule: it binds 75 parameters and no modulation ones, so there is no group for the matrix to be a
-    // page *of*. Its data is the loaded document's `ModSlot0`…`ModSlot63`.
+    // The matrix page. **The one device the table does not derive**: ticket `45` gave the bridge a
+    // modulation parameter surface, but it is deliberately kept out of `specs()` so `InterfacePlan` does
+    // not turn it into a page — a 512-row page is not a matrix. The page already exists; it is this grid.
     addChildComponent (matrixViewport_);
     matrixViewport_.setViewedComponent (&matrix_, false);
     matrixViewport_.setScrollBarsShown (true, true);
     matrix_.setSize (ui::ModulationMatrixView::preferredWidth(), ui::ModulationMatrixView::preferredHeight());
+
+    // **Ticket 45: the matrix is the editor.** Its eight editable columns bind to the matrix parameters
+    // the bridge now declares, so a cell writes a value the engine reads rather than a value nothing
+    // reads. The other four columns stay painted from the document.
+    matrix_.bindToBridge (processor_.bridge());
 
     {
         // The strip, from the devices in the plan's own order, then the matrix. Titles are the table's own
@@ -193,6 +205,11 @@ int XerumAudioProcessorEditor::controlCount() const
     return total;
 }
 
+int XerumAudioProcessorEditor::boundControlCount() const
+{
+    return controlCount() + (matrix_.isBound() ? matrix_.boundCellCount() : 0);
+}
+
 ui::ParameterControl* XerumAudioProcessorEditor::controlFor (const std::string_view id) const
 {
     for (auto* panel : panels_)
@@ -230,6 +247,11 @@ ui::ParameterPanel* XerumAudioProcessorEditor::panelForDevice (const int index) 
 }
 
 const ui::PoleZeroPlane& XerumAudioProcessorEditor::poleZeroPlane (const int filterSlot) const
+{
+    return *planes_[filterSlot];
+}
+
+ui::PoleZeroPlane& XerumAudioProcessorEditor::poleZeroPlane (const int filterSlot)
 {
     return *planes_[filterSlot];
 }
@@ -308,7 +330,7 @@ void XerumAudioProcessorEditor::refreshReport()
         planes_[slot]->setFilter (slot, type != document.parameters.end() && type->second.isText()
                                             ? juce::String (type->second.text)
                                             : juce::String());
-        planes_[slot]->setSections (ui::poleZeroFromDocument (document, slot));
+        planes_[slot]->setSections (poleZeroFromDocument (document, slot));
     }
 
     // The strip's dots: where the import went wrong, on the device it went wrong in.
@@ -392,7 +414,7 @@ void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
     // count is the bridge's own length, so it cannot drift from what is actually on the pages.
     graphics.setColour (ui::look::dimText);
     graphics.setFont (juce::FontOptions (11.0f));
-    graphics.drawText (juce::String (controlCount()) + " of " + juce::String (schemaLeaves_)
+    graphics.drawText (juce::String (boundControlCount()) + " of " + juce::String (schemaLeaves_)
                            + " schema leaves bound",
                        header.removeFromLeft (kCoverageWidth), juce::Justification::centredLeft, true);
 
@@ -428,7 +450,7 @@ void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
         subtitle = "device  ·  " + juce::String (device.module) + "  ·  "
                    + juce::String (ui::kModulationSlots) + " rows × "
                    + juce::String (ui::ModulationMatrixView::columnCount())
-                   + " columns, read from the loaded preset";
+                   + " columns, the editable eight bound to the bridge";
     }
 
     graphics.setColour (ui::look::dimText);

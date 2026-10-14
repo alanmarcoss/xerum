@@ -6,14 +6,14 @@
 #include "InterfacePlan.h"
 
 #include <algorithm>
+#include <limits>
+#include <utility>
 
 namespace xerum::plugin::ui
 {
 
 namespace
 {
-using Section = dsp::PoleZeroDescription;
-
 constexpr int kPlaneCaptionHeight = 34;   ///< the caption and the note under the plane
 constexpr float kMarkerHalfHeight = 0.30f; ///< how far a marker sits from the frequency axis
 
@@ -40,55 +40,12 @@ float radiusForQ (const double q)
 }
 } // namespace
 
-dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& document, const int filterSlot)
-{
-    dsp::PoleZeroDescription description;
-
-    const auto slot = "VoiceFilter" + std::to_string (filterSlot);
-
-    for (std::size_t object = 0; object < Section::kMaxObjects; ++object)
-    {
-        const auto prefix = slot + "/PZs[" + std::to_string (object) + "]";
-
-        // `fp[0]` is the object's presence: the reference writes all eight sections of an object or none
-        // of it, so a partial object is not a case this has to read.
-        if (document.parameters.find (prefix + "/fp[0]") == document.parameters.end())
-            break;
-
-        double poleFrequency[Section::kSectionsPerObject] {};
-        double zeroFrequency[Section::kSectionsPerObject] {};
-        double poleQ[Section::kSectionsPerObject] {};
-        double zeroQ[Section::kSectionsPerObject] {};
-        double gain[Section::kSectionsPerObject] {};
-        int type[Section::kSectionsPerObject] {};
-
-        const std::pair<std::string_view, double*> numericFields[] = {
-            { "fp", poleFrequency }, { "fz", zeroFrequency }, { "qp", poleQ }, { "qz", zeroQ },
-            { "gain", gain },
-        };
-
-        for (const auto& [field, out] : numericFields)
-            for (std::size_t i = 0; i < Section::kSectionsPerObject; ++i)
-                if (const auto found = document.parameters.find (prefix + "/" + std::string (field) + "["
-                                                                 + std::to_string (i) + "]");
-                    found != document.parameters.end())
-                    found->second.numberAsDouble (out[i]);
-
-        for (std::size_t i = 0; i < Section::kSectionsPerObject; ++i)
-            if (const auto found = document.parameters.find (prefix + "/types[" + std::to_string (i) + "]");
-                found != document.parameters.end() && found->second.type == model::Value::Type::Int)
-                type[i] = static_cast<int> (found->second.integer);
-
-        dsp::appendPoleZeroObject (description, poleFrequency, zeroFrequency, poleQ, zeroQ, gain, type);
-    }
-
-    return description;
-}
-
 //==============================================================================
 PoleZeroPlane::PoleZeroPlane()
 {
-    setInterceptsMouseClicks (false, false);
+    // The plane is the editor now, so it takes the mouse — but only acts when `editable_`, which keeps a
+    // test's plane a pure view.
+    setInterceptsMouseClicks (true, false);
 }
 
 void PoleZeroPlane::setFilter (const int filterSlot, juce::String typeName)
@@ -101,7 +58,106 @@ void PoleZeroPlane::setFilter (const int filterSlot, juce::String typeName)
 void PoleZeroPlane::setSections (dsp::PoleZeroDescription description)
 {
     sections_ = description;
+    selected_ = -1;
     repaint();
+}
+
+void PoleZeroPlane::setEditable (const bool editable)
+{
+    editable_ = editable;
+}
+
+juce::Point<float> PoleZeroPlane::pointFor (const int section, const bool pole) const
+{
+    return pole ? polePoint (section) : zeroPoint (section);
+}
+
+int PoleZeroPlane::markerAt (const juce::Point<float> point) const
+{
+    // A pole marker is section * 2, a zero is section * 2 + 1, so the result is stable and a caller can
+    // recover both from it. The grab radius is the marker's own size plus a margin, so a small marker can
+    // still be caught.
+    auto best = -1;
+    auto bestDistance = std::numeric_limits<float>::max();
+
+    for (int section = 0; section < sectionCount(); ++section)
+    {
+        const auto& s = sections_.sections[static_cast<std::size_t> (section)];
+
+        for (int side = 0; side < 2; ++side)
+        {
+            const auto pole = side == 0;
+            const auto centre = pointFor (section, pole);
+            const auto radius = radiusForQ (pole ? s.poleQ : s.zeroQ) + 6.0f;
+            const auto distance = centre.getDistanceFrom (point);
+
+            if (distance <= radius && distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = section * 2 + side;
+            }
+        }
+    }
+
+    return best;
+}
+
+void PoleZeroPlane::mouseDown (const juce::MouseEvent& event)
+{
+    if (! editable_)
+        return;
+
+    const auto marker = markerAt (event.position);
+
+    if (marker < 0)
+    {
+        selected_ = -1;
+        dragSection_ = -1;
+        repaint();
+        return;
+    }
+
+    dragSection_ = marker / 2;
+    dragPole_ = marker % 2 == 0;
+    dragStartY_ = event.position.y;
+    dragStartQ_ = dragPole_ ? sections_.sections[static_cast<std::size_t> (dragSection_)].poleQ
+                            : sections_.sections[static_cast<std::size_t> (dragSection_)].zeroQ;
+    selected_ = dragSection_;
+    repaint();
+}
+
+void PoleZeroPlane::mouseDrag (const juce::MouseEvent& event)
+{
+    if (! editable_ || dragSection_ < 0 || dragSection_ >= sectionCount())
+        return;
+
+    const auto area = planeAreaFor (getLocalBounds());
+    auto& s = sections_.sections[static_cast<std::size_t> (dragSection_)];
+
+    // Horizontal: the frequency, as a fraction of Nyquist, clamped to the axis the plane draws.
+    const auto frequency = juce::jlimit (0.0, 1.0, static_cast<double> ((event.position.x - area.getX())
+                                                                       / area.getWidth()));
+
+    // Vertical: the Q. The marker's own y is fixed by whether it is a pole or a zero, so the drag's
+    // vertical distance is free to shape the marker's size instead — up increases it.
+    const auto q = juce::jlimit (0.0, 1.0, dragStartQ_ + (static_cast<double> (dragStartY_) - event.position.y)
+                                                     / 120.0);
+
+    if (dragPole_)
+    {
+        s.poleFrequency = frequency;
+        s.poleQ = q;
+    }
+    else
+    {
+        s.zeroFrequency = frequency;
+        s.zeroQ = q;
+    }
+
+    repaint();
+
+    if (onSectionChanged)
+        onSectionChanged (dragSection_, s);
 }
 
 juce::String PoleZeroPlane::caption() const
@@ -203,6 +259,17 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
         graphics.setColour (look::severityInfo);
         graphics.drawEllipse (zero.x - zeroRadius, zero.y - zeroRadius, zeroRadius * 2.0f, zeroRadius * 2.0f,
                               1.4f);
+
+        // The section a drag would move is ringed, so "which one am I editing" is on screen rather than
+        // inferred from the pointer.
+        if (section == selected_)
+        {
+            graphics.setColour (look::text);
+            graphics.drawEllipse (pole.x - poleRadius - 3.0f, pole.y - poleRadius - 3.0f,
+                                  (poleRadius + 3.0f) * 2.0f, (poleRadius + 3.0f) * 2.0f, 1.0f);
+            graphics.drawEllipse (zero.x - zeroRadius - 3.0f, zero.y - zeroRadius - 3.0f,
+                                  (zeroRadius + 3.0f) * 2.0f, (zeroRadius + 3.0f) * 2.0f, 1.0f);
+        }
     }
 
     auto footer = bounds.removeFromBottom (kPlaneCaptionHeight).reduced (kPanelPadding, 0);
@@ -213,8 +280,8 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
     graphics.setColour (look::dimText);
     graphics.setFont (juce::FontOptions (10.5f));
     graphics.drawFittedText (
-        "the preset draws this response; xerum's engine takes a filter model and no pole/zero table, so "
-        "the response is shown and the filter plays its type",
+        editable_ ? "drag a pole or zero to move its frequency, and up or down to change its Q"
+                  : "the preset draws this response; the engine plays it through its pole/zero model",
         footer, juce::Justification::centredLeft, 2);
 }
 

@@ -43,11 +43,25 @@ namespace xerum::plugin
 {
 
 class XerumAudioProcessor final : public juce::AudioProcessor,
-                                  public juce::ChangeBroadcaster
+                                  public juce::ChangeBroadcaster,
+                                  private juce::AudioProcessorParameter::Listener,
+                                  private juce::Timer
 {
 public:
     XerumAudioProcessor();
     ~XerumAudioProcessor() override;
+
+    //==============================================================================
+    // Ticket 45: the modulation matrix's edits reach the engine here, not from the audio thread.
+    //
+    //   * a modulation parameter that changes on the **message thread** (our own editor, a host's UI)
+    //     republishes immediately;
+    //   * one that changes on any other thread — a host automating during `processBlock` — raises
+    //     `modulationDirty_`, which the timer above drains on the message thread. The audio thread
+    //     therefore never rebuilds the matrix, which is what keeps the render allocation-free.
+    void parameterValueChanged (int parameterIndex, float newValue) override;
+    void parameterGestureChanged (int parameterIndex, bool gestureIsStarting) override;
+    void timerCallback() override;
 
     //==============================================================================
     // AudioProcessor
@@ -112,6 +126,20 @@ public:
     /// The table resolved for an oscillator slot, or nullptr. Message thread.
     const dsp::Wavetable* oscillatorTable (int slot) const;
 
+    /// Apply any pending matrix (and drawn-response) rebuild **now**. Message thread.
+    ///
+    /// A modulation parameter's change only raises a flag — a host can move every parameter in one message,
+    /// and rebuilding the engine per write would be a storm. The message-thread timer drains the flag
+    /// within 50 ms; this is the explicit drain, for a caller that wants it done before returning (the
+    /// tests, and any host that would rather not wait).
+    void flushModulation();
+
+    /// Edit one section of a voice filter's drawn response. Message thread.
+    ///
+    /// The edit is written to the document's `VoiceFilter{slot}/PZs[]` leaves — so it is a preset edit —
+    /// and the engine's response is republished with it. The plane's callback is the only caller.
+    void setPoleZeroSection (int filterSlot, int section, const dsp::PoleZeroSection& sectionValue);
+
     /// The content roots content is resolved from, in the order they were tried.
     std::vector<juce::String> contentRoots() const;
 
@@ -168,6 +196,10 @@ private:
     /// Read every parameter, and rebuild the engine's settings if any of them moved.
     void refreshSettingsFromParameters() noexcept;
 
+    /// Poll the matrix's parameters, flagging a rebuild when any moved. Allocation-free, so the audio
+    /// thread may call it; the rebuild itself is the message thread's.
+    void refreshModulationParameters() noexcept;
+
     /// Write one parameter, taking model units, the way a document does. Message thread.
     void setParameterTo (int paramIndex, double modelValue);
 
@@ -191,9 +223,37 @@ private:
     /// Resolve the oscillator tables and complete the report with what only the plugin knows.
     void resolveContent (const model::PresetDocument& document);
 
-    /// The engine-level gaps the bridge knowingly leaves: a warp variant's source routing, and a drawn
-    /// pole/zero filter response. Named rather than dropped, per the contract.
+    /// The engine-level gaps the bridge knowingly leaves: a warp variant's source routing. Named rather
+    /// than dropped, per the contract. (The drawn pole/zero response left this list in ticket `45`, which
+    /// made it reach `dsp::VoiceFilter::setPoleZero`.)
     void completeReport (const model::PresetDocument& document);
+
+    /// Build the engine's matrix rows from the live parameters, with a row's curves and destination
+    /// *name* taken from the document (the two fields the interface does not edit). Message thread.
+    std::vector<dsp::ModSlot> modulationRowsFromParameters() const;
+
+    /// Hand the engine a rebuilt matrix, holding the audio thread out of the way first — the same
+    /// handshake `publishTables` uses, because `setModulationSlots` allocates. Message thread.
+    void publishModulationSlots();
+
+    /// Write back into the document every row whose parameters differ from what the last `applyDocument`
+    /// installed, so a matrix edit is a **preset edit** and not a parallel state. Message thread.
+    void writeChangedModulationRowsToDocument();
+
+    /// Read every voice filter's drawn response out of the document and publish it with the settings,
+    /// holding the audio thread out. Message thread.
+    void publishPoleZero();
+
+    /// Start the drain timer if it is not running and this is the message thread. Called from the
+    /// constructor, from `prepareToPlay` and from `createEditor`, so a host that constructs the processor
+    /// off the message thread still gets one the moment it can.
+    void ensureTimer();
+
+    /// Raise `frozen_` and wait, **bounded**, for the in-flight block to end. Returns false when the wait
+    /// times out, and un-raises it; a caller that gets false must defer rather than touch engine state the
+    /// audio thread may be reading. The bound matters: a host that calls `processBlock` on this very
+    /// thread, or a host that never leaves its block, must not hang the message thread.
+    bool freezeAndWait() noexcept;
 
     ParameterBridge bridge_;
     Layout layout_;
@@ -201,6 +261,21 @@ private:
     dsp::VoiceEngine engine_;
     std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> tables_ {};
     content::TableLibrary library_;
+
+    /// The drawn responses, read off the document and read by the audio thread when it rebuilds the
+    /// settings. Written only while the audio thread is held out (`publishPoleZero`), which is why the
+    /// audio thread may read it without a lock.
+    std::array<dsp::PoleZeroDescription, dsp::kFilterSlots> poleZero_ {};
+
+    /// A modulation parameter changed on a thread that must not rebuild the matrix (the audio thread).
+    /// The message-thread timer drains it.
+    std::atomic<bool> modulationDirty_ { false };
+
+    /// Set while `applyDocument` writes the parameter batch. Every one of the 512 matrix writes would
+    /// otherwise fire the listener and republish the whole matrix; this collapses them into the single
+    /// publish `applyDocument` makes when the batch is done. Message thread writes it; the listener may
+    /// read it on any thread.
+    std::atomic<bool> applyingDocument_ { false };
 
     /// The engine renders stereo (ticket 41), so the plugin holds both channels. Sized in `prepareToPlay`.
     std::vector<float> left_ {};

@@ -1068,3 +1068,343 @@ TEST_CASE ("the import report is a bar plus a drawer, never a modal", "[interfac
         CHECK_FALSE (otherEditor->reportBar().clean());
     }
 }
+
+//==============================================================================
+// Ticket `45` — the matrix and the plane are **editors**, and their edits are heard.
+//
+// Ticket `44` built both as views and said why: the bridge bound no modulation parameter and nothing
+// reached `VoiceFilter::setPoleZero`, so a control would have written a value nothing read. These cases
+// assert the path that closed that gap, and they assert it the way the acceptance demands — by a **render
+// difference**, never by a parameter value.
+//==============================================================================
+
+namespace
+{
+/// A document whose **one** modulation row opens filter 1's cutoff from `fixed` (source 38, the constant
+/// 1.0 source), with the filter otherwise shut. Amount 100 therefore opens it to 20 kHz and amount 0
+/// leaves it at 20 Hz: whether the row applies is the difference between a sound and near-silence.
+model::PresetDocument modulationDocument (const double amount, const int source = 38)
+{
+    model::PresetDocument document;
+    document.name = "modulation fixture";
+    document.schemaVersion = "4.0";
+
+    document.parameters["Oscillator0/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["Oscillator0/plainParams/kParamVolume"] = number (1.0);
+    document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["VoiceFilter0/plainParams/kParamType"] = text ("L12");
+    document.parameters["VoiceFilter0/plainParams/kParamFreq"] = number (0.0);   // 20 Hz: shut
+    document.parameters["VoiceFilter0/plainParams/kParamReso"] = number (0.0);
+
+    document.parameters["ModSlot0/source[0]"] = number (source);
+    document.parameters["ModSlot0/plainParams/kParamAmount"] = number (amount);
+    document.parameters["ModSlot0/plainParams/kParamBipolar"] = number (0.0);
+    document.parameters["ModSlot0/plainParams/kParamBypass"] = number (0.0);
+    document.parameters["ModSlot0/plainParams/kParamCurveIn"] = number (1.0);
+    document.parameters["ModSlot0/plainParams/kParamCurveOut"] = number (1.0);
+    document.parameters["ModSlot0/destModuleTypeString"] = text ("VoiceFilter");
+    document.parameters["ModSlot0/destModuleID"] = number (0.0);
+    document.parameters["ModSlot0/destModuleParamID"] = number (3.0);            // `kParamFreq`
+    document.parameters["ModSlot0/destModuleParamName"] = text ("kParamFreq");
+
+    return document;
+}
+
+void playNote (juce::MidiBuffer& events, const int block)
+{
+    if (block == 0)
+        events.addEvent (juce::MidiMessage::noteOn (1, 60, 0.9f), 0);
+}
+
+/// Render a document on a **fresh** processor, so the comparison between two variants is the variant and
+/// not carried-over filter state. The same note, block size and block count every time.
+std::vector<float> renderDocument (const model::PresetDocument& document)
+{
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (document, {}, 0);
+
+    return render (processor, 12, 512, playNote);
+}
+
+/// A document carrying a **drawn** response: `VoiceFilter0` is `PZ_SVF`, and one object of eight identical
+/// sections — a pole at 0.2 of Nyquist, a zero at 0.5 — so the filter is a real response rather than a
+/// pass-through.
+model::PresetDocument poleZeroDocument()
+{
+    model::PresetDocument document;
+    document.name = "drawn filter fixture";
+    document.schemaVersion = "4.0";
+
+    document.parameters["Oscillator0/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["Oscillator0/plainParams/kParamVolume"] = number (1.0);
+    document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["VoiceFilter0/plainParams/kParamType"] = text ("PZ_SVF");
+
+    for (int i = 0; i < 8; ++i)
+    {
+        const std::string prefix = "VoiceFilter0/PZs[0]";
+        const auto leaf = [&prefix, i] (const char* field)
+        { return prefix + "/" + field + "[" + std::to_string (i) + "]"; };
+
+        document.parameters[leaf ("fp")] = number (0.2);
+        document.parameters[leaf ("fz")] = number (0.5);
+        document.parameters[leaf ("qp")] = number (0.7);
+        document.parameters[leaf ("qz")] = number (0.5);
+        document.parameters[leaf ("gain")] = number (1.0);
+        document.parameters[leaf ("types")] = integerValue (i % 7);
+    }
+
+    return document;
+}
+} // namespace
+
+TEST_CASE ("the matrix's eight editable columns are bound to the bridge's own parameters",
+           "[interface][ui][modulation]")
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    auto& matrix = editor->matrixView();
+    REQUIRE (matrix.isBound());
+
+    // Every editable column of every row is a real control, bound to the bridge's own parameter object —
+    // the same claim ticket `31` makes for a page, made here for a matrix cell.
+    for (int row = 0; row < ui::kModulationSlots; ++row)
+        for (int column = 0; column < ui::ModulationMatrixView::columnCount(); ++column)
+        {
+            auto* control = matrix.controlForCell (row, column);
+
+            if (! ui::ModulationMatrixView::columnIsEditable (column))
+            {
+                CHECK (control == nullptr);   // the slot, the curves and the note stay painted
+                continue;
+            }
+
+            INFO ("cell " << row << "," << column);
+            REQUIRE (control != nullptr);
+            CHECK (control->isBound());
+
+            const auto* spec = processor.bridge().modulationSpec (
+                row, ui::ModulationMatrixView::fieldForColumn (column));
+            REQUIRE (spec != nullptr);
+            CHECK (&control->parameter()
+                   == processor.bridge().parameters()[static_cast<std::size_t> (spec->paramIndex)]);
+        }
+
+    // The header's coverage number counts them: eight fields of 64 rows, on top of the plan's controls.
+    CHECK (matrix.boundCellCount() == 8 * ui::kModulationSlots);
+    CHECK (editor->boundControlCount() == editor->controlCount() + 8 * ui::kModulationSlots);
+
+    // The palette of the two choice columns is the engine's own vocabulary, not a hand-written list: a
+    // source is named through `dsp::modSourceName` and a destination class is one the engine resolves.
+    const auto* sourceSpec = processor.bridge().modulationSpec (0, ModRowField::Source);
+    REQUIRE (sourceSpec != nullptr);
+
+    auto* combo = dynamic_cast<juce::ComboBox*> (
+        &matrix.controlForCell (0, 1)->widget());
+    REQUIRE (combo != nullptr);
+    CHECK (combo->getNumItems() == 61);   // "none" plus the reference's 60
+
+    for (int i = 1; i <= 60; ++i)
+        CHECK (juce::String (combo->getItemText (i)) == juce::String (std::string (dsp::modSourceName (i))));
+}
+
+TEST_CASE ("a matrix row reaches the engine, and an edit to it is heard", "[interface][modulation]")
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    // A row at full depth opens the filter, so the render is loud; every way of neutralising it — zero
+    // amount, no source, bypass, a zero aux source, a destination the voice does not read — makes it
+    // quiet. The measurement is the **render**, never the parameter.
+    const auto loud = rmsOf (renderDocument (modulationDocument (100.0)));
+    REQUIRE (loud > 0.0);
+
+    const auto quiet = [&loud] (const model::PresetDocument& document, const char* what)
+    {
+        const auto energy = rmsOf (renderDocument (document));
+        INFO (std::string (what) + ": " + std::to_string (energy) + " against " + std::to_string (loud));
+        CHECK (energy * 2.0 < loud);
+    };
+
+    quiet (modulationDocument (0.0), "amount 0");
+
+    {
+        auto document = modulationDocument (100.0);
+        document.parameters["ModSlot0/source[0]"] = number (0.0);   // no source
+        quiet (document, "no source");
+    }
+
+    {
+        auto document = modulationDocument (100.0);
+        document.parameters["ModSlot0/plainParams/kParamBypass"] = number (1.0);
+        quiet (document, "bypassed");
+    }
+
+    {
+        auto document = modulationDocument (100.0);
+        // Mod Wheel is a source this build evaluates, and the plugin sets no wheel, so the aux source is
+        // zero and the row (whose contribution the aux *scales*) contributes nothing.
+        document.parameters["ModSlot0/source[1]"] = number (1.0);
+        quiet (document, "aux source at zero");
+    }
+
+    {
+        auto document = modulationDocument (100.0);
+        document.parameters["ModSlot0/destModuleID"] = number (1.0);   // VoiceFilter1: not enabled
+        quiet (document, "destination instance 1");
+    }
+
+    // The **live edit**: one processor, rendered, then a cell moved, then rendered again — which is what
+    // a user does and what the acceptance calls being heard.
+    {
+        XerumAudioProcessor processor;
+        processor.prepareToPlay (48000.0, 512);
+        processor.applyDocument (modulationDocument (100.0), {}, 0);
+
+        const auto before = render (processor, 12, 512, playNote);
+
+        processor.setParameterValue ("ModSlot0/plainParams/kParamAmount", 0.0);
+        processor.flushModulation();   // the flag the listener raised, applied now rather than by the timer
+        const auto after = render (processor, 12, 512, playNote);
+
+        CHECK (channelDifference (before, after) > 0.01);
+        CHECK (rmsOf (after) * 2.0 < rmsOf (before));
+    }
+
+    // Polarity, with a source whose value is not 1: velocity. Unipolar maps it to itself, bipolar
+    // re-centres it, so the two produce different cutoffs and different renders.
+    {
+        const auto unipolar = renderDocument (modulationDocument (80.0, /* velocity */ 16));
+
+        auto bipolarDocument = modulationDocument (80.0, /* velocity */ 16);
+        bipolarDocument.parameters["ModSlot0/plainParams/kParamBipolar"] = number (1.0);
+        const auto bipolar = renderDocument (bipolarDocument);
+
+        CHECK (channelDifference (unipolar, bipolar) > 0.005);
+    }
+}
+
+TEST_CASE ("a matrix edit is a preset edit, and it survives a save", "[interface][modulation]")
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (modulationDocument (100.0), {}, 0);
+
+    // The document is where the row lives, and an edit lands there — this is what "a preset edit rather
+    // than a parallel state" means concretely.
+    processor.setParameterValue ("ModSlot0/plainParams/kParamAmount", -25.0);
+    processor.setParameterValue ("ModSlot0/plainParams/kParamBypass", 1.0);
+
+    // A change only raises a flag; the document write happens when it is drained. In a host the timer does
+    // that within 50 ms; a test asks for it.
+    processor.flushModulation();
+
+    CHECK (processor.document().parameters.at ("ModSlot0/plainParams/kParamAmount").real
+           == Catch::Approx (-25.0));
+    CHECK (processor.document().parameters.at ("ModSlot0/plainParams/kParamBypass").real
+           == Catch::Approx (1.0));
+
+    // A row the preset did not carry, edited, is written into the document as a complete row — every field
+    // the bridge declares, so the row is a row rather than a stray key. The **destination name** is the
+    // one field it does not get: the name is not a declared parameter (the reference's own name is
+    // preserved rather than invented), so such a row is reported as naming no destination until a preset
+    // supplies one — reported, not approximated.
+    processor.setParameterValue ("ModSlot5/source[0]", 16.0);
+    processor.flushModulation();
+    REQUIRE (processor.document().parameters.count ("ModSlot5/source[0]") == 1);
+    CHECK (processor.document().parameters.at ("ModSlot5/plainParams/kParamAmount").real == Catch::Approx (0.0));
+    CHECK (processor.document().parameters.at ("ModSlot5/destModuleParamID").integer == 0);
+    CHECK (processor.document().parameters.count ("ModSlot5/destModuleParamName") == 0);
+
+    // And the save carries it: a state block written now, restored into a fresh processor, has the edit.
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+
+    XerumAudioProcessor restored;
+    restored.prepareToPlay (48000.0, 512);
+    restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+
+    CHECK (restored.parameterValue ("ModSlot0/plainParams/kParamAmount") == Catch::Approx (-25.0));
+    CHECK (restored.parameterValue ("ModSlot0/plainParams/kParamBypass") == Catch::Approx (1.0));
+    CHECK (restored.parameterValue ("ModSlot5/source[0]") == Catch::Approx (16.0));
+    CHECK (restored.document().parameters.at ("ModSlot0/plainParams/kParamAmount").real
+           == Catch::Approx (-25.0));
+}
+
+TEST_CASE ("the pole/zero plane's edits reach the engine, and a drawn response is no longer reported",
+           "[interface][ui][modulation]")
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    // The drawn response **is applied**: a `PZ_SVF` filter with eight sections filters the oscillator, so
+    // the render is not the dry saw. Measured by comparing against the same document with the filter off.
+    const auto filtered = renderDocument (poleZeroDocument());
+
+    auto bypassed = poleZeroDocument();
+    bypassed.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (0.0);
+    const auto dry = renderDocument (bypassed);
+
+    CHECK (rmsOf (filtered) > 0.0);
+    CHECK (channelDifference (filtered, dry) > 0.01);
+
+    // The retraction, asserted: the import report no longer names a drawn response as unapplied. It used
+    // to — at `high` — and a report true before and false after is worse than no report (ticket 41).
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (poleZeroDocument(), {}, 0);
+
+    for (const auto& entry : processor.report().entries)
+        CHECK (juce::String (entry.reason).contains ("drawn in the preset") == false);
+
+    // The plane edits through its own gesture, and the edit reaches the document and the engine. The drag
+    // is synthesised exactly as the mouse delivers it: down on the pole marker, then drag right.
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    // The plane has a real rectangle only on its own page.
+    auto filterDevice = -1;
+
+    for (int index = 0; index < editor->deviceCount(); ++index)
+        if (editor->deviceModule (index) == "VoiceFilter0")
+            filterDevice = index;
+
+    REQUIRE (filterDevice >= 0);
+    editor->showDevice (filterDevice);
+
+    auto& plane = editor->poleZeroPlane (0);
+    REQUIRE (plane.sectionCount() == 8);
+    REQUIRE (plane.getWidth() > 0);
+
+    const auto before = render (processor, 12, 512, playNote);
+    const auto pole = plane.polePoint (0);
+    REQUIRE (plane.markerAt (pole) == 0);   // section 0's pole
+
+    const auto dragTo = juce::Point<float> (pole.x + plane.getWidth() * 0.3f, pole.y - 20.0f);
+    const juce::MouseEvent down (juce::Desktop::getInstance().getMainMouseSource(), pole,
+                                 juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &plane, &plane,
+                                 juce::Time::getCurrentTime(), pole, juce::Time::getCurrentTime(), 1, false);
+    const juce::MouseEvent drag (juce::Desktop::getInstance().getMainMouseSource(), dragTo,
+                                 juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &plane, &plane,
+                                 juce::Time::getCurrentTime(), pole, juce::Time::getCurrentTime(), 1, true);
+
+    plane.mouseDown (down);
+    plane.mouseDrag (drag);
+
+    CHECK (plane.selectedSection() == 0);
+    CHECK (plane.sections().sections[0].poleFrequency > 0.2);   // moved right
+    CHECK (plane.sections().sections[0].poleQ > 0.7);           // dragged up
+
+    // The document's own object moved with it — the plane is an editor, not an overlay. (`document()`
+    // returns a copy, so the value is taken by value rather than by a reference into the temporary.)
+    const auto moved = processor.document().parameters.at ("VoiceFilter0/PZs[0]/fp[0]");
+    CHECK (moved.real == Catch::Approx (plane.sections().sections[0].poleFrequency));
+
+    const auto after = render (processor, 12, 512, playNote);
+    CHECK (channelDifference (before, after) > 0.01);
+}
