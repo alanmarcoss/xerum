@@ -45,9 +45,10 @@ namespace xerum::plugin
 
 enum class ParamType { Bool, Float, Int, Choice };
 
-/// Which table the choice strings come from. Two model paths are discrete-valued and need a vocabulary:
-/// the warp menu and the filter type.
-enum class ChoiceSet { None, WarpMode, FilterType };
+/// Which table the choice strings come from. The model paths that are discrete-valued and need a
+/// vocabulary: the warp menu, the filter type, and ticket 40's two fixed slots — NOISE's colour menu and
+/// SUB's waveform menu.
+enum class ChoiceSet { None, WarpMode, FilterType, NoiseType, SubShape };
 
 /// A built choice list: xerum's labels, and the model token each choice stands for.
 struct ChoiceList
@@ -61,6 +62,8 @@ struct ChoiceList
 
     dsp::WarpMode warpModes[64] {};
     dsp::FilterSpec filterSpecs[160] {};
+    dsp::NoiseType noiseTypes[8] {};
+    dsp::SubShape subShapes[8] {};
 
     int sentinel { -1 };   ///< the "not in xerum's set" choice, always last
 
@@ -120,6 +123,8 @@ private:
     std::unique_ptr<juce::AudioProcessorParameterGroup> tree_;
     ChoiceList warp_;
     ChoiceList filter_;
+    ChoiceList noise_;
+    ChoiceList sub_;
 };
 
 /// The rule that turns a module path into xerum's parameter id, stated once:

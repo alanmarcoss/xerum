@@ -131,6 +131,22 @@ private:
 
         Osc osc[dsp::kOscillatorSlots];
 
+        /// The two fixed single-engine slots (ticket 40). They share no shape with the container slots:
+        /// NOISE (slot 3) has a colour and slot-level power, SUB (slot 4) a waveform, phase and pitch.
+        struct Noise
+        {
+            int enable { -1 }, volume { -1 }, type { -1 }, randomPhase { -1 };
+        };
+
+        struct Sub
+        {
+            int enable { -1 }, volume { -1 }, shape { -1 }, octave { -1 }, pitch { -1 }, fine { -1 };
+            int coarse { -1 }, initialPhase { -1 }, contiguousPhase { -1 };
+        };
+
+        Noise noise;
+        Sub sub;
+
         struct Filter
         {
             int enable { -1 }, type { -1 }, freq { -1 }, reso { -1 }, drive { -1 }, var { -1 };

@@ -29,7 +29,7 @@ VST3 has no such registry; the bundle id and the class UID JUCE derives from `PL
 
 ## The parameter bridge
 
-A host sees **59 parameters**, plus the VST3 `Bypass` parameter JUCE necessarily adds. Not 776 and
+A host sees **72 parameters**, plus the VST3 `Bypass` parameter JUCE necessarily adds. Not 776 and
 not the reference's 2623: the surface is exactly what the engine implements. Exposing the rest would
 put controls in a host that write a value nothing reads — the placeholder-fallback smell this project
 forbids — and a preset's other parameters are not lost, because they stay in the document and in the
@@ -54,10 +54,11 @@ import report.
   range is xerum's, with the ceiling taken from the engine where the engine has one (`kMaxUnison`,
   `kMaxVoices`) and from the model's own observed span where it does not.
 
-### Two discrete vocabularies
+### Four discrete vocabularies
 
-`kParamWarpMenu` (52 model names) and `kParamType` (83 filter names) are the only string-valued
-parameters, and both are exposed as a choice list:
+`kParamWarpMenu` (52 model names), `kParamType` (83 filter names), and ticket `40`'s two menus —
+`kParamNoiseType` (four colours) and `kParamShape` on the SUB (six waveforms) — are the string-valued
+parameters, and each is exposed as a choice list:
 
 * built by asking the **engine** what it implements — `warpModeFromName` / `filterSpecFromName` over
   the schema's own enum, never a hand-written list;
@@ -70,6 +71,17 @@ parameters, and both are exposed as a choice list:
   *visible in the interface* rather than silently replaced. A preset's exact token survives: the
   state writer compares each parameter against the value the document installed, and only rewrites
   what the user actually moved.
+
+Two of those sentinels carry a meaning of their own, and the README states them because the *default*
+depends on it:
+
+* the **NOISE colour** menu's sentinel is the reference's *sample* mode — `kParamNoiseType`'s absence,
+  which is 531 of the 626 factory presets. It is the choice's default, because handing a preset that
+  named a file a generated colour would be the substitution the import contract forbids; the slot
+  renders silence and the report names the file, at `high`.
+* the **SUB waveform** menu's six members are the schema's five stored names plus `Sine`, which the
+  schema never carries because the writer omits a value equal to the default and `Sine` *is* the
+  default (`xerum-host --dump-params`: `Sub Shape … 6 steps`, display `Sine`).
 
 ### Defaults: `defaultFor` first, then xerum's init — never zero
 

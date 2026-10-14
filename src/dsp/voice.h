@@ -27,6 +27,17 @@
 // clamped to `kMaxVoices`, and the per-voice unison count is set from the preset and clamped to
 // `kMaxUnison`. A preset asking for more than either is reported by the importer, not silently obeyed.
 //
+// ## Slots 3 and 4 are not wavetable slots
+//
+// The preset has **five** oscillator slots, and the last two are the reference's fixed single-engine
+// slots: NOISE (`Oscillator3`, ticket 40's `NoiseOscillator`) and SUB (`Oscillator4`, `SubOscillator`).
+// They carry no `kParamType`, so there is no engine to select and no unison to stack (the bank stores
+// `kParamUnison` on neither), which is why they sit beside the three tabled slots' arrays rather than in
+// them. They are still *slots*, though: `Oscillator/3/kParamVolume` and `Oscillator/4/kParamVolume` are
+// 513 of the bank's modulation rows, and the sub's octave and coarse pitch are 28 more, so the
+// modulation ramps are indexed by the preset's own five-wide numbering (`kSlotCount`) and the tabled
+// arrays by `kOscillatorSlots`.
+//
 // ## Stealing
 //
 // Order (ticket 13): **quietest-releasing first, then oldest.** Concretely, in this order:
@@ -60,12 +71,15 @@
 //
 // Per ticket 13 the engine is control-rate with in-block interpolation: at each block the voice builds
 // its `ModulationInputs`, calls `ModulationMatrix::beginBlock` once, fetches the `ModulatedRamp` for each
-// destination it owns, and reads it per sample with `ModulatedRamp::at`. The destinations are the four
+// destination it owns, and reads it per sample with `ModulatedRamp::at`. The destinations are the ones
 // the voice actually has state for, addressed exactly as ticket 03 established the reference addresses
 // them — `(class string, instance id, param id)`:
 //
-//   * `Oscillator/{slot}/kParamPitch`  (id 4)  — semitones, span +-12 (`kParamPitch`'s own range);
-//   * `Oscillator/{slot}/kParamVolume` (id 1)  — gain, 0..1;
+//   * `Oscillator/{slot}/kParamPitch`  (id 4)  — semitones, span +-12 (`kParamPitch`'s own range), for
+//     every slot 0..4 (NOISE has no pitch, so the ramp is read for the tabled slots and SUB);
+//   * `Oscillator/{slot}/kParamVolume` (id 1)  — gain, 0..1, for every slot including NOISE and SUB;
+//   * `Oscillator/4/kParamOctave`      (id 3)  — semitones, span +-48;
+//   * `Oscillator/4/kParamCoarsePit`   (id 6)  — semitones, span +-64;
 //   * `VoiceFilter/{slot}/kParamFreq`  (id 3)  — normalised cutoff, 0..1;
 //   * `VoiceFilter/{slot}/kParamReso`  (id 4)  — resonance percent, 0..100.
 //
@@ -77,11 +91,14 @@
 
 #include "filter.h"
 #include "modulation.h"
+#include "noise_osc.h"
 #include "oscillator.h"
+#include "sub_osc.h"
 #include "wavetable.h"
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -94,11 +111,28 @@ inline constexpr int kMaxUnison = 16;
 inline constexpr int kOscillatorSlots = 3;   ///< OSC A / B / C, the wavetable slots this layer builds
 inline constexpr int kFilterSlots = 2;       ///< VoiceFilter0..1
 
+/// **The preset's own slot numbering**, which is not `kOscillatorSlots`. Slots 3 and 4 are the fixed
+/// single-engine slots ticket 05 established: NOISE in `Oscillator3` and SUB in `Oscillator4`, neither
+/// selectable and neither a container. They are not wavetable slots, so they are outside the arrays sized
+/// by `kOscillatorSlots` — but they are inside the *voice*, and their level and pitch are modulation
+/// destinations under the same `Oscillator` class (`Oscillator/{3,4}/kParamVolume`, measured at 513 rows
+/// in the factory bank), so the modulation ramps are indexed by this five-wide numbering instead.
+inline constexpr int kNoiseSlot = 3;
+inline constexpr int kSubSlot = 4;
+inline constexpr int kSlotCount = kNoiseSlot + 2;   ///< 3 tabled + NOISE + SUB
+
 /// The steal crossfade. Short enough to be a steal, long enough not to be a click.
 inline constexpr double kStealFadeSeconds = 0.002;
 
 /// Modulation spans — see the header note. One unit of a destination ramp is `kParamAmount` 100.
+///
+/// `kPitchModulationSpanSemitones` is `kParamPitch`'s own range (±12). The sub oscillator is the one
+/// slot whose *octave* and *coarse pitch* are modulated too (28 rows in the bank), and each of those is
+/// a semitone control with its own range, so each gets its own span rather than being folded into the
+/// pitch one.
 inline constexpr double kPitchModulationSpanSemitones = 12.0;
+inline constexpr double kOctaveModulationSpanSemitones = 48.0;   ///< `kParamOctave`'s ±4 octaves
+inline constexpr double kCoarseModulationSpanSemitones = 64.0;   ///< `kParamCoarsePit`'s ±64 semitones
 inline constexpr double kVolumeModulationSpan = 1.0;
 inline constexpr double kCutoffModulationSpan = 1.0;
 inline constexpr double kResonanceModulationSpan = 100.0;
@@ -113,8 +147,11 @@ enum OscillatorParam
 {
     kParamEnable = 0,
     kParamVolume = 1,
+    kParamPan = 2,
+    kParamOctave = 3,
     kParamPitch = 4,
     kParamFine = 5,
+    kParamCoarsePit = 6,
 };
 
 enum VoiceFilterParam
@@ -201,11 +238,41 @@ struct FilterSettings
     double morph { 0.0 };       ///< `kParamVar`, 0..1
 };
 
+/// The NOISE slot's preset settings (`Oscillator3`).
+///
+/// `type` is **optional on purpose**: `kParamNoiseType`'s absence is the reference's *sample* mode, which
+/// xerum does not render (the asset path is tickets 24/34's). An enabled NOISE slot with no colour
+/// therefore renders silence *and* is reported by name, rather than being handed a colour the preset did
+/// not ask for.
+struct NoiseSettings
+{
+    bool enabled { false };
+    std::optional<NoiseType> type {};
+    double volume { 1.0 };    ///< `kParamVolume`
+    bool randomPhase { false };   ///< `kParamRandomPhase != 0`
+};
+
+/// The SUB slot's preset settings (`Oscillator4`) — `Oscillator4/plainParams` plus `SubOsc4/plainParams`.
+struct SubSettings
+{
+    bool enabled { false };
+    SubShape shape { SubShape::Sine };
+    /// `kParamOctave`, `kParamCoarsePit`, `kParamPitch` and `kParamFine` summed, in semitones. The engine
+    /// takes the sum because that is what a frequency is: nothing downstream of the voice needs to know
+    /// which of the four contributed.
+    double pitchSemitones { 0.0 };
+    double volume { 1.0 };
+    double initialPhaseTurns { 0.0 };   ///< `kParamInitialPhase` / 360
+    bool contiguousPhase { false };     ///< `kParamContiguousPhase`
+};
+
 /// Everything a preset says about a voice, shared by the whole pool.
 struct VoiceSettings
 {
     std::array<OscillatorSettings, kOscillatorSlots> oscillators {};
     std::array<FilterSettings, kFilterSlots> filters {};
+    NoiseSettings noise {};
+    SubSettings sub {};
     AmpEnvelope envelope {};
     VoiceMode mode { VoiceMode::Poly };
     double portamentoTime { 0.0 };      ///< seconds; 0 = instant
@@ -289,6 +356,11 @@ private:
 
     std::array<std::array<WavetableOscillator, kMaxUnison>, kOscillatorSlots> oscillators_ {};
     std::array<VoiceFilter, kFilterSlots> filters_ {};
+
+    // The two fixed single-engine slots. One instance each: the bank never stores `kParamUnison` on
+    // slots 3/4 (measured — 0 of 626), so there is no unison stack to allocate for.
+    NoiseOscillator noise_ {};
+    SubOscillator sub_ {};
 
     VoiceStage stage_ { VoiceStage::Idle };
     int note_ { 60 };

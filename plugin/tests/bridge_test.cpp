@@ -60,8 +60,64 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
 
     // The surface is what the engine implements, and it is not the reference's 2623-parameter VST3 space
     // nor the model's 776 leaves. A fixed count is the point: it is a claim, not an accident.
-    CHECK (bridge.specs().size() == 59);
+    CHECK (bridge.specs().size() == 72);
     CHECK (schema.leafCount() > bridge.specs().size());
+}
+
+TEST_CASE ("the two fixed slots are on the surface, with their own vocabularies", "[plugin][bridge][noise][sub]")
+{
+    // Ticket 40: NOISE (slot 3) and SUB (slot 4) are not container slots, so nothing in the oscillator
+    // loop above builds them — if these ids stopped resolving, the slots would silently render silence
+    // with the engine fully implemented. That is the failure this asserts against.
+    const ParameterBridge bridge;
+
+    for (const auto* path : { "Oscillator3/plainParams/kParamEnable",
+                              "Oscillator3/plainParams/kParamVolume",
+                              "Oscillator3/NoiseOsc3/plainParams/kParamNoiseType",
+                              "Oscillator3/NoiseOsc3/plainParams/kParamRandomPhase",
+                              "Oscillator4/plainParams/kParamEnable",
+                              "Oscillator4/plainParams/kParamVolume",
+                              "Oscillator4/SubOsc4/plainParams/kParamShape",
+                              "Oscillator4/plainParams/kParamOctave",
+                              "Oscillator4/plainParams/kParamPitch",
+                              "Oscillator4/plainParams/kParamFine",
+                              "Oscillator4/plainParams/kParamCoarsePit",
+                              "Oscillator4/SubOsc4/plainParams/kParamInitialPhase",
+                              "Oscillator4/SubOsc4/plainParams/kParamContiguousPhase" })
+        CHECK (findSpec (bridge, path) != nullptr);
+
+    // The colour vocabulary is the schema's four plus the sentinel, and the sentinel is the reference's
+    // *sample* mode — which is why the choice's default is the sentinel and not a colour.
+    const auto& noise = bridge.choices (ChoiceSet::NoiseType);
+    CHECK (noise.size() == 5);
+    CHECK (noise.sentinel == 4);
+    CHECK (noise.modelNames[0] == "White");
+    CHECK (noise.modelNames[3] == "Geiger");
+    CHECK (noise.noiseTypes[1] == xerum::dsp::NoiseType::Pink);
+
+    const auto* colour = findSpec (bridge, "Oscillator3/NoiseOsc3/plainParams/kParamNoiseType");
+    REQUIRE (colour != nullptr);
+    CHECK (colour->init == noise.sentinel);
+
+    // The waveform vocabulary is six, including the `Sine` default the schema never stores: five stored
+    // names in the schema, and the reference's own init state's sixth.
+    const auto& sub = bridge.choices (ChoiceSet::SubShape);
+    CHECK (sub.size() == 7);
+    CHECK (sub.sentinel == 6);
+    CHECK (sub.modelNames[0] == "Sine");
+    CHECK (sub.subShapes[1] == xerum::dsp::SubShape::RoundRect);
+    CHECK (sub.subShapes[5] == xerum::dsp::SubShape::Pulse);
+
+    const auto* shape = findSpec (bridge, "Oscillator4/SubOsc4/plainParams/kParamShape");
+    REQUIRE (shape != nullptr);
+    CHECK (shape->init == 0);   // Sine, the reference's own default
+
+    // A document's token maps onto the choice, and an out-of-vocabulary one onto the sentinel rather
+    // than onto a substitute.
+    CHECK (choiceIndexForText (noise, ChoiceSet::NoiseType, "Brown") == 2);
+    CHECK (choiceIndexForText (noise, ChoiceSet::NoiseType, "Snow") == noise.sentinel);
+    CHECK (choiceIndexForText (sub, ChoiceSet::SubShape, "kTriangle") == 2);
+    CHECK (choiceIndexForText (sub, ChoiceSet::SubShape, "kSine") == sub.sentinel);
 }
 
 TEST_CASE ("hosts see xerum's ids and xerum's labels, never the model's parameter names",

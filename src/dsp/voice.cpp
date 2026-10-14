@@ -115,6 +115,9 @@ void Voice::prepare (double sampleRate)
     for (auto& filter : filters_)
         filter.prepare (sampleRate_);
 
+    noise_.prepare (sampleRate_);
+    sub_.prepare (sampleRate_);
+
     envelope_.prepare (sampleRate_);
 }
 
@@ -150,6 +153,13 @@ void Voice::setSettings (const VoiceSettings& settings)
         filters_[f].setDrive (clampDouble (fs.drive, 0.0, 100.0));
         filters_[f].setMorph (clampDouble (fs.morph, 0.0, 1.0));
     }
+
+    if (settings_.noise.type.has_value())
+        noise_.setType (*settings_.noise.type);
+
+    sub_.setShape (settings_.sub.shape);
+    sub_.setInitialPhase (settings_.sub.initialPhaseTurns);
+    sub_.setContiguousPhase (settings_.sub.contiguousPhase);
 }
 
 double Voice::glidePitch() const
@@ -182,6 +192,12 @@ void Voice::start (int note, double velocity, double startPitchSemitones)
     velocity_ = velocity;
     stage_ = VoiceStage::On;
     envelope_.trigger();
+
+    // The two fixed slots start with the note. NOISE replays from the note's start state unless
+    // `kParamRandomPhase` asks for a different one per note; SUB restarts at its initial phase unless
+    // `kParamContiguousPhase` says to carry the previous note's.
+    noise_.trigger (settings_.noise.randomPhase);
+    sub_.trigger();
 
     const double target = static_cast<double> (note) - 69.0;
     glideTarget_ = target;
@@ -267,6 +283,11 @@ void Voice::kill()
     stealSamplesTotal_ = 0;
     stealSamplesLeft_ = 0;
     hasPending_ = false;
+
+    // The generators have no envelope of their own, so a killed voice would otherwise leave the noise's
+    // filter history and the sub's phase running into the next note it takes.
+    noise_.reset();
+    sub_.reset();
 }
 
 void Voice::render (float* out, int frames, ModulationMatrix* matrix, const ModulationInputs& inputs)
@@ -285,20 +306,30 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
     if (modulated)
         matrix->beginBlock (inputs, frames);
 
-    std::array<ModulatedRamp, kOscillatorSlots> pitchRamp {};
-    std::array<ModulatedRamp, kOscillatorSlots> volumeRamp {};
+    // Indexed by the preset's own slot number, so NOISE (3) and SUB (4) are addressed exactly as the
+    // bank addresses them — `Oscillator/3/kParamVolume` and `Oscillator/4/kParamVolume` are 513 of the
+    // bank's modulation rows, and the sub's octave and coarse pitch are 28 more.
+    std::array<ModulatedRamp, kSlotCount> pitchRamp {};
+    std::array<ModulatedRamp, kSlotCount> volumeRamp {};
+    ModulatedRamp octaveRamp {};
+    ModulatedRamp coarseRamp {};
     std::array<ModulatedRamp, kFilterSlots> cutoffRamp {};
     std::array<ModulatedRamp, kFilterSlots> resoRamp {};
 
     if (modulated)
     {
-        for (int s = 0; s < kOscillatorSlots; ++s)
+        for (int s = 0; s < kSlotCount; ++s)
         {
             pitchRamp[s] = matrix->rampFor (voiceDestination::kOscillatorClass, s,
                                             voiceDestination::kParamPitch);
             volumeRamp[s] = matrix->rampFor (voiceDestination::kOscillatorClass, s,
                                              voiceDestination::kParamVolume);
         }
+
+        octaveRamp = matrix->rampFor (voiceDestination::kOscillatorClass, kSubSlot,
+                                      voiceDestination::kParamOctave);
+        coarseRamp = matrix->rampFor (voiceDestination::kOscillatorClass, kSubSlot,
+                                      voiceDestination::kParamCoarsePit);
 
         for (int f = 0; f < kFilterSlots; ++f)
         {
@@ -332,6 +363,7 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
     // no modulation and no glide sets them once.
     bool gliding = glideSamplesTotal_ > 0 && glideSamplesDone_ < glideSamplesTotal_;
     bool pitchVaries = gliding;
+    bool subPitchVaries = gliding;
     bool filterVaries = false;
 
     for (int s = 0; s < kOscillatorSlots; ++s)
@@ -339,10 +371,36 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
             && (pitchRamp[s].start != pitchRamp[s].end || gliding))
             pitchVaries = true;
 
+    // NOISE has no pitch at all (a generated colour has no rate to track), so only the sub's three pitch
+    // destinations — pitch, octave and coarse pitch — can move it within a block.
+    if (settings_.sub.enabled
+        && (pitchRamp[kSubSlot].start != pitchRamp[kSubSlot].end
+            || octaveRamp.start != octaveRamp.end || coarseRamp.start != coarseRamp.end))
+        subPitchVaries = true;
+
     for (int f = 0; f < kFilterSlots; ++f)
         if (settings_.filters[f].enabled
             && (cutoffRamp[f].start != cutoffRamp[f].end || resoRamp[f].start != resoRamp[f].end))
             filterVaries = true;
+
+    /// The sub oscillator's frequency, in hertz: the note it is playing, its own octave/coarse/pitch/fine
+    /// summed into `pitchSemitones`, and the three modulation deltas that address it.
+    auto subFrequency = [&] (double glideNow, double pitchMod, double octaveMod, double coarseMod)
+    {
+        return kA4Hz * std::exp2 ((glideNow + settings_.sub.pitchSemitones + pitchMod + octaveMod + coarseMod)
+                                  / 12.0);
+    };
+
+    auto setConstantSubFrequency = [&]
+    {
+        if (! settings_.sub.enabled)
+            return;
+
+        sub_.setFrequency (subFrequency (gliding ? glidePitch() : glideTarget_,
+                                         pitchRamp[kSubSlot].start * kPitchModulationSpanSemitones,
+                                         octaveRamp.start * kOctaveModulationSpanSemitones,
+                                         coarseRamp.start * kCoarseModulationSpanSemitones));
+    };
 
     auto setConstantOscillatorFrequencies = [&]
     {
@@ -380,6 +438,8 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
 
     if (! pitchVaries)
         setConstantOscillatorFrequencies();
+    if (! subPitchVaries)
+        setConstantSubFrequency();
     if (! filterVaries)
         setConstantFilter();
 
@@ -408,8 +468,12 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
                     && (pitchRamp[s].start != pitchRamp[s].end || gliding))
                     pitchVaries = true;
 
+            subPitchVaries = gliding;
+
             if (! pitchVaries)
                 setConstantOscillatorFrequencies();
+            if (! subPitchVaries)
+                setConstantSubFrequency();
         }
 
         double fade = 1.0;
@@ -421,6 +485,36 @@ void Voice::render (float* out, int frames, ModulationMatrix* matrix, const Modu
 
         const double glideNow = gliding ? glidePitch() : glideTarget_;
         float sample = 0.0f;
+
+        // The two fixed slots first. Their output is mixed like any other slot's — the reference's own
+        // mixer sums the five — and generating them here costs nothing, because neither reads another
+        // slot.
+        //
+        // NOISE with **no** colour is the reference's sample mode, which xerum does not render: the slot
+        // is silent here and the plugin reports it by name rather than generating a colour the preset did
+        // not ask for.
+        if (settings_.noise.enabled && settings_.noise.type.has_value())
+        {
+            const double volume = clampDouble (
+                settings_.noise.volume + volumeRamp[kNoiseSlot].at (frame, frames) * kVolumeModulationSpan,
+                0.0, 2.0);
+            sample += noise_.next() * static_cast<float> (volume);
+        }
+
+        if (settings_.sub.enabled)
+        {
+            if (subPitchVaries)
+                sub_.setFrequency (subFrequency (
+                    glideNow,
+                    pitchRamp[kSubSlot].at (frame, frames) * kPitchModulationSpanSemitones,
+                    octaveRamp.at (frame, frames) * kOctaveModulationSpanSemitones,
+                    coarseRamp.at (frame, frames) * kCoarseModulationSpanSemitones));
+
+            const double volume = clampDouble (
+                settings_.sub.volume + volumeRamp[kSubSlot].at (frame, frames) * kVolumeModulationSpan,
+                0.0, 2.0);
+            sample += sub_.next() * static_cast<float> (volume);
+        }
 
         for (int s = 0; s < kOscillatorSlots; ++s)
         {

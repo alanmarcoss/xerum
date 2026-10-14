@@ -131,6 +131,25 @@ constexpr WarpLabel kWarpLabels[] =
     { "filter (high pass)",     dsp::WarpMode::FilterHighPass },
 };
 
+/// xerum's own label for each SUB waveform. Authored, and the canonical model token for each is *derived*
+/// from `subShapeName`, so the label, the shape and the token cannot drift — the same rule `kWarpLabels`
+/// follows. `Sine`'s label is lower-case because it is a label, not the model's token.
+struct SubShapeLabel
+{
+    const char* label;
+    dsp::SubShape shape;
+};
+
+constexpr SubShapeLabel kSubShapeLabels[] =
+{
+    { "sine",         dsp::SubShape::Sine },
+    { "rounded rect", dsp::SubShape::RoundRect },
+    { "triangle",     dsp::SubShape::Triangle },
+    { "saw",          dsp::SubShape::Saw },
+    { "square",       dsp::SubShape::Square },
+    { "pulse",        dsp::SubShape::Pulse },
+};
+
 /// The schema's enum for a leaf, copied out of the descriptor. `Schema::describe` hands back a pointer to
 /// a `thread_local` descriptor, so the next call overwrites it — a lesson the model layer learned the
 /// hard way and this one inherits.
@@ -314,6 +333,34 @@ int choiceIndexForText (const ChoiceList& choices, const ChoiceSet set, std::str
         return choices.sentinel;
     }
 
+    if (set == ChoiceSet::NoiseType)
+    {
+        const auto type = dsp::noiseTypeFromName (text);
+
+        if (! type.has_value())
+            return choices.sentinel;   // the sample path, and anything else outside the four colours
+
+        for (int i = 0; i < choices.size(); ++i)
+            if (i != choices.sentinel && choices.noiseTypes[i] == *type)
+                return i;
+
+        return choices.sentinel;
+    }
+
+    if (set == ChoiceSet::SubShape)
+    {
+        const auto shape = dsp::subShapeFromName (text);
+
+        if (! shape.has_value())
+            return choices.sentinel;
+
+        for (int i = 0; i < choices.size(); ++i)
+            if (i != choices.sentinel && choices.subShapes[i] == *shape)
+                return i;
+
+        return choices.sentinel;
+    }
+
     return 0;
 }
 
@@ -328,7 +375,16 @@ ParameterBridge::ParameterBridge()
 
 const ChoiceList& ParameterBridge::choices (const ChoiceSet set) const
 {
-    return set == ChoiceSet::FilterType ? filter_ : warp_;
+    switch (set)
+    {
+        case ChoiceSet::WarpMode:   return warp_;
+        case ChoiceSet::FilterType: return filter_;
+        case ChoiceSet::NoiseType:  return noise_;
+        case ChoiceSet::SubShape:   return sub_;
+        case ChoiceSet::None:       break;
+    }
+
+    return warp_;
 }
 
 double ParameterBridge::resolveAbsent (const ParamSpec& spec)
@@ -448,6 +504,47 @@ void ParameterBridge::buildSpecs()
         // avoiding it cost nothing.
         add (warp + "kParamTablePos", tag + "Table Position (frames)", group, ParamType::Float, ChoiceSet::None,
              1, 256, 1);
+    }
+
+    // --- The two fixed single-engine slots: NOISE and SUB ---------------------------------------------
+    //
+    // Ticket 40. They are not container slots — there is no `kParamType` and no warp menu — so they get
+    // their own groups and their own parameters rather than the oscillator loop above. Defaults are the
+    // reference's own init state, measured from its parameter surface (`xerum-host --dump-params`):
+    // `Noise Enable 0.000000000 Off`, `Noise Level 0.25`, `Sub Enable 0.000000000 Off`, `Sub Level 0.75`,
+    // `Sub Octave 0.5 → 0`, `Sub Shape 0.000000000 Sine`, `Sub Phase 0`, `Sub Cont. Phase Off`.
+    {
+        const std::string noiseBase = "Oscillator3/plainParams/";
+        const std::string noiseParams = "Oscillator3/NoiseOsc3/plainParams/";
+
+        add (noiseBase + "kParamEnable", "Enable", "Noise", ParamType::Bool, ChoiceSet::None, 0, 1, 0);
+        add (noiseBase + "kParamVolume", "Level", "Noise", ParamType::Float, ChoiceSet::None, 0, 1, 0.25);
+        add (noiseParams + "kParamNoiseType", "Colour", "Noise", ParamType::Choice, ChoiceSet::NoiseType,
+             0, 0, noise_.sentinel);
+        add (noiseParams + "kParamRandomPhase", "Random Phase", "Noise", ParamType::Float, ChoiceSet::None,
+             0, 100, 0);
+
+        const std::string subBase = "Oscillator4/plainParams/";
+        const std::string subParams = "Oscillator4/SubOsc4/plainParams/";
+
+        add (subBase + "kParamEnable", "Enable", "Sub Osc", ParamType::Bool, ChoiceSet::None, 0, 1, 0);
+        add (subBase + "kParamVolume", "Level", "Sub Osc", ParamType::Float, ChoiceSet::None, 0, 1, 0.75);
+        add (subParams + "kParamShape", "Waveform", "Sub Osc", ParamType::Choice, ChoiceSet::SubShape, 0, 0, 0);
+        add (subBase + "kParamOctave", "Octave", "Sub Osc", ParamType::Float, ChoiceSet::None, -4, 4, 0);
+        add (subBase + "kParamPitch", "Pitch (semitones)", "Sub Osc", ParamType::Float, ChoiceSet::None,
+             -12, 12, 0);
+        add (subBase + "kParamFine", "Fine (cents)", "Sub Osc", ParamType::Float, ChoiceSet::None,
+             -100, 100, 0);
+        // The manual calls CRS "continuous (no snap) semitones"; the schema's own observed range is
+        // +-64, which is what a range can be taken from (ticket 21: an observed range is not legality).
+        add (subBase + "kParamCoarsePit", "Coarse Pitch (semitones)", "Sub Osc", ParamType::Float,
+             ChoiceSet::None, -64, 64, 0);
+        // Degrees, 0..360. The schema's observed values stop at 180 and the reference's own display is in
+        // degrees ("  0°"), which is why the unit is degrees rather than turns.
+        add (subParams + "kParamInitialPhase", "Phase (degrees)", "Sub Osc", ParamType::Float, ChoiceSet::None,
+             0, 360, 0);
+        add (subParams + "kParamContiguousPhase", "Contiguous Phase", "Sub Osc", ParamType::Bool,
+             ChoiceSet::None, 0, 1, 0);
     }
 
     // --- The two voice filters ------------------------------------------------------------------------
@@ -573,6 +670,44 @@ void ParameterBridge::buildChoices()
         filter_.sentinel = filter_.labels.size();
         filter_.labels.add ("not in xerum's set");
         filter_.modelNames.emplace_back();
+    }
+
+    // --- NOISE's colour menu -------------------------------------------------------------------------
+    //
+    // Four colours, from the schema's own enum (`kValues510`), in the manual's table order. The
+    // **sentinel is the reference's sample mode** — `kParamNoiseType`'s absence — and it is the default,
+    // because a preset that enables NOISE without a colour asked for a sample file, not for a colour:
+    // handing it White would be a substitution the import contract forbids.
+    {
+        for (const auto type : { dsp::NoiseType::White, dsp::NoiseType::Pink, dsp::NoiseType::Brown,
+                                 dsp::NoiseType::Geiger })
+        {
+            noise_.labels.add (juce::String (std::string (dsp::noiseTypeName (type))));
+            noise_.modelNames.emplace_back (dsp::noiseTypeName (type));
+            noise_.noiseTypes[noise_.labels.size() - 1] = type;
+        }
+
+        noise_.sentinel = noise_.labels.size();
+        noise_.labels.add ("sample (not synthesised)");
+        noise_.modelNames.emplace_back();
+    }
+
+    // --- SUB's waveform menu -------------------------------------------------------------------------
+    //
+    // Six, from the reference's own init state rather than from the schema's five: `Sub Shape` is a
+    // six-step control whose default is `Sine`, and the schema's vocabulary holds only the five the
+    // corpus stores (ticket 40).
+    {
+        for (const auto& entry : kSubShapeLabels)
+        {
+            sub_.labels.add (entry.label);
+            sub_.modelNames.emplace_back (dsp::subShapeName (entry.shape));
+            sub_.subShapes[sub_.labels.size() - 1] = entry.shape;
+        }
+
+        sub_.sentinel = sub_.labels.size();
+        sub_.labels.add ("not in xerum's set");
+        sub_.modelNames.emplace_back();
     }
 }
 

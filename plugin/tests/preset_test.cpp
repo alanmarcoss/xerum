@@ -140,6 +140,141 @@ TEST_CASE ("a preset reaches the parameters, and a half-loading one says so in t
     file.deleteFile();
 }
 
+TEST_CASE ("NOISE and SUB reach the engine from a preset, and what they cannot honour is named",
+           "[plugin][preset][noise][sub]")
+{
+    // Ticket 40, at the plugin boundary: the two fixed slots' parameters are on the host surface, a
+    // preset's values reach them, and the slot makes a sound — which is the whole acceptance, since a
+    // DSP engine nothing maps onto is indistinguishable from no engine at all.
+    auto document = engineDocument();
+    document.parameters["Oscillator0/plainParams/kParamEnable"] = number (0.0);   // the two slots alone
+    document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (0.0);
+    document.parameters["Oscillator3/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["Oscillator3/plainParams/kParamVolume"] = number (1.0);
+    document.parameters["Oscillator3/NoiseOsc3/plainParams/kParamNoiseType"] = text ("Brown");
+    document.parameters["Oscillator3/NoiseOsc3/plainParams/kParamRandomPhase"] = number (40.0);
+    document.parameters["Oscillator4/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["Oscillator4/plainParams/kParamVolume"] = number (1.0);
+    document.parameters["Oscillator4/plainParams/kParamOctave"] = number (-1.0);
+    document.parameters["Oscillator4/SubOsc4/plainParams/kParamShape"] = text ("kSaw");
+    document.parameters["Oscillator4/SubOsc4/plainParams/kParamInitialPhase"] = number (90.0);
+    document.parameters["Oscillator4/SubOsc4/plainParams/kParamContiguousPhase"] = number (1.0);
+
+    const auto file = writeFixture (document);
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    REQUIRE (processor.loadPresetFromFile (file).wasOk());
+
+    // The values reached the parameters the host automates, including the two choices.
+    CHECK (processor.parameterValue ("Oscillator3/plainParams/kParamEnable") == 1.0);
+    CHECK (processor.parameterValue ("Oscillator3/NoiseOsc3/plainParams/kParamNoiseType")
+           == static_cast<double> (choiceIndexForText (processor.bridge().choices (ChoiceSet::NoiseType),
+                                                       ChoiceSet::NoiseType, "Brown")));
+    CHECK (processor.parameterValue ("Oscillator4/SubOsc4/plainParams/kParamShape")
+           == static_cast<double> (choiceIndexForText (processor.bridge().choices (ChoiceSet::SubShape),
+                                                       ChoiceSet::SubShape, "kSaw")));
+    CHECK (processor.parameterValue ("Oscillator4/plainParams/kParamOctave") == Catch::Approx (-1.0));
+
+    // And they reached the engine: the two slots alone are audible.
+    CHECK (peakOf (render (processor, 24, 512, noteThenRelease (48, 12))) > 0.01);
+
+    // Nothing about a colour or a waveform is unimplemented, so the plugin's half of the report is empty
+    // of complaints about them.
+    CHECK (processor.report().count (xerum::model::Severity::High) == 0);
+
+    file.deleteFile();
+}
+
+TEST_CASE ("a NOISE slot that names a sample is silent and says why, rather than substituting a colour",
+           "[plugin][preset][noise]")
+{
+    // NOISE is a sample player in the reference. xerum synthesises the four generated colours, so this is
+    // exactly the case where a substitution would be tempting — White noise in place of the file — and
+    // where the contract forbids it.
+    auto document = engineDocument();
+    document.parameters["Oscillator0/plainParams/kParamEnable"] = number (0.0);
+    document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (0.0);
+    document.parameters["Oscillator3/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["Oscillator3/plainParams/kParamVolume"] = number (1.0);
+    document.parameters["Oscillator3/NoiseOsc3/relativePathToNoiseSample"] = text ("Organics/AC hum1.wav");
+
+    // The playback controls a *sample* has and a generated colour has not, plus the field whose meaning is
+    // not established: each is named rather than dropped.
+    document.parameters["Oscillator3/NoiseOsc3/plainParams/kParamOneShot"] = number (1.0);
+    document.parameters["Oscillator3/NoiseOsc3/plainParams/kParamInitialPhase"] = number (50.0);
+    document.parameters["Oscillator3/NoiseOsc3/plainParams/kParamColor"] = number (0.8);
+    document.assetReferences.push_back ("Organics/AC hum1.wav");
+
+    const auto file = writeFixture (document);
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    REQUIRE (processor.loadPresetFromFile (file).wasOk());
+
+    const auto report = processor.report();
+
+    const auto entryFor = [&report] (const std::string& item)
+    {
+        return std::find_if (report.entries.begin(), report.entries.end(),
+                             [&item] (const xerum::model::ReportEntry& entry) { return entry.item == item; });
+    };
+
+    const auto missing = entryFor ("Organics/AC hum1.wav");
+    REQUIRE (missing != report.entries.end());
+    CHECK (missing->severity == xerum::model::Severity::High);
+
+    for (const auto* leaf : { "kParamOneShot", "kParamInitialPhase", "kParamColor" })
+    {
+        const auto entry = entryFor (leaf);
+        REQUIRE (entry != report.entries.end());
+        CHECK (entry->severity == xerum::model::Severity::Medium);
+        CHECK (entry->modulePath == "Oscillator3/NoiseOsc3");
+    }
+
+    // The slot renders silence — no substituted colour — and the noise type parameter shows the sentinel,
+    // not a colour the preset never asked for.
+    const auto rendered = render (processor, 24, 512, noteThenRelease (48, 12));
+    CHECK (peakOf (rendered) == 0.0);
+
+    const auto& choices = processor.bridge().choices (ChoiceSet::NoiseType);
+    CHECK (processor.parameterValue ("Oscillator3/NoiseOsc3/plainParams/kParamNoiseType")
+           == static_cast<double> (choices.sentinel));
+
+    file.deleteFile();
+
+    // And the other way the reference feeds this oscillator: the host's audio input. xerum is an
+    // instrument with **no input bus at all** (`isBusesLayoutSupported` refuses any layout with an
+    // enabled input), so this is impossible rather than unimplemented, and it is named all the same.
+    {
+        auto audioInput = document;
+        audioInput.parameters.erase ("Oscillator3/NoiseOsc3/relativePathToNoiseSample");
+
+        xerum::model::Value fromInput;
+        fromInput.type = xerum::model::Value::Type::Bool;   // a real bool leaf, not a 0/1 float
+        fromInput.boolean = true;
+        audioInput.parameters["Oscillator3/NoiseOsc3/sampleFromAudioInput"] = fromInput;
+
+        const auto inputFile = writeFixture (audioInput);
+
+        XerumAudioProcessor inputProcessor;
+        inputProcessor.prepareToPlay (48000.0, 512);
+        REQUIRE (inputProcessor.loadPresetFromFile (inputFile).wasOk());
+
+        const auto entries = inputProcessor.report().entries;
+        const auto named = std::find_if (entries.begin(), entries.end(),
+                                        [] (const xerum::model::ReportEntry& entry)
+                                        { return entry.item == "sampleFromAudioInput"; });
+
+        REQUIRE (named != entries.end());
+        CHECK (named->severity == xerum::model::Severity::High);
+        CHECK (named->modulePath == "Oscillator3/NoiseOsc3");
+        CHECK (named->reason.find ("no input bus") != std::string::npos);
+
+        inputFile.deleteFile();
+    }
+}
+
 TEST_CASE ("a clean import still produces a report — empty, not absent", "[plugin][preset]")
 {
     const auto file = writeFixture (engineDocument());

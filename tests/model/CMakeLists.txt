@@ -14,7 +14,8 @@ add_executable(xerum-model-tests
     defaults_test.cpp
     engine_selection_test.cpp
     structural_fidelity_test.cpp
-    third_party_pack_test.cpp)
+    third_party_pack_test.cpp
+    noise_sub_vocabulary_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model
@@ -36,4 +37,9 @@ target_compile_definitions(xerum-model-tests PRIVATE
     XERUM_BUILD_DIR="${CMAKE_BINARY_DIR}")
 
 include(Catch)
-catch_discover_tests(xerum-model-tests)
+# The reference's content tree is a **shared, mutable** resource: the round-trip cases install a preset
+# into `Presets/User/Default.SerumPreset` to drive the plugin, so two of them running concurrently
+# corrupt each other's fixture — measured, as 5 failures under `ctest -j4` that all pass serially.
+# A resource lock serialises exactly the tests that touch it, and states the reason here rather than
+# relying on everyone remembering not to run the suite in parallel.
+catch_discover_tests(xerum-model-tests PROPERTIES RESOURCE_LOCK reference_content_root)

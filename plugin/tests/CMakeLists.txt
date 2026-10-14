@@ -42,4 +42,5 @@ target_link_libraries(xerum-plugin-tests PRIVATE
     Catch2::Catch2WithMain)
 
 include(Catch)
-catch_discover_tests(xerum-plugin-tests)
+# Same shared resource as the model suite — see the note in tests/model/CMakeLists.txt.
+catch_discover_tests(xerum-plugin-tests PROPERTIES RESOURCE_LOCK reference_content_root)

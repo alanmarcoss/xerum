@@ -125,6 +125,24 @@ void XerumAudioProcessor::resolveLayout()
         entry.var = find (filter + "var");
     }
 
+    // The two fixed slots (ticket 40). Their ids come from `parameterIdFromPath`'s rule on the model
+    // paths, which is why they read as `oscillator3.noiseosc3.noisetype` rather than as the reference's
+    // model names.
+    layout_.noise.enable = find ("oscillator3.enable");
+    layout_.noise.volume = find ("oscillator3.volume");
+    layout_.noise.type = find ("oscillator3.noiseosc3.noisetype");
+    layout_.noise.randomPhase = find ("oscillator3.noiseosc3.randomphase");
+
+    layout_.sub.enable = find ("oscillator4.enable");
+    layout_.sub.volume = find ("oscillator4.volume");
+    layout_.sub.shape = find ("oscillator4.subosc4.shape");
+    layout_.sub.octave = find ("oscillator4.octave");
+    layout_.sub.pitch = find ("oscillator4.pitch");
+    layout_.sub.fine = find ("oscillator4.fine");
+    layout_.sub.coarse = find ("oscillator4.coarsepit");
+    layout_.sub.initialPhase = find ("oscillator4.subosc4.initialphase");
+    layout_.sub.contiguousPhase = find ("oscillator4.subosc4.contiguousphase");
+
     const auto amp = "env" + std::to_string (kAmpEnvelopeSlot) + ".";
     layout_.amp.attack = find (amp + "attack");
     layout_.amp.decay = find (amp + "decay");
@@ -240,6 +258,50 @@ void XerumAudioProcessor::refreshSettingsFromParameters() noexcept
         osc.warpMode[1] = bridge_.choices (ChoiceSet::WarpMode).warpModes[mode2];
         osc.warpAmount[0] = amount (layout.warp1Amount);
         osc.warpAmount[1] = amount (layout.warp2Amount);
+    }
+
+    // --- The two fixed single-engine slots (ticket 40) -------------------------------------------------
+    //
+    // NOISE's colour is a *menu*, and its sentinel is the reference's sample mode: an enabled slot with
+    // no colour is `nullopt`, which the engine renders as silence and `completeReport` names. That is the
+    // one place a substituted colour would be tempting and the one place the contract forbids it.
+    {
+        auto& noise = next.noise;
+
+        noise.enabled = amount (layout_.noise.enable) != 0.0;
+        noise.volume = amount (layout_.noise.volume);
+        noise.randomPhase = amount (layout_.noise.randomPhase) != 0.0;
+
+        const auto& choices = bridge_.choices (ChoiceSet::NoiseType);
+        const int index = layout_.noise.type >= 0 ? static_cast<int> (amount (layout_.noise.type))
+                                                  : choices.sentinel;
+
+        noise.type = index >= 0 && index < choices.size() && index != choices.sentinel
+                         ? std::optional<dsp::NoiseType> (choices.noiseTypes[index])
+                         : std::nullopt;
+    }
+
+    {
+        auto& sub = next.sub;
+
+        sub.enabled = amount (layout_.sub.enable) != 0.0;
+        sub.volume = amount (layout_.sub.volume);
+
+        // One number, because that is what a frequency needs: the slot's own four pitch controls summed
+        // in semitones, exactly as the model stores them.
+        sub.pitchSemitones = 12.0 * amount (layout_.sub.octave) + amount (layout_.sub.pitch)
+                             + amount (layout_.sub.fine) / 100.0 + amount (layout_.sub.coarse);
+        sub.initialPhaseTurns = amount (layout_.sub.initialPhase) / 360.0;
+        sub.contiguousPhase = amount (layout_.sub.contiguousPhase) != 0.0;
+
+        const auto& choices = bridge_.choices (ChoiceSet::SubShape);
+        const int index = layout_.sub.shape >= 0 ? static_cast<int> (amount (layout_.sub.shape)) : 0;
+
+        // `Sine` (index 0) is the reference's own default, and its name is the one the schema never
+        // stores, so an out-of-range index falls back to it rather than to a waveform nobody asked for.
+        sub.shape = index >= 0 && index < choices.size() && index != choices.sentinel
+                        ? choices.subShapes[index]
+                        : dsp::SubShape::Sine;
     }
 
     for (int slot = 0; slot < dsp::kFilterSlots; ++slot)
@@ -521,6 +583,21 @@ void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
         return value;
     };
 
+    /// A stored CBOR `true`. `modelNumber` handles numbers only, and this leaf is a real bool.
+    const auto truthy = [&document] (const std::string& path)
+    {
+        const auto found = document.parameters.find (path);
+
+        if (found == document.parameters.end())
+            return false;
+
+        if (found->second.type == model::Value::Type::Bool)
+            return found->second.boolean;
+
+        double number = 0.0;
+        return modelNumber (found->second, number) && number != 0.0;
+    };
+
     for (int slot = 0; slot < dsp::kOscillatorSlots; ++slot)
     {
         const auto prefix = slotPrefix (slot);
@@ -586,6 +663,66 @@ void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
                                 "the filter's response is drawn in the preset; xerum's engine takes a filter "
                                 "model and no pole/zero sections, so the type is applied without its response");
         }
+    }
+
+    // --- The two fixed single-engine slots (ticket 40) -------------------------------------------------
+    //
+    // NOISE is a *sample player* in the reference — the manual (p. 129) says so in as many words — and
+    // xerum synthesises its four generated colours and nothing else. A preset that names a file, or that
+    // feeds the oscillator from the host's audio input, therefore renders silence here, and that is a
+    // `high`: the slot's sound is missing, not merely shaped differently. The playback controls the
+    // reference offers on a *sample* — a start phase, one-shot, a rate — have nothing to act on in a
+    // generated colour, and each is named rather than silently ignored.
+    {
+        const std::string prefix = "Oscillator3/NoiseOsc3";
+        const std::string params = prefix + "/plainParams/";
+
+        const auto sample = text (prefix + "/relativePathToNoiseSample");
+
+        if (! sample.empty())
+            addReportEntry (report_, model::Severity::High, prefix, sample,
+                            "the noise oscillator is a sample player and xerum synthesises only its four "
+                            "generated colours, so this slot renders silence");
+
+        if (truthy (prefix + "/sampleFromAudioInput"))
+            addReportEntry (report_, model::Severity::High, prefix, "sampleFromAudioInput",
+                            "the noise oscillator is fed by the host's audio input, and xerum is an "
+                            "instrument with no input bus, so this slot renders silence");
+
+        const auto unapplied = [&] (const std::string& leaf, const char* reason)
+        {
+            if (numberAt (leaf) != 0.0)
+                addReportEntry (report_, model::Severity::Medium, prefix,
+                                leaf.substr (leaf.rfind ('/') + 1), reason);
+        };
+
+        unapplied (params + "kParamOneShot",
+                   "a generated colour runs continuously and has no end to reach, so one-shot is not applied");
+        unapplied (params + "kParamInitialPhase",
+                   "a generated colour has no sample to start part-way into, so the start phase is not applied");
+        unapplied (params + "kParamFine",
+                   "a generated colour has no playback rate, so there is nothing for this to detune");
+        unapplied (params + "kParamColor",
+                   "the reference's own parameter surface has no counterpart for this field (measured, with "
+                   "and without a colour mode loaded), so what it controls is not established and xerum does "
+                   "not act on it");
+        unapplied ("Oscillator3/plainParams/kParamPitch",
+                   "a generated colour has no playback rate, so the slot's pitch is not applied");
+        unapplied ("Oscillator3/plainParams/kParamOctave",
+                   "a generated colour has no playback rate, so the slot's octave is not applied");
+
+        // SUB is implemented in full for the four things the model stores on it — waveform, phase,
+        // contiguous phase and pitch — so the only things left to say are the two the reference has and
+        // xerum's engine does not.
+        if (numberAt ("Oscillator4/SubOsc4/plainParams/kParamWrapPhase") != 0.0)
+            addReportEntry (report_, model::Severity::Medium, "Oscillator4/SubOsc4", "kParamWrapPhase",
+                            "not applied: what this private field controls is not established");
+
+        if (document.parameters.count ("Oscillator4/plainParams/kParamPitchTrack") != 0
+            && numberAt ("Oscillator4/plainParams/kParamPitchTrack") == 0.0)
+            addReportEntry (report_, model::Severity::Medium, "Oscillator4", "kParamPitchTrack",
+                            "the preset switches the sub's key tracking off, and xerum's sub oscillator "
+                            "always follows the note");
     }
 }
 

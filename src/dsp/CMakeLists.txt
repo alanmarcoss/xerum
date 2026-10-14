@@ -5,6 +5,8 @@ add_library(xerum_dsp STATIC
     filter.cpp
     modulation.cpp
     voice.cpp
+    noise_osc.cpp
+    sub_osc.cpp
     fx_rack.cpp
     spectral_morph.cpp)
 

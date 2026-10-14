@@ -741,6 +741,83 @@ TEST_CASE ("voice: no heap allocation on the audio thread", "[voice]")
     }
 }
 
+TEST_CASE ("voice: the NOISE and SUB slots allocate nothing on the audio thread", "[voice][noise][sub]")
+{
+    // Ticket 40's real-time invariant, on the two slots ticket 40 added: they come out of the *same*
+    // fixed pool, so a render that drives them — with a live modulation row on the noise's level, which
+    // is 331 rows in the factory bank — must allocate as little as any other slot's.
+    VoiceEngine engine;
+    engine.prepare (kSampleRate, 128, 16);
+
+    VoiceSettings settings;
+    settings.envelope.attack = 0.001;
+    settings.envelope.release = 0.05;
+    settings.noise.enabled = true;
+    settings.noise.type = NoiseType::Geiger;
+    settings.noise.randomPhase = true;      // the reseed path, not just the generator
+    settings.noise.volume = 0.5;
+    settings.sub.enabled = true;
+    settings.sub.shape = SubShape::Pulse;
+    settings.sub.volume = 0.5;
+    engine.setSettings (settings);
+
+    ModSlot slot;
+    slot.used = true;
+    slot.source = modSourceFromName ("Mod Wheel");
+    REQUIRE (slot.source > 0);
+    slot.amount = 50.0;
+    slot.destinationClass = std::string (voiceDestination::kOscillatorClass);
+    slot.destinationInstance = kNoiseSlot;
+    slot.destinationParameter = voiceDestination::kParamVolume;
+    slot.destinationName = "kParamVolume";
+    engine.setModulationSlots (std::vector<ModSlot> { slot });
+
+    ModulationInputs globals;
+    globals.modWheel = 0.5;
+    engine.setGlobalInputs (globals);
+
+    std::array<float, 128> block {};
+
+    g_allocations.store (0, std::memory_order_relaxed);
+    g_tracking.store (true, std::memory_order_relaxed);
+
+    for (int i = 0; i < 200; ++i)
+    {
+        if (i % 16 == 0)
+            engine.noteOn (36 + (i % 12), 1.0);
+        if (i % 32 == 0)
+            engine.noteOff (36 + ((i + 6) % 12));
+
+        engine.process (block.data(), static_cast<int> (block.size()));
+    }
+
+    // A settings change mid-render too: it must not allocate either.
+    engine.setSettings (settings);
+    engine.process (block.data(), static_cast<int> (block.size()));
+
+    g_tracking.store (false, std::memory_order_relaxed);
+
+    REQUIRE (g_allocations.load (std::memory_order_relaxed) == 0);
+
+    // The render really used the slots: silence would make the zero above true and meaningless.
+    double energy = 0.0;
+    for (const auto sample : block)
+        energy += static_cast<double> (sample) * static_cast<double> (sample);
+
+    REQUIRE (energy > 0.0);
+
+    // Positive control, exactly as above: the hook still sees allocations.
+    {
+        g_allocations.store (0, std::memory_order_relaxed);
+        g_tracking.store (true, std::memory_order_relaxed);
+        volatile std::size_t positiveControlSize = 64;
+        void* deliberate = ::operator new (positiveControlSize);
+        g_tracking.store (false, std::memory_order_relaxed);
+        ::operator delete (deliberate);
+        REQUIRE (g_allocations.load (std::memory_order_relaxed) > 0);
+    }
+}
+
 TEST_CASE ("voice: a rendered note carries the fundamental of the note played", "[voice]")
 {
     const auto table = sineTable();
