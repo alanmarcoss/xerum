@@ -110,7 +110,9 @@ build/plugin/xerum_artefacts/Release/Standalone/xerum.app
 build/host/xerum-host_artefacts/Release/xerum-host        # headless host, see host/README.md
 ```
 
-Nothing is signed: the linker's ad-hoc signature is all any of the three bundles carries.
+Nothing is signed with an identity: the AU and the standalone carry only the linker's ad-hoc
+signature, and JUCE re-signs the VST3 ad-hoc after it links. `codesign -v` reflects that, and what a
+download does with it is measured in [Install](#unsigned-what-gatekeeper-will-do).
 
 Two build facts worth knowing before you look for them:
 
@@ -161,23 +163,47 @@ instrument with its own window, and it doubles as the tool the DSP and fidelity 
 
 ### Unsigned: what Gatekeeper will do
 
-Nothing here is signed or notarized. A bundle you **build yourself** on the machine you run it on
-carries no quarantine attribute and opens normally. A bundle that has travelled as a download gets one,
-and macOS will refuse it until you clear it:
+Nothing here is signed with an identity or notarized. A bundle you **build yourself** on the machine
+you run it on carries no quarantine attribute and opens normally — the standalone launches, and a host
+loads the AU and the VST3.
+
+A bundle that has travelled as a download carries a quarantine attribute. What macOS then does was
+measured on the tarball `tools/package.sh` produces, quarantined and consumed (ticket `49`, macOS
+27.0.1), rather than assumed — and it differs per bundle:
+
+* the **standalone** launches anyway; macOS runs it from a translocated copy and suppresses the
+  first-launch warning (`GKQuarantineResolver … XProtect suppress first launch warning: true`);
+* the **AU** loads in a host exactly as if it had not been quarantined;
+* the **VST3** is held on first load by a Gatekeeper assessment — the host blocks, `syspolicyd` logs
+  `Prompt shown (6, 0), waiting for response` and a `SecurityAgent` prompt is raised, which the user
+  answers to let the load proceed. That is the ordinary prompt an unnotarized plug-in gets. Clearing
+  the attribute **before** a host first loads the plug-in avoids it:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/xerum.app
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/xerum.vst3
 ```
 
-or right-click the app and choose **Open** the first time. The quarantine attribute travels with a
-download and applies to the plugin bundles too: if a host will not show the AU or the VST3 after
-copying it in from a download, clear it the same way on the bundle you installed.
+  (Clearing it *after* a host has already been held by the prompt did not release the load in the
+  test; the assessment is remembered against that copy.)
 
-The ad-hoc signature a fresh build carries **does not verify**, measured on this tree's own build:
-`codesign -v` reports `a sealed resource is missing or invalid` on the VST3, and `code has no resources
-but signature indicates they must be present` on the AU and the standalone. Hosts load the bundles and
-`auval -strict` passes on them; making the signatures verify belongs to the signing and notarization
-work the map keeps as fog.
+The `codesign` state, measured with `codesign -dv --verbose=4` and `codesign -v` on this tree's build:
+
+* the **AU** (`xerum.component`) and the **standalone** (`xerum.app`) carry only the **linker's ad-hoc
+  signature** (`flags=0x20002(adhoc,linker-signed)`, `Sealed Resources=none`, `Info.plist=not bound`),
+  so `codesign -v` fails with `code has no resources but signature indicates they must be present`.
+  JUCE's post-build `checkBundleSigning.cmake` step re-signs only the VST3 (and LV2); these two keep
+  the linker's signature untouched, which is why they never verify.
+* the **VST3** (`xerum.vst3`) is **re-signed ad-hoc by that JUCE step** (`flags=0x2(adhoc)`,
+  `Sealed Resources version=2`), and `codesign -v` **passes** on a rebuild. Its seal is taken *before*
+  JUCE removes and regenerates `Contents/Resources/moduleinfo.json`, though, so on a **first build**
+  (no `moduleinfo.json` yet at signing time) the helper writes it after sealing and `codesign -v`
+  reports `a sealed resource is missing or invalid`. Both states reproduce.
+
+None of the three carries a Developer ID (`TeamIdentifier=not set`). The invalid signatures do **not**
+block a downloaded build: the two bundles that carry one — the AU and the standalone — are the two
+that run from a quarantined copy, while the VST3, whose signature verifies, is the one Gatekeeper
+prompts on. Making the signatures verify (and removing that prompt) is the code-signing and
+notarization work the map keeps as fog; this section records what an unsigned build does until then.
 
 ### Content: one more step, and what happens without it
 
