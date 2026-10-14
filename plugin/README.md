@@ -450,6 +450,39 @@ micro-optimisation — it was forced by `pluginval`:
 The cost of coalescing is at most 50 ms between an edit and hearing it; the render's allocation
 behaviour is unchanged, which the `[realtime]` and `[interface][realtime]` cases still measure at zero.
 
+### One bug the retention found: a cascade that could overflow
+
+Ticket `46` reported a corpus fixture (the only `PZ_SVF` one that renders, `ba-geiger-wub`) reading
+**non-finite once**, attributed there to the tree moving. With the response now actually applied, that
+is worth measuring rather than attributing, so the ticket `45` plane case renders 32 drawn sections at
+the extremes — a pole radius of `0.9999` (Q 1, pole at 0 of Nyquist) against a zero at Nyquist — and
+asserts every sample is finite. **It failed**, and the cause is structural: `radiusForQ` clamps a
+section's pole radius at `0.9999`, so one section is stable, but a pole at DC at Q 1 has that radius and
+eight of those in series have a DC gain near `1e64` — finite in the `double` the cascade accumulates in,
+an **infinity in the `float` it returns**, and `inf` in the biquad state poisons every later sample.
+
+`VoiceFilter::processPoleZero` therefore checks exactly what a float cannot hold
+(`!std::isfinite (static_cast<float> (value))`) and, on tripping, clears the sections and emits silence
+for that sample — the filter returns on the next sample rather than emitting NaN for the rest of the
+note. Every finite render is untouched, so no baseline moves: the gate's 7 fixtures are finite at all 15
+configurations (`ba-geiger-wub` included), which is the measurement that says the guard is a no-op for
+them.
+
+Ticket `46` closed the *class* rather than the instance on its own side: the fidelity sweep now asserts
+finiteness for **every one of its 480 rows** (32 fixtures × 15 configurations), not only for the gated
+set, and it measured **0 non-finite** with the guard in place and the 7 baselines unchanged to the digit.
+A NaN at one rate and not another is exactly the failure that axis exists to find, and it needs no
+threshold — which is why silence stays *reported* there rather than asserted: a deferred engine or a
+recorded gap can legitimately render nothing.
+
+The guard's own failure shape is observable there too, which is the part worth knowing: it emits **one
+silent sample**, not a NaN, so a finiteness check alone would miss it. Ticket `46` added a reported
+`stepXerum`/`stepGolden` column for exactly that class — a sample-to-sample step, because a peak bound
+barely moves for a dropout at moderate amplitude (`0.11843 → 0.11757`) where the step does
+(`0.04686 → 0.11358`, 2.4×, measured on a render with its loudest sample zeroed) — and never gated, since
+a transient sharper than the reference's is not by itself a defect. It measured no dropout signature
+anywhere in the corpus, so the guard did not fire in this run.
+
 ## The report is a bar plus a drawer, never a modal
 
 `ui::ReportBar` is always on screen — a state dot (four states: a load failure, each severity, and

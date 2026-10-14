@@ -833,15 +833,27 @@ float VoiceFilter::processPoleZero (float input)
         value = pz_[i].process (value);
 
     // **A cascade can amplify without bound, and 32 sections of it overflow a float.** `radiusForQ`
-    // clamps a section's pole radius at 0.9999, so one section is stable — but a pole at DC at Q 1 has
-    // that radius, and eight of those in series have a DC gain near 1e64: finite in a `double`, an
-    // infinity in the `float` this returns, and `inf` in the biquad state poisons every later sample.
-    // Ticket `46` measured the corpus's drawn-filter fixture going non-finite once (and finite since), so
-    // this is now the one place it can be caught.
+    // clamps a section's pole radius at 0.9999, so one section is stable — but a pole at DC at Q 1 *has*
+    // that radius, and a zero at Nyquist gives that section a DC gain of `3.877 / (1 - 0.9999)²`, about
+    // `3.9e8`. The cascade accumulates in `double`, so a run of such sections stays finite there and the
+    // `float` returned here is an infinity — and once `inf` lands in `y1`/`y2`, `inf * a1 - inf * a2` is
+    // `NaN` and the biquad emits `NaN` for the rest of the note. That is the "went silent and never came
+    // back" of ticket `46`, which could not reproduce it.
+    //
+    // Ticket `50` reproduced it deterministically: the plane's own extreme (four objects, poles
+    // alternating DC and Nyquist, Q 1, `interface_test.cpp:1394`) drives the final sample to `3.49546e38`
+    // against the `3.403e38` a `float` holds — **2.7% over**, which is why it is a knife edge and why a
+    // different compiler, FMA contraction or `-ffast-math` flips it either way. This is the only place in
+    // the engine where a `double` accumulator can leave the `float` range: every other model has a
+    // per-stage bound (the TPT sections are stable for any cutoff below Nyquist, the ladder's feedback is
+    // `tanh`-bounded, the comb's feedback is `0.97`, the allpass coefficient is `|c| < 1`), and only the
+    // drawn response multiplies 32 independent gains in series.
     //
     // The check is exactly "what a float cannot hold" — every finite render passes it untouched, so no
-    // existing measurement moves — and the recovery is to clear the sections, which brings the filter
-    // back on the next sample instead of leaving it emitting NaN for the rest of the note.
+    // existing response moves — and the recovery is to clear the sections, which brings the filter back
+    // on the next sample instead of leaving it emitting `NaN`. It bounds finiteness, not magnitude: the
+    // extreme still emits samples up to `FLT_MAX`, because the geometry the preset drew asks for a gain
+    // no `float` can hold, and softening it further would be a response the preset did not draw.
     if (! std::isfinite (static_cast<float> (value)))
     {
         for (auto& section : pz_)

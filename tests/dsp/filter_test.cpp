@@ -477,3 +477,199 @@ TEST_CASE ("the types we do not build are named, never substituted", "[filter]")
         CHECK (filter.process (x) == x);
     }
 }
+
+namespace
+{
+
+/// The biquad `VoiceFilter::processPoleZero` cascades, re-implemented here so a test can run the same
+/// transfer function without the engine. That independent run is what makes "the recovery touched
+/// nothing a float can hold" a checkable claim rather than a comment.
+struct LocalBiquad
+{
+    double b0 { 1.0 }, b1 { 0.0 }, b2 { 0.0 }, a1 { 0.0 }, a2 { 0.0 };
+    double x1 { 0.0 }, x2 { 0.0 }, y1 { 0.0 }, y2 { 0.0 };
+
+    double process (double input)
+    {
+        const auto output = b0 * input + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+
+        x2 = x1; x1 = input;
+        y2 = y1; y1 = output;
+
+        return output;
+    }
+};
+
+/// `radiusForQ` from `filter.cpp`, restated: the reference's 0–1 "Q" as a pole radius.
+double localRadius (double frequencyOfNyquist, double q)
+{
+    return std::min (0.9999, std::exp (-kPi * frequencyOfNyquist / (1.0 + 99.0 * q)));
+}
+
+} // namespace
+
+TEST_CASE ("a drawn response at the interface's extreme renders finite output, and the voice recovers",
+           "[pz-stability]")
+{
+    // **The extreme the pole/zero plane can produce.** Four `PZ_SVF` objects (the `Multi` form), each
+    // eight second-order sections — 32 in series. `fp` is the pole as a fraction of Nyquist, `fz` the
+    // zero; the objects alternate a pole at DC against a zero at Nyquist and the inverse, and `qp`/`qz`
+    // are at the top of their range, which puts each pole radius at `radiusForQ`'s clamp of 0.9999.
+    //
+    // Measured (ticket 50): `setPoleZero` writes these as the preset's own geometry with no gain bound,
+    // and a section with its pole at DC and its zero at Nyquist has a DC gain of
+    //   (1 + 2·0.96907 + 0.96907²) / (1 - 2·0.9999 + 0.9999²) = 3.877 / 1e-8 ≈ 3.9e8.
+    // The cascade accumulates in `double`; the interface's own extreme drives the *final* sample to
+    // 3.49546e38 — `3.403e38` is the largest a `float` holds, so `2.7%` over, which is why the failure
+    // is a knife edge: a compiler that reassociates or fuses differently flips it. Without the guard in
+    // `processPoleZero` the sample is an `inf`, the `inf` enters `y1`/`y2`, and every later sample is a
+    // `NaN` — the "went silent and never came back" of ticket 46.
+    double poleFrequency[PoleZeroDescription::kSectionsPerObject] {};
+    double zeroFrequency[PoleZeroDescription::kSectionsPerObject] {};
+    double poleQ[PoleZeroDescription::kSectionsPerObject] {};
+    double zeroQ[PoleZeroDescription::kSectionsPerObject] {};
+    double gain[PoleZeroDescription::kSectionsPerObject] {};
+    int type[PoleZeroDescription::kSectionsPerObject] {};
+
+    PoleZeroDescription extreme;
+
+    for (int object = 0; object < 4; ++object)
+    {
+        for (std::size_t i = 0; i < PoleZeroDescription::kSectionsPerObject; ++i)
+        {
+            poleFrequency[i] = object % 2 == 0 ? 0.0 : 1.0;
+            zeroFrequency[i] = object % 2 == 0 ? 1.0 : 0.0;
+            poleQ[i] = 1.0;
+            zeroQ[i] = 1.0;
+            gain[i] = 1.0;
+            type[i] = static_cast<int> (i) % 7;
+        }
+
+        appendPoleZeroObject (extreme, poleFrequency, zeroFrequency, poleQ, zeroQ, gain, type);
+    }
+
+    REQUIRE (extreme.count == PoleZeroDescription::kMaxSections);
+
+    VoiceFilter filter;
+    filter.prepare (48000.0);
+    filter.setSpec (filterSpecFromName ("PZ_SVF"));
+    filter.setPoleZero (extreme);
+
+    // Driven with a saw at the note `interface_test` plays, so the input is the same shape.
+    double phase = 0.0;
+    double peak = 0.0;
+    bool finite = true;
+
+    for (int i = 0; i < 96000; ++i)
+    {
+        phase += 261.625565 / 48000.0;
+        phase -= std::floor (phase);
+
+        const auto y = static_cast<double> (filter.process (static_cast<float> (0.5 * (2.0 * phase - 1.0))));
+        finite = finite && std::isfinite (y);
+        peak = std::max (peak, std::abs (y));
+    }
+
+    UNSCOPED_INFO ("interface extreme: peak " << peak);
+    CHECK (finite);
+
+    // The voice recovers, rather than being poisoned for the rest of the note: the filter is still
+    // finite under silence, and still responsive to a fresh input.
+    finite = true;
+
+    for (int i = 0; i < 24000; ++i)
+        finite = finite && std::isfinite (filter.process (0.0f));
+
+    CHECK (finite);
+
+    auto responded = false;
+
+    for (int i = 0; i < 256; ++i)
+    {
+        const auto y = filter.process (0.5f);
+        responded = responded || (std::isfinite (y) && std::abs (y) > 0.0f);
+    }
+
+    CHECK (responded);
+
+    // And a second shape of the same extreme — every pole at DC, every zero at Nyquist, so there is no
+    // cancelling half to bring the cascade back — is bounded the same way rather than assumed to be.
+    for (std::size_t i = 0; i < PoleZeroDescription::kSectionsPerObject; ++i)
+    {
+        poleFrequency[i] = 0.0;
+        zeroFrequency[i] = 1.0;
+    }
+
+    PoleZeroDescription allPolesAtDc;
+
+    for (int object = 0; object < 4; ++object)
+        appendPoleZeroObject (allPolesAtDc, poleFrequency, zeroFrequency, poleQ, zeroQ, gain, type);
+
+    filter.setPoleZero (allPolesAtDc);
+    finite = true;
+
+    for (int i = 0; i < 48000; ++i)
+        finite = finite && std::isfinite (filter.process (0.25f));
+
+    CHECK (finite);
+}
+
+TEST_CASE ("a bounded drawn response passes the recovery untouched", "[pz-stability]")
+{
+    // **What a float can hold must not move.** The recovery in `processPoleZero` is a bound on *output*,
+    // not a change to the response, so a drawn response inside the range a `float` holds must come back
+    // bit-for-bit identical to the transfer function `setPoleZero` wrote. The expected samples are
+    // computed here, independently of the engine, from the same coefficients the header documents.
+    constexpr std::size_t kSections = PoleZeroDescription::kSectionsPerObject;
+    double poleFrequency[kSections] {};
+    double zeroFrequency[kSections] {};
+    double poleQ[kSections] {};
+    double zeroQ[kSections] {};
+    double gain[kSections] {};
+    int type[kSections] {};
+    LocalBiquad expected[kSections];
+
+    for (std::size_t i = 0; i < kSections; ++i)
+    {
+        poleFrequency[i] = 0.2;
+        zeroFrequency[i] = 0.5;
+        poleQ[i] = 0.7;
+        zeroQ[i] = 0.5;
+        gain[i] = 1.0;
+        type[i] = static_cast<int> (i) % 7;
+
+        const auto poleRadius = localRadius (poleFrequency[i], poleQ[i]);
+        const auto zeroRadius = localRadius (zeroFrequency[i], zeroQ[i]);
+        const auto poleAngle = kPi * poleFrequency[i];
+        const auto zeroAngle = kPi * zeroFrequency[i];
+
+        expected[i].b0 = gain[i];
+        expected[i].b1 = -2.0 * zeroRadius * std::cos (zeroAngle) * gain[i];
+        expected[i].b2 = zeroRadius * zeroRadius * gain[i];
+        expected[i].a1 = -2.0 * poleRadius * std::cos (poleAngle);
+        expected[i].a2 = poleRadius * poleRadius;
+    }
+
+    PoleZeroDescription description;
+    appendPoleZeroObject (description, poleFrequency, zeroFrequency, poleQ, zeroQ, gain, type);
+
+    VoiceFilter filter;
+    filter.prepare (48000.0);
+    filter.setSpec (filterSpecFromName ("PZ_SVF"));
+    filter.setPoleZero (description);
+
+    auto identical = true;
+
+    for (int i = 0; i < 8192; ++i)
+    {
+        const auto x = 0.5f * std::sin (0.011f * static_cast<float> (i));
+        auto local = static_cast<double> (x);
+
+        for (auto& section : expected)
+            local = section.process (local);
+
+        identical = identical && filter.process (x) == static_cast<float> (local);
+    }
+
+    CHECK (identical);
+}

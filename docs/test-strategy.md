@@ -102,6 +102,26 @@ at 44.1 kHz (inherent — the golden's content above the 44.1 kHz Nyquist cannot
 so no resampler can cancel it) and −49.58 dB at 96 kHz. The observed spread across the fifteen
 configurations is at most 1.1 dB, so the 3 dB sweep margin is over twice the largest move.
 
+**Finiteness is the sweep's one hard invariant**: every render at every configuration must exist and be
+finite, asserted rather than eyeballed. It needs no threshold — a finite render is finite — and it is the
+assertion that catches a rate- or block-dependent breakdown. It is there because the layer first met that
+failure with nothing to fail on: a `VoiceFilter::processPoleZero` cascade whose `double` accumulation
+overflowed the `float` it returns showed up as a column reading `nan` and nothing else. That defect is
+fixed and guarded (`src/dsp/filter.cpp`, ticket 45's plane case reproduces it), and the assertion fails if
+it returns. Silence is *not* asserted: a deferred engine or a recorded gap can legitimately render
+nothing, so silence is reported per fixture with its import report as the explanation.
+
+Because that guard answers an overflow with **silence for one sample** rather than a NaN, the report also
+carries a **discontinuity diagnostic** — the largest sample-to-sample step, for xerum and for the golden —
+since a dropout leaves every sample finite and moves an RMS difference by about −40 dB, so neither the
+assertion nor the three metrics would see it. It is reported, never gated (a sharper transient than the
+reference's is not a defect). Measured over the corpus: no fixture's step exceeds the reference's by more
+than **5.2×** (`arp-etheric-aluminium`), and that excess is *not* an isolated click — 3 671 of its samples
+carry a step above 0.02 against 2 in the reference — so the column is reading waveform sharpness on the
+bright patches, which is what it should read. A click would appear as a single-sample excursion, and
+`[fidelity-diagnostics]` shows the sensitivity rather than asserting it: one zeroed sample in a real render
+raises the figure 2.4× while moving the peak by 0.7 %.
+
 **Negative fixtures** — ticket `09`'s four deferred engines (granular, spectral, multisample, sample) —
 are measured and reported like everything else and **excluded from the gate with that as the stated
 reason**: xerum reports the missing engine rather than substituting something, so their render is expected

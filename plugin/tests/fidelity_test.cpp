@@ -659,6 +659,28 @@ bool writeWav (const fs::path& path, const Stereo& audio)
     return ok;
 }
 
+/// The largest sample-to-sample step of a signal: a cheap discontinuity detector.
+///
+/// It exists because of a failure shape the finiteness assertion cannot see. `VoiceFilter::processPoleZero`
+/// guards an overflow that a `float` cannot hold by emitting silence for **one sample** and clearing the
+/// cascade state (`src/dsp/filter.cpp`), which trades a NaN for a one-sample dropout — and a dropout leaves
+/// every sample finite. One sample in 96 000 moves an RMS difference by about -40 dB, so the three metrics
+/// would not notice it either; the step does.
+///
+/// It is **reported, never gated**. A transient sharper than the reference's is not a defect, so a threshold
+/// here would be invented, and the golden's own step is reported beside xerum's to give the reader the scale.
+/// `[fidelity-diagnostics]` shows the sensitivity rather than asserting it: one zeroed sample in a real
+/// render raises this figure by an order of magnitude.
+double maxStepOf (const std::vector<float>& samples)
+{
+    double worst = 0.0;
+
+    for (std::size_t i = 1; i < samples.size(); ++i)
+        worst = std::max (worst, std::abs ((double) samples[i] - (double) samples[i - 1]));
+
+    return worst;
+}
+
 double besselI0 (const double x)
 {
     double sum = 1.0;
@@ -916,6 +938,8 @@ struct Metrics
     double rmsXerum { 0.0 };
     double peakGolden { 0.0 };
     double peakXerum { 0.0 };
+    double stepGolden { 0.0 };      ///< largest sample-to-sample step: a one-sample dropout is visible here
+    double stepXerum { 0.0 };
     double spectralDb { 0.0 };      ///< log-spectral distance, mean |delta magnitude| in dB
     bool finite { true };
 };
@@ -928,6 +952,8 @@ struct ChannelMetrics
     double bestLagNullDb { 0.0 };
     int bestLagSamples { 0 };
     double residualRms { 0.0 };
+    double stepGolden { 0.0 };
+    double stepXerum { 0.0 };
     double spectralDb { 0.0 };
 };
 
@@ -952,6 +978,8 @@ ChannelMetrics measureChannel (const std::vector<float>& golden, const std::vect
     out.residualRms = rmsResidual;
     out.nullDb = rmsGolden > 0.0 ? db (rmsResidual / rmsGolden) : 0.0;
     out.spectralDb = logSpectralDistance (golden, xerum);
+    out.stepGolden = maxStepOf (golden);
+    out.stepXerum = maxStepOf (xerum);
     out.bestLagNullDb = out.nullDb;
 
     if (! withLagSearch)
@@ -1019,6 +1047,8 @@ Metrics measure (const Stereo& golden, const Stereo& xerum, const bool withLagSe
     metrics.rmsXerum = std::max (rmsOf (xerum.left), rmsOf (xerum.right));
     metrics.peakGolden = std::max (peakOf (golden.left), peakOf (golden.right));
     metrics.peakXerum = std::max (peakOf (xerum.left), peakOf (xerum.right));
+    metrics.stepGolden = std::max (left.stepGolden, right.stepGolden);
+    metrics.stepXerum = std::max (left.stepXerum, right.stepXerum);
 
     const auto better = left.bestLagNullDb <= right.bestLagNullDb ? left : right;
     metrics.bestLagNullDb = better.bestLagNullDb;
@@ -1422,10 +1452,11 @@ std::string tableLine (const Measurement& m)
     }
 
     std::snprintf (buffer, sizeof buffer,
-                   "%-30s %-26s %6d/%5d  %8.2f  %8.2f %5d  %8.2f  %8.2f  %8.2f  %8.2f%s%s",
+                   "%-30s %-26s %6d/%5d  %8.2f  %8.2f %5d  %8.2f  %8.2f  %8.2f  %8.2f %9.4f %9.4f%s%s",
                    m.slug.c_str(), m.covers.c_str(), m.sampleRate, m.blockSize,
                    m.metrics.nullDb, m.metrics.bestLagNullDb, m.metrics.bestLagSamples,
                    m.metrics.rmsDiffDb, m.metrics.rmsXerum, m.metrics.rmsGolden, m.metrics.spectralDb,
+                   m.metrics.stepXerum, m.metrics.stepGolden,
                    m.metrics.finite ? "" : "  NON-FINITE",
                    m.metrics.rmsXerum <= 1e-9 ? "  SILENT" : "");
 
@@ -1433,7 +1464,7 @@ std::string tableLine (const Measurement& m)
 }
 
 const char* kTableHeader =
-    "fixture                        covers                     rate/block   null(dB)  nullBest  lag  rmsDiff  rmsXerum  rmsGolden  spectral(dB)";
+    "fixture                        covers                     rate/block   null(dB)  nullBest  lag  rmsDiff  rmsXerum  rmsGolden  spectral(dB)  stepXerum stepGolden";
 
 void printTable (const std::vector<Measurement>& rows, const std::string& title)
 {
@@ -1490,6 +1521,11 @@ std::string reportHeader (const Corpus& c, const std::vector<std::pair<int, int>
         << "#   spectral   log-spectral distance: mean |delta magnitude| in dB over 2048-point Hann frames at 512\n"
         << "#              hop, averaged over the bins within 60 dB of the reference's own peak — a mean over every\n"
         << "#              bin would be dominated by bins where neither signal has anything. Bounded by 60 dB.\n"
+        << "#   stepXerum  the largest sample-to-sample step in xerum's render, and stepGolden the same for the\n"
+        << "#              reference: a discontinuity detector, reported because a guard that answers an overflow\n"
+        << "#              with \"silence for one sample\" (src/dsp/filter.cpp) leaves every sample finite, so\n"
+        << "#              neither finiteness nor an RMS difference sees the dropout it makes. Never gated — a\n"
+        << "#              sharper transient than the reference's is not a defect.\n"
         << "#   rate/block a render at anything but the capture's own rate is resampled onto the golden's grid\n"
         << "#              before measurement; the resampler's own floor is measured by [fidelity-resampler].\n"
         << "#\n"
@@ -1506,28 +1542,47 @@ std::string reportHeader (const Corpus& c, const std::vector<std::pair<int, int>
         << "#                     than substituting something, so their renders are expected to diverge and they are\n"
         << "#                     excluded from the gate below. They are measured, not dropped.\n"
         << "#\n"
-        << "# columns: slug\tcovers\tnegative\trate\tblock\trendered\tfailure\treportEntries\tnullDb\tnullBestDb\tbestLag\trmsDiffDb\trmsXerumDb\trmsGoldenDb\tpeakXerum\tpeakGolden\tspectralDb\tfinite\treportNote\n";
+        << "# columns: slug\tcovers\tnegative\trate\tblock\trendered\tfailure\treportEntries\tnullDb\tnullBestDb\tbestLag\trmsDiffDb\trmsXerumDb\trmsGoldenDb\tpeakXerum\tpeakGolden\tspectralDb\tstepXerum\tstepGolden\tfinite\treportNote\n";
 
     return out.str();
 }
 
+/// One TSV row, assembled from fields rather than from a literal string of tabs: the metric block grew once
+/// already and a missing tab silently shifts every column after it, which is exactly the kind of mistake a
+/// reader of this file would not catch.
 std::string reportRow (const Measurement& m)
 {
-    std::ostringstream out;
-    out << m.slug << '\t' << m.covers << '\t' << (m.negative ? "yes" : "no") << '\t'
-        << m.sampleRate << '\t' << m.blockSize << '\t' << (m.rendered ? "yes" : "no") << '\t'
-        << m.failure << '\t' << m.reportEntries << '\t';
+    const auto number = [] (const double value) { return juce::String (value, 6).toStdString(); };
+
+    std::vector<std::string> fields {
+        m.slug,
+        m.covers,
+        m.negative ? "yes" : "no",
+        std::to_string (m.sampleRate),
+        std::to_string (m.blockSize),
+        m.rendered ? "yes" : "no",
+        m.failure,
+        std::to_string (m.reportEntries)
+    };
 
     if (m.rendered)
-        out << m.metrics.nullDb << '\t' << m.metrics.bestLagNullDb << '\t' << m.metrics.bestLagSamples << '\t'
-            << m.metrics.rmsDiffDb << '\t' << m.metrics.rmsXerum << '\t' << m.metrics.rmsGolden << '\t'
-            << m.metrics.peakXerum << '\t' << m.metrics.peakGolden << '\t' << m.metrics.spectralDb << '\t'
-            << (m.metrics.finite ? "yes" : "no");
+        fields.insert (fields.end(), { number (m.metrics.nullDb), number (m.metrics.bestLagNullDb),
+                                       std::to_string (m.metrics.bestLagSamples), number (m.metrics.rmsDiffDb),
+                                       number (m.metrics.rmsXerum), number (m.metrics.rmsGolden),
+                                       number (m.metrics.peakXerum), number (m.metrics.peakGolden),
+                                       number (m.metrics.spectralDb), number (m.metrics.stepXerum),
+                                       number (m.metrics.stepGolden), m.metrics.finite ? "yes" : "no" });
     else
-        out << "\t\t\t\t\t\t\t\t";
+        fields.resize (fields.size() + 12);
 
-    out << '\t' << m.reportNote << '\n';
-    return out.str();
+    fields.push_back (m.reportNote);
+
+    std::string out;
+
+    for (std::size_t i = 0; i < fields.size(); ++i)
+        out += (i == 0 ? "" : "\t") + fields[i];
+
+    return out + "\n";
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1753,6 +1808,18 @@ TEST_CASE ("every fixture renders through xerum and is measured against its gold
         // plugin refused the preset or produced something unmeasurable, not that the machine lacks a file.
         CHECK (measurement.rendered);
         CHECK (measurement.failure.empty());
+
+        // **Finiteness is a hard invariant at every one of the configurations, and the only thing the sweep
+        // asserts rather than reports.** A NaN or an infinity at one rate is exactly the "stable at one rate,
+        // broken at another" failure this axis exists to find, and unlike a metric it needs no threshold — a
+        // finite render is finite. Silence is deliberately *not* asserted here: a deferred engine or a recorded
+        // gap can legitimately render nothing, and that is reported per fixture below.
+        //
+        // This assertion is here because the layer first met that failure with nothing to fail on: a
+        // `VoiceFilter::processPoleZero` cascade that overflowed a `float` from a `double` showed up only as a
+        // column reading `nan`. It is fixed and guarded in `src/dsp/filter.cpp`, and this fails if it returns.
+        if (measurement.rendered)
+            CHECK (measurement.metrics.finite);
     }
 
     // -------------------------------------------------------------------------------------------
@@ -2069,6 +2136,60 @@ TEST_CASE ("the in-process render loop is the harness's own loop", "[fidelity][f
                               "rms diff %.2f dBFS, spectral %.4f dB\n", rate, block, harness.size(),
                       metrics.nullDb, metrics.rmsDiffDb, metrics.spectralDb);
     }
+}
+
+TEST_CASE ("a one-sample dropout is visible to the step the report carries",
+           "[fidelity][fidelity-diagnostics]")
+{
+    const auto& c = corpus();
+
+    if (! c.corpusAvailable())
+        SKIP ("fidelity corpus not available: " + c.corpusReason);
+
+    const auto fixtures = measurableFixtures (c);
+    REQUIRE_FALSE (fixtures.empty());
+
+    // The step metric exists for the failure shape the finiteness assertion cannot see. A guard that answers an
+    // overflow with "silence for one sample and clear the cascade" (`src/dsp/filter.cpp`) leaves every sample
+    // finite, and one sample in 96 000 moves an RMS difference by about -40 dB, so neither the assertion nor
+    // the metrics would notice the dropout it makes. Its sensitivity is therefore *shown* here rather than
+    // asserted in the abstract: a real render has its loudest sample zeroed — the dropout's best case, and the
+    // only case a peak bound would stand a chance on — and the figure it produces is printed against the
+    // untouched render's and against the peak.
+    const auto prepared = prepareFixture (fixtures.front());
+    REQUIRE (prepared.ok);
+
+    const auto rendered = renderFixture (c, prepared, c.captureSampleRate, c.captureBlockSize);
+    REQUIRE (rendered.ok);
+    REQUIRE_FALSE (rendered.audio.left.empty());
+
+    auto dropped = rendered.audio;
+    const auto before = maxStepOf (dropped.left);
+    const auto peak = peakOf (dropped.left);
+
+    const auto loudest = std::size_t (std::distance (
+        dropped.left.begin(),
+        std::max_element (dropped.left.begin(), dropped.left.end(),
+                          [] (const float a, const float b) { return std::abs (a) < std::abs (b); })));
+
+    dropped.left[loudest] = 0.0f;
+    const auto after = maxStepOf (dropped.left);
+
+    std::fprintf (stderr, "\n[fidelity] dropout detector: %s — step %.5f clean -> %.5f after one sample zeroed, "
+                          "x%.1f; peak %.5f -> %.5f; the render stays finite either way\n",
+                  fixtures.front().slug.c_str(), before, after, before > 0.0 ? after / before : 0.0,
+                  peak, peakOf (dropped.left));
+
+    CHECK (before > 0.0);
+    CHECK (after > before);
+
+    // Derivable rather than invented: zeroing the sample at the signal's maximum leaves a step to a neighbour
+    // that is at least half the peak for any signal that is not already a step function at its maximum.
+    CHECK (after >= 0.5 * peak);
+
+    CHECK (allFinite (dropped.left));
+    CHECK (allFinite (rendered.audio.left));
+    CHECK (allFinite (rendered.audio.right));
 }
 
 TEST_CASE ("the resampler that puts a swept render on the golden's grid does not limit the comparison",
