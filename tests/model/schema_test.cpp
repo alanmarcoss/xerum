@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "generated/schema_data.h"
+
 #include "schema.h"
 
 using namespace xerum::model;
@@ -16,7 +18,11 @@ TEST_CASE ("the schema covers the whole decoded model", "[schema]")
 
     // The corpus-wide counts from ticket 01. If these move, the schema was regenerated from a
     // different corpus and every downstream assumption needs re-checking.
-    REQUIRE (schema.leafCount() == 778);
+    // 776, not 778: canonicalising bracket indices to `[]` merged `lfo[0][]`/`lfo[1][]` and
+    // `embeddedIR[0][]`/`embeddedIR[1][]` into two rows each. They were always the same parameter
+    // addressed two ways — `normalise` collapses every bracket index — and keeping both spellings meant
+    // neither could be looked up. See the generator's merge step.
+    REQUIRE (schema.leafCount() == 776);
     // 48, not 46: the generator now unions the taxonomy with every indexed segment the leaf paths use,
     // because the taxonomy alone omitted `NoiseOsc{N}` — which normalisation needs in order to tell an
     // instance index from a literal digit in a parameter name.
@@ -175,4 +181,60 @@ TEST_CASE ("enum sets and their counts agree", "[schema]")
     REQUIRE (num != nullptr);
     CHECK (num->values == nullptr);
     CHECK (num->valueCount == 0);
+}
+
+TEST_CASE ("a name-keyed parent normalises to {name}, so multisample metadata resolves", "[schema]")
+{
+    // The multisample engine's `files` map is keyed by sample file name — not an index, not a parameter
+    // name. Nothing about the segment itself says so: a file called `SuperJX 4 Osc Chorus Pad G6.flac`
+    // looks like any other path segment. The schema's own `{name}` rows are the only evidence, which is
+    // why normalisation has to consult them.
+    //
+    // Getting this wrong is not cosmetic: it made every multisample preset in the bank report one
+    // "parameter is not in the schema" entry per sample-metadata field — 12,071 distinct paths and
+    // 28,700 entries — while the schema covered every one of them.
+    const auto& schema = Schema::instance();
+    const auto concrete = "Oscillator0/MultiSampleOsc2/files/SuperJX 4 Osc Chorus Pad G6.flac/numFrames";
+
+    CHECK (schema.normalise (concrete)
+           == "Oscillator{N}/MultiSampleOsc{N}/files/{name}/numFrames");
+
+    const auto* leaf = schema.describe (schema.normalise (concrete));
+    REQUIRE (leaf != nullptr);
+    CHECK (leaf->kind == LeafKind::Int);
+}
+
+TEST_CASE ("the generated table holds one canonical spelling per parameter", "[schema]")
+{
+    // The invariant that would have caught both real bugs in this table at once. `normalise` produces
+    // exactly one spelling of a path; the table must hold that spelling. A row spelled `lfo[0][]` can
+    // never be looked up, because no concrete path normalises to it — so the row is dead and the
+    // presets that need it report a parameter the schema covers.
+    //
+    // Sorted-and-unique is half of the same invariant: `describe` binary-searches, so a duplicate row
+    // makes the lookup's result depend on which of the two the search happens to land on.
+    std::string_view previous;
+    std::size_t rows = 0;
+
+    for (const auto* leaf = generated::kLeaves; leaf != generated::kLeaves + generated::kLeafCount; ++leaf)
+    {
+        const std::string_view path = leaf->path;
+        ++rows;
+
+        // Every bracketed index is empty: `[]`, never `[0]`.
+        for (auto open = path.find ('['); open != std::string_view::npos; open = path.find ('[', open + 1))
+        {
+            const auto close = path.find (']', open);
+            REQUIRE (close != std::string_view::npos);
+            CHECK (close == open + 1);
+        }
+
+        if (! previous.empty())
+            CHECK (path > previous);
+
+        previous = path;
+    }
+
+    CHECK (rows == Schema::instance().leafCount());
+    CHECK (rows > 700);
 }

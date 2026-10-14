@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 
 using namespace xerum::model;
 
@@ -315,7 +316,11 @@ TEST_CASE ("every factory preset produces a document and a report", "[document][
     std::size_t cleanImports = 0;
     std::size_t withHighSeverity = 0;
     std::size_t failed = 0;
+    std::size_t parametersHeld = 0;
     std::map<std::string, std::size_t> reasons;
+    std::set<std::string> uninterpretedParameters;
+    std::map<std::string, std::size_t> unresolvedCounts;
+    std::size_t unresolvedEntries = 0;
 
     for (const auto& entry : std::filesystem::recursive_directory_iterator (root))
     {
@@ -371,13 +376,77 @@ TEST_CASE ("every factory preset produces a document and a report", "[document][
             ++withHighSeverity;
 
         for (const auto& reportEntry : result.report.entries)
+        {
             if (reportEntry.severity == Severity::High)
                 ++reasons[reportEntry.item];
+
+            // Ticket 21's corpus clause, from the refusing side: the loader will not store a parameter it
+            // could not resolve, so a parameter that reached the report this way is a schema gap — and a
+            // schema gap is the one failure that makes every downstream value wrong. Loudly, not skipped.
+            if (reportEntry.reason.starts_with ("parameter is not in the schema"))
+            {
+                uninterpretedParameters.insert (reportEntry.item);
+                ++unresolvedCounts[reportEntry.item];
+                ++unresolvedEntries;
+            }
+        }
+
+        // ...and from the storing side: everything the document holds must resolve to a descriptor. This
+        // is the acceptance sentence read literally, and it is the stronger of the two, because it checks
+        // the values the importer actually keeps rather than only what it complained about.
+        for (const auto& [path, value] : result.document.parameters)
+        {
+            ++parametersHeld;
+
+            if (schema().describe (schema().normalise (path)) == nullptr)
+                uninterpretedParameters.insert (schema().normalise (path));
+        }
     }
 
     // A summary, not just a pass: these numbers are the answer to "does the cut hold up".
     UNSCOPED_INFO ("presets " << presets << ", clean " << cleanImports << ", with a high-severity item "
                               << withHighSeverity << ", failed " << failed);
+
+    // Ticket 21's clause, asserted rather than reported. Distinct paths *with their reach*: a single
+    // path repeated in 300 presets is a different problem from 300 unrelated ones, and the distinction
+    // is the finding.
+    UNSCOPED_INFO ("parameters held across the corpus: " << parametersHeld);
+    UNSCOPED_INFO ("distinct unresolved paths: " << uninterpretedParameters.size()
+                                                 << ", unresolved report entries: " << unresolvedEntries);
+
+    std::vector<std::pair<std::size_t, std::string>> unresolvedRanked;
+
+    for (const auto& [path, count] : unresolvedCounts)
+        unresolvedRanked.emplace_back (count, path);
+    std::sort (unresolvedRanked.begin(), unresolvedRanked.end(),
+               [] (const auto& a, const auto& b) { return a.first > b.first; });
+
+    for (std::size_t i = 0; i < unresolvedRanked.size() && i < 8; ++i)
+    {
+        const auto& path = unresolvedRanked[i].second;
+        std::string escaped;
+
+        for (const auto character : path)
+        {
+            if (character >= 32 && character < 127)
+                escaped += character;
+            else
+                escaped += "\\x" + std::to_string (static_cast<unsigned char> (character));
+        }
+
+        UNSCOPED_INFO ("  unresolved x" << unresolvedRanked[i].first << " [len " << path.size()
+                                        << "]: " << escaped);
+    }
+
+    // The whole set, so the analysis is reproducible rather than eyeballed off a test log.
+    {
+        std::ofstream out ("/tmp/xerum-unresolved.txt");
+
+        for (const auto& [path, count] : unresolvedRanked)
+            out << count << "\t" << path << "\n";
+    }
+
+    CHECK (uninterpretedParameters.empty());
 
     std::vector<std::pair<std::size_t, std::string>> ranked;
 

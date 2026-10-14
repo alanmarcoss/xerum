@@ -53,6 +53,50 @@ bool matchesPattern (std::string_view pattern, std::string_view name)
     return isDigits (middle);
 }
 
+/// Parent prefixes whose children the schema keys by **name** rather than by index or by parameter
+/// name: `Oscillator{N}/MultiSampleOsc{N}/files/{name}/numFrames`, where `{name}` is a sample file.
+///
+/// Derived from the generated leaf table rather than hard-coded, because a regenerated schema may key
+/// something else by name and nothing here should need editing when it does.
+const std::vector<std::string>& namedKeyParents()
+{
+    static const auto parents = []
+    {
+        std::vector<std::string> found;
+
+        for (const auto& leaf : generated::kLeaves)
+        {
+            const std::string_view path = leaf.path;
+
+            for (auto at = path.find ("/{name}"); at != std::string_view::npos; at = path.find ("/{name}", at + 1))
+            {
+                // Only a `{name}` that occupies a whole segment; `x{name}y` would be a different marker.
+                const auto after = at + 7;
+
+                if (after >= path.size() || path[after] == '/')
+                    found.emplace_back (path.substr (0, at));
+            }
+        }
+
+        std::sort (found.begin(), found.end());
+        found.erase (std::unique (found.begin(), found.end()), found.end());
+        return found;
+    }();
+
+    return parents;
+}
+
+bool isNamedKeyParent (std::string_view path)
+{
+    const auto& parents = namedKeyParents();
+
+    const auto it = std::lower_bound (parents.begin(), parents.end(), path,
+                                      [] (const std::string& element, std::string_view key)
+                                      { return element < key; });
+
+    return it != parents.end() && std::string_view (*it) == path;
+}
+
 const std::vector<std::string> g_versions = []
 {
     std::vector<std::string> v;
@@ -177,6 +221,22 @@ std::string Schema::normalise (std::string_view concretePath) const
     {
         if (segment.empty())
             return;
+
+        // A child of a name-keyed parent is a name, not a parameter. This cannot be recognised the way
+        // `{N}` is — a sample file called `SuperJX 4 Osc Chorus Pad G6.flac` is not a digit run — so the
+        // schema's own `{name}` sites are what says so. Without this, every multisample preset reports
+        // one "parameter is not in the schema" entry per sample-metadata field: measured at 12,071
+        // distinct paths and 28,700 report entries across the factory bank, which is precisely the kind
+        // of noise that hides a real one.
+        if (isNamedKeyParent (out))
+        {
+            if (! out.empty())
+                out.push_back ('/');
+
+            out += "{name}";
+            segment.clear();
+            return;
+        }
 
         std::size_t digitsAt = segment.size();
 

@@ -23,7 +23,7 @@ namespace xerum::model::generated
 {
 
 inline constexpr std::string_view kOrigin =
-    "Decoded from the reference preset model locally; 778 leaves, 48 module patterns, schema versions 3.0, 4.0, 5.0, 6.0. See tools/generate-schema.py.";
+    "Decoded from the reference preset model locally; 776 leaves, 48 module patterns, schema versions 3.0, 4.0, 5.0, 6.0. See tools/generate-schema.py.";
 
 inline constexpr std::string_view kVersions[] = {"3.0", "4.0", "5.0", "6.0"};
 
@@ -110,89 +110,89 @@ inline constexpr std::string_view kValues71[] = {"default"};
 inline constexpr std::string_view kValues85[] = {"default"};
 inline constexpr std::string_view kValues102[] = {"default"};
 inline constexpr std::string_view kValues114[] = {"default"};
-inline constexpr std::string_view kValues147[] = {"default"};
-inline constexpr std::string_view kValues163[] = {"default"};
-inline constexpr std::string_view kValues178[] = {"default"};
-inline constexpr std::string_view kValues185[] = {"kAsym", "kDiode1", "kDiode2", "kDownsample", "kHardClip", "kLinFold", "kOverdrive", "kRectify", "kSinFold", "kSineShaper", "kSoftClip", "kSoftSat", "kStompBox", "kTapeSat", "kXShaper", "kXShaperAsym", "kZeroSquare"};
-inline constexpr std::string_view kValues189[] = {"default"};
-inline constexpr std::string_view kValues212[] = {"ADD_BASS", "Allpasses", "B12", "B24", "BN12", "BandReject", "Comb2", "CombHL6N", "CombL6N", "CombN", "CombP", "Combs", "DJMixer", "Diffuser", "DirtyMg", "Exp", "ExpBPF", "FlangeHL6N", "FlangeL6N", "FlangeL6P", "FlangeN", "FormantONE", "FormantTWB", "FormantTWO", "H12", "H18", "H24", "H6", "HEQ12", "HEQ6", "HP12", "L12", "L18", "L24", "L6", "LB12", "LBH24", "LH12", "LN12", "LNH24", "LPH12", "LPH24", "LadderAcid", "LadderEMS", "LadderMg", "MgL12", "MgL18", "MgL24", "N12", "N24", "NN12", "P12", "PN12", "PP12", "PZ_SVF", "Phase12N", "Phase12P", "Phase24P", "Phase36P", "Phase48HL6N", "Phase48P", "RM", "Reverb1", "SNH1", "Scream", "Scream3BP", "Scream3LP", "Wsp", "ZDF_A"};
-inline constexpr std::string_view kValues249[] = {"default"};
-inline constexpr std::string_view kValues260[] = {"kAbyss", "kHall", "kSpace", "kVintage"};
-inline constexpr std::string_view kValues275[] = {"default"};
-inline constexpr std::string_view kValues295[] = {"", "EPiano 1", "Vintage Chorused"};
-inline constexpr std::string_view kValues296[] = {"default"};
-inline constexpr std::string_view kValues300[] = {"default"};
-inline constexpr std::string_view kValues312[] = {"ClipPlayer", "Synth"};
-inline constexpr std::string_view kValues328[] = {"Low"};
-inline constexpr std::string_view kValues330[] = {"default"};
-inline constexpr std::string_view kValues338[] = {"7 SKIES Sig", "AT Random 01", "Band Pass Shifter", "Custom", "Default", "Dualism", "HALF RANDOM", "Half pan", "HalfBar Backbeat 2", "SC4", "SC6", "Sine", "Slight Drift", "Unstable Triangles", "Wonky Sines", "flat 0", "saw down", "saw down curved", "saw up", "seq 3", "sine", "square", "triangle", "triangle 0"};
-inline constexpr std::string_view kValues346[] = {"default"};
-inline constexpr std::string_view kValues355[] = {"Envelope", "Free"};
-inline constexpr std::string_view kValues365[] = {"Lorenz", "Path", "RandomSH", "Rossler"};
-inline constexpr std::string_view kValues367[] = {"default"};
-inline constexpr std::string_view kValues372[] = {"kAutoDest_CC0", "kAutoDest_CC1", "kAutoDest_CC10", "kAutoDest_CC100", "kAutoDest_CC101", "kAutoDest_CC11", "kAutoDest_CC13", "kAutoDest_CC2", "kAutoDest_CC22", "kAutoDest_CC28", "kAutoDest_CC3", "kAutoDest_CC32", "kAutoDest_CC4", "kAutoDest_CC6", "kAutoDest_CC64", "kAutoDest_CC7", "kAutoDest_CC71", "kAutoDest_CC72", "kAutoDest_CC73", "kAutoDest_CC74", "kAutoDest_CC91", "kAutoDest_CC93", "kAutoDest_CC94", "kAutoDest_CC98", "kAutoDest_CC99", "kAutoDest_ChanPressure", "kAutoDest_Key", "kAutoDest_Macro0", "kAutoDest_Macro1", "kAutoDest_Macro2", "kAutoDest_Macro3", "kAutoDest_Macro4", "kAutoDest_Macro5", "kAutoDest_Macro6", "kAutoDest_Macro7", "kAutoDest_PitchBend", "kAutoDest_Scale"};
-inline constexpr std::string_view kValues387[] = {"None"};
-inline constexpr std::string_view kValues399[] = {"Attribute", "Automation", "Expression"};
-inline constexpr std::string_view kValues401[] = {"NotesUsed"};
-inline constexpr std::string_view kValues402[] = {"default"};
-inline constexpr std::string_view kValues408[] = {"OneShot", "Pendulum", "Random", "Static"};
-inline constexpr std::string_view kValues411[] = {"Mono", "Offset", "Poly"};
-inline constexpr std::string_view kValues416[] = {"Attribute", "Automation", "Expression"};
-inline constexpr std::string_view kValues420[] = {"kParamAttack", "kParamBW", "kParamBalance", "kParamBlur", "kParamChance", "kParamCoarsePit", "kParamColor", "kParamCurve1", "kParamCurve2", "kParamCurve3", "kParamDecay", "kParamDelay", "kParamDelay2", "kParamDelayTime", "kParamDensity", "kParamDensityMode", "kParamDepth", "kParamDepth2", "kParamDetune", "kParamDetuneWid", "kParamDimESize", "kParamDimEWet", "kParamDrive", "kParamEnv2", "kParamEnv4", "kParamEnvDecay", "kParamEnvRelease", "kParamEnvSustain", "kParamFXBus1Level", "kParamFXBus2Level", "kParamFeedback", "kParamFilt", "kParamFilterBalance", "kParamFine", "kParamFreq", "kParamFreq1", "kParamFreq2", "kParamFreqB", "kParamFreqHi", "kParamFreqLo", "kParamGain0", "kParamGain1", "kParamGain2", "kParamGate", "kParamGlobalScalingEnvTime", "kParamGlobalScalingLfoTime", "kParamGrainLength", "kParamHPF", "kParamHold", "kParamHzOffset", "kParamInitialPhase", "kParamIpTrim", "kParamLFO1", "kParamLFO3", "kParamLFXover", "kParamLPF", "kParamLPHP", "kParamLevelOut", "kParamLink", "kParamLoopEnd", "kParamMakeup", "kParamMasterTuning", "kParamNoise", "kParamNumStages", "kParamOctave", "kParamOffsetL", "kParamOffsetR", "kParamOscB", "kParamOscC", "kParamOutputMix", "kParamOutputWidth", "kParamPan", "kParamPhase", "kParamPitch", "kParamPitchRatio", "kParamPortamentoTime", "kParamPosition", "kParamPredelay", "kParamRandomDir", "kParamRandomGain", "kParamRandomGrainLength", "kParamRandomOffset", "kParamRandomPan", "kParamRandomPhase", "kParamRandomPitch", "kParamRandomWarp", "kParamRange", "kParamRate", "kParamRatio", "kParamRatio2", "kParamRatioBelow", "kParamRatioBelow1", "kParamRatioBelow2", "kParamRelease", "kParamReso", "kParamReso1", "kParamReso2", "kParamRise", "kParamScanRate", "kParamShift", "kParamSize", "kParamSmooth", "kParamSmoothFall", "kParamSpecFltShift", "kParamSpecFltWetDry", "kParamStart", "kParamStereo", "kParamSustain", "kParamSwing", "kParamTablePos", "kParamThresh", "kParamThreshUD2", "kParamTimbreShift", "kParamTimeL", "kParamTimeR", "kParamTone", "kParamTranspose", "kParamTransposeRange", "kParamUnisonStereo", "kParamUnisonWTPos", "kParamUnisonWarp", "kParamValue", "kParamVar", "kParamVeloTarget", "kParamVintageScale", "kParamVoiceAmp", "kParamVolume", "kParamWarp", "kParamWarp2", "kParamWarpVar", "kParamWarpVar2", "kParamWet", "kParamWidth", "kParamWindowParam", "kParamWrapPhantomNote", "kParamX", "kParamXoverHi", "kParamY"};
-inline constexpr std::string_view kValues421[] = {"Arp", "Env", "FXBode", "FXChorus", "FXComp", "FXConv", "FXDelay", "FXDistortion", "FXEQ", "FXFilter", "FXFlanger", "FXHyperD", "FXPhaser", "FXReverb", "FXSplit", "FXSplit3", "FXUtils", "Global", "GranularOsc", "LFO", "LFOPointModBus", "Macro", "MidiClip", "ModSlot", "MultiSampleOsc", "NoiseOsc", "Oscillator", "RetriggerState", "RoutingSlot", "SampleOsc", "SpectralOsc", "VoiceFilter", "VoicePanel", "WTOsc"};
-inline constexpr std::string_view kValues427[] = {"default"};
-inline constexpr std::string_view kValues454[] = {"default"};
-inline constexpr std::string_view kValues456[] = {"kDensityBPM", "kDensityFree"};
-inline constexpr std::string_view kValues458[] = {"kLengthBPM"};
-inline constexpr std::string_view kValues469[] = {"kEven", "kExponential", "kRandom"};
-inline constexpr std::string_view kValues472[] = {"kDistAsym", "kDistDiode2", "kDistSoftClip", "kDistSoftSat", "kDistTapeSat", "kDistTube", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFilterLPF", "kPD_OSC"};
-inline constexpr std::string_view kValues473[] = {"kAM_OSC", "kAM_SUB", "kDistDiode1", "kDistSoftClip", "kDistSoftSat", "kDistTube", "kFM_OSC", "kFilterHPF", "kFilterLPF"};
-inline constexpr std::string_view kValues475[] = {"kWindowBlackmanHarris", "kWindowExpDec", "kWindowGaussian", "kWindowTriangle", "kWindowTukey"};
-inline constexpr std::string_view kValues477[] = {"kYAxisOscVolume"};
-inline constexpr std::string_view kValues486[] = {"default"};
-inline constexpr std::string_view kValues500[] = {"kAM_OSC", "kDistAsym", "kDistDiode1", "kDistDiode2", "kDistHardClip", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistStompBox", "kDistTapeSat", "kDistTube", "kFM_FILT1", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kPD_OSC", "kPD_OSC2", "kPD_SUB", "kRM_OSC", "kRM_SUB", "kSelfPD"};
-inline constexpr std::string_view kValues501[] = {"kAM_OSC", "kAM_OSC2", "kAM_SUB", "kDistSineShaper", "kDistSoftClip", "kDistStompBox", "kDistTapeSat", "kDistTube", "kFMX_OSC", "kFM_FILT2", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterLPF", "kPD_FILT1", "kPD_NOISE", "kPD_OSC", "kPD_SUB", "kRM_NOISE", "kRM_OSC", "kSelfPD"};
-inline constexpr std::string_view kValues508[] = {"default"};
-inline constexpr std::string_view kValues512[] = {"Brown", "Geiger", "Pink", "White"};
-inline constexpr std::string_view kValues522[] = {"default"};
-inline constexpr std::string_view kValues525[] = {"kAM_OSC", "kAM_SUB", "kDistAsym", "kDistDiode2", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistTube", "kDistZeroSquare", "kFMP_OSC", "kFM_FILT1", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterLPF", "kPD_OSC", "kRM_SUB", "kSelfPD"};
-inline constexpr std::string_view kValues526[] = {"kDistLinFold", "kDistSoftClip", "kDistTapeSat", "kFM_FILT2", "kFM_NOISE", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kPD_FILT1", "kPD_OSC2", "kRM_OSC"};
-inline constexpr std::string_view kValues540[] = {"default"};
-inline constexpr std::string_view kValues550[] = {"kAM_OSC", "kAddharmonics", "kAddsubharmonics", "kDetune", "kDistDiode1", "kDistDiode2", "kDistSoftClip", "kDistTube", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kGate", "kMask_NOISE", "kMask_OSC", "kPD_OSC", "kPeakOctaveDown", "kPeakOctaveUp", "kShepardFilter", "kShepardNarrow", "kSmear", "kSpectralComb", "kSpectralPitchShift", "kSpectralShift", "kSpread", "kVocode_NOISE", "kVocode_OSC"};
-inline constexpr std::string_view kValues551[] = {"kAddharmonics", "kDetune", "kDistDiode1", "kDistSoftClip", "kDistSoftSat", "kDistTapeSat", "kDistTube", "kFilterLPF", "kMirror", "kPD_OSC", "kPD_OSC2", "kPeakHarmDown", "kPeakHarmUp", "kPeakOctaveUp", "kSelfPD", "kSpectralComb", "kSpectralPhaseTwist", "kSpectralPitchShift", "kSpread", "kVocode_OSC"};
-inline constexpr std::string_view kValues556[] = {"default"};
-inline constexpr std::string_view kValues559[] = {"kPulse", "kRoundRect", "kSaw", "kSquare", "kTriangle"};
-inline constexpr std::string_view kValues569[] = {"default"};
-inline constexpr std::string_view kValues571[] = {"kContiguous", "kPerVoice"};
-inline constexpr std::string_view kValues577[] = {"kAM_OSC", "kAM_SUB", "kASYMNeg", "kASYMPos", "kASYMPosNeg", "kBendNeg", "kBendPos", "kBendPosNeg", "kDLM", "kDistAsym", "kDistDiode1", "kDistDiode2", "kDistHardClip", "kDistLinFold", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistStompBox", "kDistTapeSat", "kDistTube", "kDistZeroSquare", "kEvenOdd", "kFMP_NOISE", "kFMP_OSC", "kFMX_NOISE", "kFMX_OSC", "kFMX_OSC2", "kFM_FILT1", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kFlip", "kPD_FILT1", "kPD_NOISE", "kPD_OSC", "kPD_OSC2", "kPD_SUB", "kPWM", "kQuantize", "kRM_FILT1", "kRM_FILT2", "kRM_NOISE", "kRM_OSC", "kRM_OSC2", "kRM_SUB", "kRemap_4", "kSelfPD", "kSync"};
-inline constexpr std::string_view kValues578[] = {"kAM_NOISE", "kAM_OSC", "kAM_OSC2", "kASYMPos", "kBendPos", "kBendPosNeg", "kDistAsym", "kDistDiode1", "kDistDiode2", "kDistHardClip", "kDistLinFold", "kDistRectify", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistStompBox", "kDistTapeSat", "kDistTube", "kDistZeroSquare", "kEvenOdd", "kFMP_OSC2", "kFM_FILT1", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kFlip", "kPD_FILT1", "kPD_FILT2", "kPD_NOISE", "kPD_OSC", "kPD_OSC2", "kPD_SUB", "kPWM", "kQuantize", "kRM_OSC", "kRM_OSC2", "kRM_SUB", "kRemap_1", "kRemap_3", "kSelfPD", "kSync"};
-inline constexpr std::string_view kValues585[] = {"Custom", "Default Shapes"};
-inline constexpr std::string_view kValues586[] = {"default"};
-inline constexpr std::string_view kValues591[] = {"kDetuneExp", "kDetuneInv", "kDetuneRandom", "kDetuneSuper"};
-inline constexpr std::string_view kValues604[] = {"kForward", "kPingPong", "kReverse", "kTailed"};
-inline constexpr std::string_view kValues612[] = {"Harmonics", "Ratio"};
-inline constexpr std::string_view kValues614[] = {"Coarse", "Fine"};
-inline constexpr std::string_view kValues625[] = {"Auto", "Manual"};
-inline constexpr std::string_view kValues628[] = {"kOsc_Granular", "kOsc_MultiSample", "kOsc_Sample", "kOsc_Spectral"};
-inline constexpr std::string_view kValues632[] = {"kCenter12", "kOctave1", "kOctave2", "kOctave3", "kOctaveFifth1", "kOctaveFifth2", "kOctaveFifth3"};
-inline constexpr std::string_view kValues640[] = {"default"};
-inline constexpr std::string_view kValues643[] = {"---", "Dorian", "Major", "Minor", "Minor (Harmonic)", "Nine Tone"};
-inline constexpr std::string_view kValues645[] = {"default"};
-inline constexpr std::string_view kValues646[] = {"default"};
-inline constexpr std::string_view kValues650[] = {"kRoutingDestDirect", "kRoutingDestFilter", "kRoutingDestMaster", "kRoutingDestNone"};
-inline constexpr std::string_view kValues662[] = {"default"};
-inline constexpr std::string_view kValues671[] = {"ADD_BASS", "Allpasses", "B12", "B24", "BN12", "BP12", "BPN12", "BPN24", "BandReject", "Comb2", "CombH6N", "CombH6P", "CombHL6N", "CombHL6P", "CombL6N", "CombN", "CombP", "Combs", "DJMixer", "Diffuser", "DirtyMg", "DistComb1BP", "DistComb1LP", "DistComb2BP", "DistComb2LP", "Exp", "ExpBPF", "FlangeH6P", "FlangeHL6N", "FlangeHL6P", "FlangeL6P", "FlangeN", "FlangeP", "FlangePhase12HL6P", "FormantONE", "FormantTWB", "FormantTWO", "H12", "H18", "H24", "H6", "HB12", "HEQ12", "HN12", "HP12", "L12", "L18", "L24", "L6", "LB12", "LBH12", "LBH24", "LH12", "LN12", "LNH12", "LNH24", "LPH24", "LadderAcid", "LadderEMS", "LadderMg", "MgL18", "MgL24", "MgL6", "N12", "N24", "NN12", "PP12", "PZ_SVF", "Phase24N", "Phase24P", "Phase36N", "Phase36P", "Phase48H6P", "Phase48HL6P", "Phase48N", "Phase48P", "RM", "RMT", "Reverb1", "Scream", "Scream3LP", "Wsp", "ZDF_A"};
-inline constexpr std::string_view kValues676[] = {"", "Subtle Analog"};
-inline constexpr std::string_view kValues677[] = {"default"};
-inline constexpr std::string_view kValues740[] = {"", "5 Note 8 Step", "acid"};
-inline constexpr std::string_view kValues741[] = {"", "Aggro Git", "Aux Grooves 1", "CA_Above", "Cowboy Chords", "Darkness", "Dracula Reborn", "Drum Machine Basics", "Duda Chords", "Init", "Kit Drum Patterns", "Lofi YACHT", "New Dawn vinyl", "One Bar Cluster Chords"};
-inline constexpr std::string_view kValues755[] = {"7 SKIES", "@mrbillstunes", "AGENT METHOD   /.\\\\", "Alice Efe", "AnSolas", "Audiotent", "Beatdemon", "CFA-Sound", "CFA-Sound ", "Caster", "Chord Shore", "DATABROTH", "DnBline Smith", "ERB N DUB", "Electric Himalaya", "Endov Lane", "Genji Siraisi", "Gigantor", "J. Scott G. / Libra Rising", "LP24 Audio", "Leo Lauretti", "Level 8", "Matt Aimonetti", "NEST Acoustics", "Oiko", "Paul Laski", "Paul Laski (P-LASK)", "Scott Diaz", "Shreddward", "Skope", "Specimen A", "Specimen A ", "Splice", "Splice ", "Steve Duda", "SynthHacker", "Tunecraft", "Van Derand", "Wisteria Motif", "Xfer", "shreddward"};
-inline constexpr std::string_view kValues758[] = {"Serum2", "Serum2FX"};
-inline constexpr std::string_view kValues759[] = {"2.0.11", "2.0.12", "2.0.13", "2.0.14", "2.0.15"};
-inline constexpr std::string_view kValues772[] = {"Arp", "Clip", "Custom-Tuning", "Embedded-Data", "Granular", "KB-Span", "Mono", "Multisample", "Poly", "Preview", "Sample", "Spectral", "Wavetable"};
-inline constexpr std::string_view kValues774[] = {"(special)"};
-inline constexpr std::string_view kValues775[] = {"https://xferrecords.com/"};
-inline constexpr std::string_view kValues776[] = {"Xfer Records"};
+inline constexpr std::string_view kValues146[] = {"default"};
+inline constexpr std::string_view kValues162[] = {"default"};
+inline constexpr std::string_view kValues177[] = {"default"};
+inline constexpr std::string_view kValues184[] = {"kAsym", "kDiode1", "kDiode2", "kDownsample", "kHardClip", "kLinFold", "kOverdrive", "kRectify", "kSinFold", "kSineShaper", "kSoftClip", "kSoftSat", "kStompBox", "kTapeSat", "kXShaper", "kXShaperAsym", "kZeroSquare"};
+inline constexpr std::string_view kValues188[] = {"default"};
+inline constexpr std::string_view kValues211[] = {"ADD_BASS", "Allpasses", "B12", "B24", "BN12", "BandReject", "Comb2", "CombHL6N", "CombL6N", "CombN", "CombP", "Combs", "DJMixer", "Diffuser", "DirtyMg", "Exp", "ExpBPF", "FlangeHL6N", "FlangeL6N", "FlangeL6P", "FlangeN", "FormantONE", "FormantTWB", "FormantTWO", "H12", "H18", "H24", "H6", "HEQ12", "HEQ6", "HP12", "L12", "L18", "L24", "L6", "LB12", "LBH24", "LH12", "LN12", "LNH24", "LPH12", "LPH24", "LadderAcid", "LadderEMS", "LadderMg", "MgL12", "MgL18", "MgL24", "N12", "N24", "NN12", "P12", "PN12", "PP12", "PZ_SVF", "Phase12N", "Phase12P", "Phase24P", "Phase36P", "Phase48HL6N", "Phase48P", "RM", "Reverb1", "SNH1", "Scream", "Scream3BP", "Scream3LP", "Wsp", "ZDF_A"};
+inline constexpr std::string_view kValues247[] = {"default"};
+inline constexpr std::string_view kValues258[] = {"kAbyss", "kHall", "kSpace", "kVintage"};
+inline constexpr std::string_view kValues273[] = {"default"};
+inline constexpr std::string_view kValues293[] = {"", "EPiano 1", "Vintage Chorused"};
+inline constexpr std::string_view kValues294[] = {"default"};
+inline constexpr std::string_view kValues298[] = {"default"};
+inline constexpr std::string_view kValues310[] = {"ClipPlayer", "Synth"};
+inline constexpr std::string_view kValues326[] = {"Low"};
+inline constexpr std::string_view kValues328[] = {"default"};
+inline constexpr std::string_view kValues336[] = {"7 SKIES Sig", "AT Random 01", "Band Pass Shifter", "Custom", "Default", "Dualism", "HALF RANDOM", "Half pan", "HalfBar Backbeat 2", "SC4", "SC6", "Sine", "Slight Drift", "Unstable Triangles", "Wonky Sines", "flat 0", "saw down", "saw down curved", "saw up", "seq 3", "sine", "square", "triangle", "triangle 0"};
+inline constexpr std::string_view kValues344[] = {"default"};
+inline constexpr std::string_view kValues353[] = {"Envelope", "Free"};
+inline constexpr std::string_view kValues363[] = {"Lorenz", "Path", "RandomSH", "Rossler"};
+inline constexpr std::string_view kValues365[] = {"default"};
+inline constexpr std::string_view kValues370[] = {"kAutoDest_CC0", "kAutoDest_CC1", "kAutoDest_CC10", "kAutoDest_CC100", "kAutoDest_CC101", "kAutoDest_CC11", "kAutoDest_CC13", "kAutoDest_CC2", "kAutoDest_CC22", "kAutoDest_CC28", "kAutoDest_CC3", "kAutoDest_CC32", "kAutoDest_CC4", "kAutoDest_CC6", "kAutoDest_CC64", "kAutoDest_CC7", "kAutoDest_CC71", "kAutoDest_CC72", "kAutoDest_CC73", "kAutoDest_CC74", "kAutoDest_CC91", "kAutoDest_CC93", "kAutoDest_CC94", "kAutoDest_CC98", "kAutoDest_CC99", "kAutoDest_ChanPressure", "kAutoDest_Key", "kAutoDest_Macro0", "kAutoDest_Macro1", "kAutoDest_Macro2", "kAutoDest_Macro3", "kAutoDest_Macro4", "kAutoDest_Macro5", "kAutoDest_Macro6", "kAutoDest_Macro7", "kAutoDest_PitchBend", "kAutoDest_Scale"};
+inline constexpr std::string_view kValues385[] = {"None"};
+inline constexpr std::string_view kValues397[] = {"Attribute", "Automation", "Expression"};
+inline constexpr std::string_view kValues399[] = {"NotesUsed"};
+inline constexpr std::string_view kValues400[] = {"default"};
+inline constexpr std::string_view kValues406[] = {"OneShot", "Pendulum", "Random", "Static"};
+inline constexpr std::string_view kValues409[] = {"Mono", "Offset", "Poly"};
+inline constexpr std::string_view kValues414[] = {"Attribute", "Automation", "Expression"};
+inline constexpr std::string_view kValues418[] = {"kParamAttack", "kParamBW", "kParamBalance", "kParamBlur", "kParamChance", "kParamCoarsePit", "kParamColor", "kParamCurve1", "kParamCurve2", "kParamCurve3", "kParamDecay", "kParamDelay", "kParamDelay2", "kParamDelayTime", "kParamDensity", "kParamDensityMode", "kParamDepth", "kParamDepth2", "kParamDetune", "kParamDetuneWid", "kParamDimESize", "kParamDimEWet", "kParamDrive", "kParamEnv2", "kParamEnv4", "kParamEnvDecay", "kParamEnvRelease", "kParamEnvSustain", "kParamFXBus1Level", "kParamFXBus2Level", "kParamFeedback", "kParamFilt", "kParamFilterBalance", "kParamFine", "kParamFreq", "kParamFreq1", "kParamFreq2", "kParamFreqB", "kParamFreqHi", "kParamFreqLo", "kParamGain0", "kParamGain1", "kParamGain2", "kParamGate", "kParamGlobalScalingEnvTime", "kParamGlobalScalingLfoTime", "kParamGrainLength", "kParamHPF", "kParamHold", "kParamHzOffset", "kParamInitialPhase", "kParamIpTrim", "kParamLFO1", "kParamLFO3", "kParamLFXover", "kParamLPF", "kParamLPHP", "kParamLevelOut", "kParamLink", "kParamLoopEnd", "kParamMakeup", "kParamMasterTuning", "kParamNoise", "kParamNumStages", "kParamOctave", "kParamOffsetL", "kParamOffsetR", "kParamOscB", "kParamOscC", "kParamOutputMix", "kParamOutputWidth", "kParamPan", "kParamPhase", "kParamPitch", "kParamPitchRatio", "kParamPortamentoTime", "kParamPosition", "kParamPredelay", "kParamRandomDir", "kParamRandomGain", "kParamRandomGrainLength", "kParamRandomOffset", "kParamRandomPan", "kParamRandomPhase", "kParamRandomPitch", "kParamRandomWarp", "kParamRange", "kParamRate", "kParamRatio", "kParamRatio2", "kParamRatioBelow", "kParamRatioBelow1", "kParamRatioBelow2", "kParamRelease", "kParamReso", "kParamReso1", "kParamReso2", "kParamRise", "kParamScanRate", "kParamShift", "kParamSize", "kParamSmooth", "kParamSmoothFall", "kParamSpecFltShift", "kParamSpecFltWetDry", "kParamStart", "kParamStereo", "kParamSustain", "kParamSwing", "kParamTablePos", "kParamThresh", "kParamThreshUD2", "kParamTimbreShift", "kParamTimeL", "kParamTimeR", "kParamTone", "kParamTranspose", "kParamTransposeRange", "kParamUnisonStereo", "kParamUnisonWTPos", "kParamUnisonWarp", "kParamValue", "kParamVar", "kParamVeloTarget", "kParamVintageScale", "kParamVoiceAmp", "kParamVolume", "kParamWarp", "kParamWarp2", "kParamWarpVar", "kParamWarpVar2", "kParamWet", "kParamWidth", "kParamWindowParam", "kParamWrapPhantomNote", "kParamX", "kParamXoverHi", "kParamY"};
+inline constexpr std::string_view kValues419[] = {"Arp", "Env", "FXBode", "FXChorus", "FXComp", "FXConv", "FXDelay", "FXDistortion", "FXEQ", "FXFilter", "FXFlanger", "FXHyperD", "FXPhaser", "FXReverb", "FXSplit", "FXSplit3", "FXUtils", "Global", "GranularOsc", "LFO", "LFOPointModBus", "Macro", "MidiClip", "ModSlot", "MultiSampleOsc", "NoiseOsc", "Oscillator", "RetriggerState", "RoutingSlot", "SampleOsc", "SpectralOsc", "VoiceFilter", "VoicePanel", "WTOsc"};
+inline constexpr std::string_view kValues425[] = {"default"};
+inline constexpr std::string_view kValues452[] = {"default"};
+inline constexpr std::string_view kValues454[] = {"kDensityBPM", "kDensityFree"};
+inline constexpr std::string_view kValues456[] = {"kLengthBPM"};
+inline constexpr std::string_view kValues467[] = {"kEven", "kExponential", "kRandom"};
+inline constexpr std::string_view kValues470[] = {"kDistAsym", "kDistDiode2", "kDistSoftClip", "kDistSoftSat", "kDistTapeSat", "kDistTube", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFilterLPF", "kPD_OSC"};
+inline constexpr std::string_view kValues471[] = {"kAM_OSC", "kAM_SUB", "kDistDiode1", "kDistSoftClip", "kDistSoftSat", "kDistTube", "kFM_OSC", "kFilterHPF", "kFilterLPF"};
+inline constexpr std::string_view kValues473[] = {"kWindowBlackmanHarris", "kWindowExpDec", "kWindowGaussian", "kWindowTriangle", "kWindowTukey"};
+inline constexpr std::string_view kValues475[] = {"kYAxisOscVolume"};
+inline constexpr std::string_view kValues484[] = {"default"};
+inline constexpr std::string_view kValues498[] = {"kAM_OSC", "kDistAsym", "kDistDiode1", "kDistDiode2", "kDistHardClip", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistStompBox", "kDistTapeSat", "kDistTube", "kFM_FILT1", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kPD_OSC", "kPD_OSC2", "kPD_SUB", "kRM_OSC", "kRM_SUB", "kSelfPD"};
+inline constexpr std::string_view kValues499[] = {"kAM_OSC", "kAM_OSC2", "kAM_SUB", "kDistSineShaper", "kDistSoftClip", "kDistStompBox", "kDistTapeSat", "kDistTube", "kFMX_OSC", "kFM_FILT2", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterLPF", "kPD_FILT1", "kPD_NOISE", "kPD_OSC", "kPD_SUB", "kRM_NOISE", "kRM_OSC", "kSelfPD"};
+inline constexpr std::string_view kValues506[] = {"default"};
+inline constexpr std::string_view kValues510[] = {"Brown", "Geiger", "Pink", "White"};
+inline constexpr std::string_view kValues520[] = {"default"};
+inline constexpr std::string_view kValues523[] = {"kAM_OSC", "kAM_SUB", "kDistAsym", "kDistDiode2", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistTube", "kDistZeroSquare", "kFMP_OSC", "kFM_FILT1", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterLPF", "kPD_OSC", "kRM_SUB", "kSelfPD"};
+inline constexpr std::string_view kValues524[] = {"kDistLinFold", "kDistSoftClip", "kDistTapeSat", "kFM_FILT2", "kFM_NOISE", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kPD_FILT1", "kPD_OSC2", "kRM_OSC"};
+inline constexpr std::string_view kValues538[] = {"default"};
+inline constexpr std::string_view kValues548[] = {"kAM_OSC", "kAddharmonics", "kAddsubharmonics", "kDetune", "kDistDiode1", "kDistDiode2", "kDistSoftClip", "kDistTube", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kGate", "kMask_NOISE", "kMask_OSC", "kPD_OSC", "kPeakOctaveDown", "kPeakOctaveUp", "kShepardFilter", "kShepardNarrow", "kSmear", "kSpectralComb", "kSpectralPitchShift", "kSpectralShift", "kSpread", "kVocode_NOISE", "kVocode_OSC"};
+inline constexpr std::string_view kValues549[] = {"kAddharmonics", "kDetune", "kDistDiode1", "kDistSoftClip", "kDistSoftSat", "kDistTapeSat", "kDistTube", "kFilterLPF", "kMirror", "kPD_OSC", "kPD_OSC2", "kPeakHarmDown", "kPeakHarmUp", "kPeakOctaveUp", "kSelfPD", "kSpectralComb", "kSpectralPhaseTwist", "kSpectralPitchShift", "kSpread", "kVocode_OSC"};
+inline constexpr std::string_view kValues554[] = {"default"};
+inline constexpr std::string_view kValues557[] = {"kPulse", "kRoundRect", "kSaw", "kSquare", "kTriangle"};
+inline constexpr std::string_view kValues567[] = {"default"};
+inline constexpr std::string_view kValues569[] = {"kContiguous", "kPerVoice"};
+inline constexpr std::string_view kValues575[] = {"kAM_OSC", "kAM_SUB", "kASYMNeg", "kASYMPos", "kASYMPosNeg", "kBendNeg", "kBendPos", "kBendPosNeg", "kDLM", "kDistAsym", "kDistDiode1", "kDistDiode2", "kDistHardClip", "kDistLinFold", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistStompBox", "kDistTapeSat", "kDistTube", "kDistZeroSquare", "kEvenOdd", "kFMP_NOISE", "kFMP_OSC", "kFMX_NOISE", "kFMX_OSC", "kFMX_OSC2", "kFM_FILT1", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kFlip", "kPD_FILT1", "kPD_NOISE", "kPD_OSC", "kPD_OSC2", "kPD_SUB", "kPWM", "kQuantize", "kRM_FILT1", "kRM_FILT2", "kRM_NOISE", "kRM_OSC", "kRM_OSC2", "kRM_SUB", "kRemap_4", "kSelfPD", "kSync"};
+inline constexpr std::string_view kValues576[] = {"kAM_NOISE", "kAM_OSC", "kAM_OSC2", "kASYMPos", "kBendPos", "kBendPosNeg", "kDistAsym", "kDistDiode1", "kDistDiode2", "kDistHardClip", "kDistLinFold", "kDistRectify", "kDistSinFold", "kDistSineShaper", "kDistSoftClip", "kDistSoftSat", "kDistStompBox", "kDistTapeSat", "kDistTube", "kDistZeroSquare", "kEvenOdd", "kFMP_OSC2", "kFM_FILT1", "kFM_NOISE", "kFM_OSC", "kFM_OSC2", "kFM_SUB", "kFilterHPF", "kFilterLPF", "kFlip", "kPD_FILT1", "kPD_FILT2", "kPD_NOISE", "kPD_OSC", "kPD_OSC2", "kPD_SUB", "kPWM", "kQuantize", "kRM_OSC", "kRM_OSC2", "kRM_SUB", "kRemap_1", "kRemap_3", "kSelfPD", "kSync"};
+inline constexpr std::string_view kValues583[] = {"Custom", "Default Shapes"};
+inline constexpr std::string_view kValues584[] = {"default"};
+inline constexpr std::string_view kValues589[] = {"kDetuneExp", "kDetuneInv", "kDetuneRandom", "kDetuneSuper"};
+inline constexpr std::string_view kValues602[] = {"kForward", "kPingPong", "kReverse", "kTailed"};
+inline constexpr std::string_view kValues610[] = {"Harmonics", "Ratio"};
+inline constexpr std::string_view kValues612[] = {"Coarse", "Fine"};
+inline constexpr std::string_view kValues623[] = {"Auto", "Manual"};
+inline constexpr std::string_view kValues626[] = {"kOsc_Granular", "kOsc_MultiSample", "kOsc_Sample", "kOsc_Spectral"};
+inline constexpr std::string_view kValues630[] = {"kCenter12", "kOctave1", "kOctave2", "kOctave3", "kOctaveFifth1", "kOctaveFifth2", "kOctaveFifth3"};
+inline constexpr std::string_view kValues638[] = {"default"};
+inline constexpr std::string_view kValues641[] = {"---", "Dorian", "Major", "Minor", "Minor (Harmonic)", "Nine Tone"};
+inline constexpr std::string_view kValues643[] = {"default"};
+inline constexpr std::string_view kValues644[] = {"default"};
+inline constexpr std::string_view kValues648[] = {"kRoutingDestDirect", "kRoutingDestFilter", "kRoutingDestMaster", "kRoutingDestNone"};
+inline constexpr std::string_view kValues660[] = {"default"};
+inline constexpr std::string_view kValues669[] = {"ADD_BASS", "Allpasses", "B12", "B24", "BN12", "BP12", "BPN12", "BPN24", "BandReject", "Comb2", "CombH6N", "CombH6P", "CombHL6N", "CombHL6P", "CombL6N", "CombN", "CombP", "Combs", "DJMixer", "Diffuser", "DirtyMg", "DistComb1BP", "DistComb1LP", "DistComb2BP", "DistComb2LP", "Exp", "ExpBPF", "FlangeH6P", "FlangeHL6N", "FlangeHL6P", "FlangeL6P", "FlangeN", "FlangeP", "FlangePhase12HL6P", "FormantONE", "FormantTWB", "FormantTWO", "H12", "H18", "H24", "H6", "HB12", "HEQ12", "HN12", "HP12", "L12", "L18", "L24", "L6", "LB12", "LBH12", "LBH24", "LH12", "LN12", "LNH12", "LNH24", "LPH24", "LadderAcid", "LadderEMS", "LadderMg", "MgL18", "MgL24", "MgL6", "N12", "N24", "NN12", "PP12", "PZ_SVF", "Phase24N", "Phase24P", "Phase36N", "Phase36P", "Phase48H6P", "Phase48HL6P", "Phase48N", "Phase48P", "RM", "RMT", "Reverb1", "Scream", "Scream3LP", "Wsp", "ZDF_A"};
+inline constexpr std::string_view kValues674[] = {"", "Subtle Analog"};
+inline constexpr std::string_view kValues675[] = {"default"};
+inline constexpr std::string_view kValues738[] = {"", "5 Note 8 Step", "acid"};
+inline constexpr std::string_view kValues739[] = {"", "Aggro Git", "Aux Grooves 1", "CA_Above", "Cowboy Chords", "Darkness", "Dracula Reborn", "Drum Machine Basics", "Duda Chords", "Init", "Kit Drum Patterns", "Lofi YACHT", "New Dawn vinyl", "One Bar Cluster Chords"};
+inline constexpr std::string_view kValues753[] = {"7 SKIES", "@mrbillstunes", "AGENT METHOD   /.\\\\", "Alice Efe", "AnSolas", "Audiotent", "Beatdemon", "CFA-Sound", "CFA-Sound ", "Caster", "Chord Shore", "DATABROTH", "DnBline Smith", "ERB N DUB", "Electric Himalaya", "Endov Lane", "Genji Siraisi", "Gigantor", "J. Scott G. / Libra Rising", "LP24 Audio", "Leo Lauretti", "Level 8", "Matt Aimonetti", "NEST Acoustics", "Oiko", "Paul Laski", "Paul Laski (P-LASK)", "Scott Diaz", "Shreddward", "Skope", "Specimen A", "Specimen A ", "Splice", "Splice ", "Steve Duda", "SynthHacker", "Tunecraft", "Van Derand", "Wisteria Motif", "Xfer", "shreddward"};
+inline constexpr std::string_view kValues756[] = {"Serum2", "Serum2FX"};
+inline constexpr std::string_view kValues757[] = {"2.0.11", "2.0.12", "2.0.13", "2.0.14", "2.0.15"};
+inline constexpr std::string_view kValues770[] = {"Arp", "Clip", "Custom-Tuning", "Embedded-Data", "Granular", "KB-Span", "Mono", "Multisample", "Poly", "Preview", "Sample", "Spectral", "Wavetable"};
+inline constexpr std::string_view kValues772[] = {"(special)"};
+inline constexpr std::string_view kValues773[] = {"https://xferrecords.com/"};
+inline constexpr std::string_view kValues774[] = {"Xfer Records"};
 
 inline constexpr Leaf kLeaves[] = {
     { "ArpClip{N}/clip", "empty-map", false, 0, 0, 15, nullptr, 0, "unestablished" },
@@ -338,11 +338,10 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXComp/plainParams/kParamWet", "float", true, 0, 98.61955047, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXComp/plainParams/kParamXoverHi", "float", true, 300, 10594.13381, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXComp/plainParams/kParamXoverLow", "float", true, 53.60849053, 5000, 15, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXConv/embeddedIR[0][]", "float", true, -0.1499023438, 0.7167053223, 4, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXConv/embeddedIR[1][]", "float", true, -0.1233215332, 0.9999694824, 4, nullptr, 0, "unestablished" },
+    { "FXRack{N}/FX[]/FXConv/embeddedIR[][]", "float", true, -0.1499023438, 0.7167053223, 4, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXConv/numChannels", "int", true, 1, 2, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXConv/numFrames", "int", true, 112, 899744, 15, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXConv/plainParams", "string", false, 0, 0, 6, kValues147, 1, "unestablished" },
+    { "FXRack{N}/FX[]/FXConv/plainParams", "string", false, 0, 0, 6, kValues146, 1, "unestablished" },
     { "FXRack{N}/FX[]/FXConv/plainParams/kParamAttack", "float", true, 2.875143203e-07, 0.2319293435, 7, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXConv/plainParams/kParamDamping", "float", true, 10.16721427, 100, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXConv/plainParams/kParamDecay", "float", true, 2.239900459e-05, 40, 14, nullptr, 0, "unestablished" },
@@ -358,7 +357,7 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXConv/relativePathToIR", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXConv/sampleRate", "int", true, 44100, 48000, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXConv/sourceRate", "float", true, 48000, 48000, 4, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXDelay/plainParams", "string", false, 0, 0, 2, kValues163, 1, "unestablished" },
+    { "FXRack{N}/FX[]/FXDelay/plainParams", "string", false, 0, 0, 2, kValues162, 1, "unestablished" },
     { "FXRack{N}/FX[]/FXDelay/plainParams/kParamBW", "float", true, 0.75, 8.25, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDelay/plainParams/kParamBeatSync", "float", true, 0, 0, 6, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDelay/plainParams/kParamEnable", "float", true, 0, 0, 2, nullptr, 0, "unestablished" },
@@ -373,18 +372,18 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXDelay/plainParams/kParamTimeL", "float", true, 0.001, 0.3420000304, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDelay/plainParams/kParamTimeR", "float", true, 0.001, 0.3242733709, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDelay/plainParams/kParamWet", "float", true, 0, 100, 15, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXDistortion/plainParams", "string", false, 0, 0, 2, kValues178, 1, "unestablished" },
+    { "FXRack{N}/FX[]/FXDistortion/plainParams", "string", false, 0, 0, 2, kValues177, 1, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamBW", "float", true, 0.075, 7.575, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamDrive", "float", true, 0, 100, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamEnable", "float", true, 0, 0, 2, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamFreq", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamLPHP", "float", true, 0.129593676, 100, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamLevelOut", "float", true, 0, 0.956140399, 15, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamMode", "string", false, 0, 0, 15, kValues185, 17, "unestablished" },
+    { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamMode", "string", false, 0, 0, 15, kValues184, 17, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamNumStages", "float", true, 2, 16, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamPrePost", "float", true, 1, 2, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXDistortion/plainParams/kParamWet", "float", true, 0, 99.56140518, 15, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXEQ/plainParams", "string", false, 0, 0, 2, kValues189, 1, "unestablished" },
+    { "FXRack{N}/FX[]/FXEQ/plainParams", "string", false, 0, 0, 2, kValues188, 1, "unestablished" },
     { "FXRack{N}/FX[]/FXEQ/plainParams/kParamEnable", "float", true, 0, 0, 2, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXEQ/plainParams/kParamFreq1", "float", true, 21.53320125, 9453.660919, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXEQ/plainParams/kParamFreq2", "float", true, 21.53320125, 20000, 15, nullptr, 0, "unestablished" },
@@ -407,7 +406,7 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXFilter/plainParams/kParamPad", "float", true, 1, 1, 6, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXFilter/plainParams/kParamReso", "float", true, 0.7605719846, 99.12006855, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXFilter/plainParams/kParamStereo", "float", true, 19.73684281, 75.43859482, 14, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXFilter/plainParams/kParamType", "string", false, 0, 0, 15, kValues212, 69, "unestablished" },
+    { "FXRack{N}/FX[]/FXFilter/plainParams/kParamType", "string", false, 0, 0, 15, kValues211, 69, "unestablished" },
     { "FXRack{N}/FX[]/FXFilter/plainParams/kParamVar", "float", true, 2.999999933, 100, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXFilter/plainParams/kParamWet", "float", true, 0, 99.80126023, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXFilter/plainParams/kParamX", "float", true, 0.006600660272, 1, 14, nullptr, 0, "unestablished" },
@@ -420,8 +419,7 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXFlanger/plainParams/kParamRate", "float", true, 0, 8.525824107, 7, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXFlanger/plainParams/kParamWet", "float", true, 0, 87.13450432, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXFlanger/plainParams/kParamWidth", "float", true, 0, 360, 7, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXHyperD/lfo[0][]", "float", true, 0, 0.9994999766, 15, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXHyperD/lfo[1][]", "float", true, 0, 0.9988299012, 15, nullptr, 0, "unestablished" },
+    { "FXRack{N}/FX[]/FXHyperD/lfo[][]", "float", true, 0, 0.9994999766, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXHyperD/plainParams/kParamDetune", "float", true, 0, 100, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXHyperD/plainParams/kParamDimELevelOut", "float", true, 0.2961896956, 0.4868420959, 10, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXHyperD/plainParams/kParamDimESize", "float", true, 0, 100, 15, nullptr, 0, "unestablished" },
@@ -444,7 +442,7 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXPhaser/plainParams/kParamRate", "float", true, 0, 20, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXPhaser/plainParams/kParamWet", "float", true, 0, 82.6148808, 15, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXPhaser/plainParams/kParamWidth", "float", true, 0, 313.3963823, 6, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXReverb/plainParams", "string", false, 0, 0, 2, kValues249, 1, "unestablished" },
+    { "FXRack{N}/FX[]/FXReverb/plainParams", "string", false, 0, 0, 2, kValues247, 1, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamDelay", "float", true, 0, 250, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamFeedback", "float", true, 0, 100, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamFreq", "float", true, 4.476125166, 100, 14, nullptr, 0, "unestablished" },
@@ -455,7 +453,7 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamPreDelay", "float", true, 5.343299215e-13, 2.5, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamPreDelayBeatSync", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamSize", "float", true, 0, 100, 14, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXReverb/plainParams/kParamType", "string", false, 0, 0, 14, kValues260, 4, "unestablished" },
+    { "FXRack{N}/FX[]/FXReverb/plainParams/kParamType", "string", false, 0, 0, 14, kValues258, 4, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamVintageScale", "float", true, 0, 100, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamVintageScaleB", "float", true, 0, 100, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXReverb/plainParams/kParamWet", "float", true, 0, 100, 14, nullptr, 0, "unestablished" },
@@ -470,7 +468,7 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/FXSplit3/plainParams/kParamModuleCount3", "float", true, 1, 5, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXSplitMS/plainParams/kParamModuleCount1", "float", true, 1, 2, 6, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXSplitMS/plainParams/kParamModuleCount2", "float", true, 1, 3, 14, nullptr, 0, "unestablished" },
-    { "FXRack{N}/FX[]/FXUtils/plainParams", "string", false, 0, 0, 14, kValues275, 1, "unestablished" },
+    { "FXRack{N}/FX[]/FXUtils/plainParams", "string", false, 0, 0, 14, kValues273, 1, "unestablished" },
     { "FXRack{N}/FX[]/FXUtils/plainParams/kParamBalance", "float", true, -100, 100, 6, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXUtils/plainParams/kParamHPF", "float", true, 1.335174372, 400, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/FXUtils/plainParams/kParamLFMono", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
@@ -490,12 +488,12 @@ inline constexpr Leaf kLeaves[] = {
     { "FXRack{N}/FX[]/kUIParamMixOrGainDimE", "float", true, 0, 0, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/kUIParamMixOrGainHyper", "float", true, 0, 0, 14, nullptr, 0, "unestablished" },
     { "FXRack{N}/FX[]/type", "int", true, 0, 15, 15, nullptr, 0, "unestablished" },
-    { "FXRack{N}/displayName", "string", false, 0, 0, 15, kValues295, 3, "unestablished" },
-    { "FXRack{N}/plainParams", "string", false, 0, 0, 15, kValues296, 1, "unestablished" },
+    { "FXRack{N}/displayName", "string", false, 0, 0, 15, kValues293, 3, "unestablished" },
+    { "FXRack{N}/plainParams", "string", false, 0, 0, 15, kValues294, 1, "unestablished" },
     { "FXRack{N}/proxyParams/0/fxID", "int", true, 2, 2, 2, nullptr, 0, "unestablished" },
     { "FXRack{N}/proxyParams/0/paramIndex", "int", true, 10, 10, 2, nullptr, 0, "unestablished" },
     { "Filter/kUIParamMixOrGain", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
-    { "Global{N}/plainParams", "string", false, 0, 0, 6, kValues300, 1, "unestablished" },
+    { "Global{N}/plainParams", "string", false, 0, 0, 6, kValues298, 1, "unestablished" },
     { "Global{N}/plainParams/kParamBendRangeDn", "float", true, -12, -1, 14, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamBendRangeUp", "float", true, 1, 24, 6, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamDirectVol", "float", true, 0.1040320046, 1.712873362, 6, nullptr, 0, "unestablished" },
@@ -507,7 +505,7 @@ inline constexpr Leaf kLeaves[] = {
     { "Global{N}/plainParams/kParamLegato", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamLimitSameNotePolyphony", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamMasterVolume", "float", true, 0.04997252024, 0.8854027864, 15, nullptr, 0, "unestablished" },
-    { "Global{N}/plainParams/kParamMidiOut", "string", false, 0, 0, 6, kValues312, 2, "unestablished" },
+    { "Global{N}/plainParams/kParamMidiOut", "string", false, 0, 0, 6, kValues310, 2, "unestablished" },
     { "Global{N}/plainParams/kParamModWheel", "float", true, 2.235174179e-06, 100, 14, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamMonoToggle", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamNoteLatch", "float", true, 1, 1, 4, nullptr, 0, "unestablished" },
@@ -523,9 +521,9 @@ inline constexpr Leaf kLeaves[] = {
     { "Global{N}/plainParams/kParamTranspose", "float", true, -24, 12, 2, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamUseUltraOnRender", "float", true, 1, 1, 2, nullptr, 0, "unestablished" },
     { "Global{N}/plainParams/kParamVoiceAmp", "float", true, 0.430105269, 0.430105269, 2, nullptr, 0, "unestablished" },
-    { "Global{N}/plainParams/kParamVoicePriority", "string", false, 0, 0, 4, kValues328, 1, "unestablished" },
+    { "Global{N}/plainParams/kParamVoicePriority", "string", false, 0, 0, 4, kValues326, 1, "unestablished" },
     { "GranularOsc[]/kUIParamDisplayXYInput", "float", true, 0, 0, 14, nullptr, 0, "unestablished" },
-    { "LFOPointModBus{N}/plainParams", "string", false, 0, 0, 15, kValues330, 1, "unestablished" },
+    { "LFOPointModBus{N}/plainParams", "string", false, 0, 0, 15, kValues328, 1, "unestablished" },
     { "LFOPointModBus{N}/plainParams/kParamValue", "float", true, 0.004385948181, 1, 2, nullptr, 0, "unestablished" },
     { "LFO{N}/curveData", "empty-map", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/curveData/curveVals[]", "float", true, 1e-12, 1, 15, nullptr, 0, "unestablished" },
@@ -533,7 +531,7 @@ inline constexpr Leaf kLeaves[] = {
     { "LFO{N}/curveData/numPoints", "int", true, 1, 212, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/curveData/xVals[]", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/curveData/yVals[]", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
-    { "LFO{N}/curveDisplayName", "string", false, 0, 0, 15, kValues338, 24, "unestablished" },
+    { "LFO{N}/curveDisplayName", "string", false, 0, 0, 15, kValues336, 24, "unestablished" },
     { "LFO{N}/pathData", "empty-map", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/pathData/curveVals[]", "float", true, 0, 1, 14, nullptr, 0, "unestablished" },
     { "LFO{N}/pathData/isOpen", "bool", false, 0, 0, 14, nullptr, 0, "unestablished" },
@@ -541,7 +539,7 @@ inline constexpr Leaf kLeaves[] = {
     { "LFO{N}/pathData/xVals[]", "float", true, 0, 1, 14, nullptr, 0, "unestablished" },
     { "LFO{N}/pathData/yVals[]", "float", true, 0, 1, 14, nullptr, 0, "unestablished" },
     { "LFO{N}/pathDisplayName", "string", false, 0, 0, 14, nullptr, 0, "unestablished" },
-    { "LFO{N}/plainParams", "string", false, 0, 0, 15, kValues346, 1, "unestablished" },
+    { "LFO{N}/plainParams", "string", false, 0, 0, 15, kValues344, 1, "unestablished" },
     { "LFO{N}/plainParams/kParamAnchored", "float", true, 0, 0, 10, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamBeatSync", "float", true, 0, 0, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamDefaultMode", "float", true, 0, 0, 15, nullptr, 0, "unestablished" },
@@ -550,7 +548,7 @@ inline constexpr Leaf kLeaves[] = {
     { "LFO{N}/plainParams/kParamDotted", "float", true, 1, 1, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamGridX", "float", true, 4, 32, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamGridY", "float", true, 4, 32, 15, nullptr, 0, "unestablished" },
-    { "LFO{N}/plainParams/kParamMode", "string", false, 0, 0, 15, kValues355, 2, "unestablished" },
+    { "LFO{N}/plainParams/kParamMode", "string", false, 0, 0, 15, kValues353, 2, "unestablished" },
     { "LFO{N}/plainParams/kParamMono", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamPhase", "float", true, 30.00000358, 359.1610694, 14, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamPhaseSnap", "float", true, 1, 1, 2, nullptr, 0, "unestablished" },
@@ -560,14 +558,14 @@ inline constexpr Leaf kLeaves[] = {
     { "LFO{N}/plainParams/kParamSmooth", "float", true, 1.046236046, 100, 15, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamSwing", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "LFO{N}/plainParams/kParamTriplets", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
-    { "LFO{N}/plainParams/kParamType", "string", false, 0, 0, 14, kValues365, 4, "unestablished" },
+    { "LFO{N}/plainParams/kParamType", "string", false, 0, 0, 14, kValues363, 4, "unestablished" },
     { "Macro{N}/name", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
-    { "Macro{N}/plainParams", "string", false, 0, 0, 15, kValues367, 1, "unestablished" },
+    { "Macro{N}/plainParams", "string", false, 0, 0, 15, kValues365, 1, "unestablished" },
     { "Macro{N}/plainParams/kParamValue", "float", true, 0.08086622693, 100, 15, nullptr, 0, "unestablished" },
     { "MidiClip{N}/autoAdjustGrid", "bool", false, 0, 0, 8, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip", "empty-map", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip/automation[]/curves[]", "float", true, 1e-12, 1, 14, nullptr, 0, "unestablished" },
-    { "MidiClip{N}/clip/automation[]/dest", "string", false, 0, 0, 15, kValues372, 37, "unestablished" },
+    { "MidiClip{N}/clip/automation[]/dest", "string", false, 0, 0, 15, kValues370, 37, "unestablished" },
     { "MidiClip{N}/clip/automation[]/events[]/curve", "float", true, 0.5, 0.5, 1, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip/automation[]/events[]/timeStamp", "float", true, 0, 32, 1, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip/automation[]/events[]/value", "float", true, 0, 1, 1, nullptr, 0, "unestablished" },
@@ -582,7 +580,7 @@ inline constexpr Leaf kLeaves[] = {
     { "MidiClip{N}/clip/notes[]/length", "float", true, 0.0002604166667, 152, 15, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip/notes[]/muted", "bool", false, 0, 0, 7, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip/notes[]/noteNum", "int", true, 0, 127, 15, nullptr, 0, "unestablished" },
-    { "MidiClip{N}/clip/notes[]/strumType", "string", false, 0, 0, 1, kValues387, 1, "unestablished" },
+    { "MidiClip{N}/clip/notes[]/strumType", "string", false, 0, 0, 1, kValues385, 1, "unestablished" },
     { "MidiClip{N}/clip/notes[]/timeStamp", "float", true, 0, 639.75, 15, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip/regionEndBeats", "float", true, 0.25, 384, 15, nullptr, 0, "unestablished" },
     { "MidiClip{N}/clip/regionOffsetBeats", "float", true, 32, 64, 4, nullptr, 0, "unestablished" },
@@ -594,35 +592,35 @@ inline constexpr Leaf kLeaves[] = {
     { "MidiClip{N}/gridXOffset_Beats", "float", true, 0.00226856789, 49.42474361, 14, nullptr, 0, "unestablished" },
     { "MidiClip{N}/gridYOffset_Rows", "float", true, 0, 120, 15, nullptr, 0, "unestablished" },
     { "MidiClip{N}/laneTabs[]/subType", "int", true, 0, 140, 15, nullptr, 0, "unestablished" },
-    { "MidiClip{N}/laneTabs[]/type", "string", false, 0, 0, 15, kValues399, 3, "unestablished" },
+    { "MidiClip{N}/laneTabs[]/type", "string", false, 0, 0, 15, kValues397, 3, "unestablished" },
     { "MidiClip{N}/name", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
-    { "MidiClip{N}/noteFoldMode", "string", false, 0, 0, 14, kValues401, 1, "unestablished" },
-    { "MidiClip{N}/plainParams", "string", false, 0, 0, 15, kValues402, 1, "unestablished" },
+    { "MidiClip{N}/noteFoldMode", "string", false, 0, 0, 14, kValues399, 1, "unestablished" },
+    { "MidiClip{N}/plainParams", "string", false, 0, 0, 15, kValues400, 1, "unestablished" },
     { "MidiClip{N}/plainParams/kParamBeatSync", "float", true, 0, 0, 14, nullptr, 0, "unestablished" },
     { "MidiClip{N}/plainParams/kParamDotted", "float", true, 1, 1, 6, nullptr, 0, "unestablished" },
     { "MidiClip{N}/plainParams/kParamLaunchQuantize", "float", true, 0, 9, 6, nullptr, 0, "unestablished" },
     { "MidiClip{N}/plainParams/kParamLaunchRetrig", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "MidiClip{N}/plainParams/kParamNoteGate", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
-    { "MidiClip{N}/plainParams/kParamPlaybackMode", "string", false, 0, 0, 14, kValues408, 4, "unestablished" },
+    { "MidiClip{N}/plainParams/kParamPlaybackMode", "string", false, 0, 0, 14, kValues406, 4, "unestablished" },
     { "MidiClip{N}/plainParams/kParamPlaybackModeTime", "float", true, 2, 5, 6, nullptr, 0, "unestablished" },
     { "MidiClip{N}/plainParams/kParamRate", "float", true, 0.07198984921, 0.6895218492, 14, nullptr, 0, "unestablished" },
-    { "MidiClip{N}/plainParams/kParamSpanKeyboardMode", "string", false, 0, 0, 14, kValues411, 3, "unestablished" },
+    { "MidiClip{N}/plainParams/kParamSpanKeyboardMode", "string", false, 0, 0, 14, kValues409, 3, "unestablished" },
     { "MidiClip{N}/plainParams/kParamTranspose", "float", true, -12, 12, 10, nullptr, 0, "unestablished" },
     { "MidiClip{N}/plainParams/kParamTriplets", "float", true, 1, 1, 2, nullptr, 0, "unestablished" },
     { "MidiClip{N}/plainParams/kParamVelocityTrigger", "float", true, 1, 1, 10, nullptr, 0, "unestablished" },
     { "MidiClip{N}/selectedLane/subType", "int", true, 0, 137, 14, nullptr, 0, "unestablished" },
-    { "MidiClip{N}/selectedLane/type", "string", false, 0, 0, 14, kValues416, 3, "unestablished" },
+    { "MidiClip{N}/selectedLane/type", "string", false, 0, 0, 14, kValues414, 3, "unestablished" },
     { "MidiClip{N}/snapEnabled", "bool", false, 0, 0, 14, nullptr, 0, "unestablished" },
     { "ModSlot{N}/destModuleID", "int", true, 0, 207, 15, nullptr, 0, "unestablished" },
     { "ModSlot{N}/destModuleParamID", "int", true, 0, 59, 15, nullptr, 0, "unestablished" },
-    { "ModSlot{N}/destModuleParamName", "string", false, 0, 0, 15, kValues420, 138, "unestablished" },
-    { "ModSlot{N}/destModuleTypeString", "string", false, 0, 0, 15, kValues421, 34, "unestablished" },
+    { "ModSlot{N}/destModuleParamName", "string", false, 0, 0, 15, kValues418, 138, "unestablished" },
+    { "ModSlot{N}/destModuleTypeString", "string", false, 0, 0, 15, kValues419, 34, "unestablished" },
     { "ModSlot{N}/flex[]", "empty-map", false, 0, 0, 14, nullptr, 0, "unestablished" },
     { "ModSlot{N}/flex[]/curveVals[]", "float", true, 1e-12, 1, 14, nullptr, 0, "unestablished" },
     { "ModSlot{N}/flex[]/numPoints", "int", true, 1, 30, 14, nullptr, 0, "unestablished" },
     { "ModSlot{N}/flex[]/xVals[]", "float", true, 0, 1, 14, nullptr, 0, "unestablished" },
     { "ModSlot{N}/flex[]/yVals[]", "float", true, 0, 1, 14, nullptr, 0, "unestablished" },
-    { "ModSlot{N}/plainParams", "string", false, 0, 0, 15, kValues427, 1, "unestablished" },
+    { "ModSlot{N}/plainParams", "string", false, 0, 0, 15, kValues425, 1, "unestablished" },
     { "ModSlot{N}/plainParams/kParamAmount", "float", true, -100, 100, 15, nullptr, 0, "unestablished" },
     { "ModSlot{N}/plainParams/kParamAuxCurve", "float", true, -24.92333651, -4.6875, 8, nullptr, 0, "unestablished" },
     { "ModSlot{N}/plainParams/kParamAuxCurveData", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
@@ -649,11 +647,11 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/GranularOsc{N}/gain", "float", true, 5.257179737, 36.65324402, 4, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/numChannels", "int", true, 1, 2, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/numFrames", "int", true, 6144, 1300542, 6, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams", "string", false, 0, 0, 15, kValues454, 1, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams", "string", false, 0, 0, 15, kValues452, 1, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamDensity", "float", true, 0, 800.037058, 6, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamDensityMode", "string", false, 0, 0, 6, kValues456, 2, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamDensityMode", "string", false, 0, 0, 6, kValues454, 2, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamGrainLength", "float", true, 0, 10, 6, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamLengthMode", "string", false, 0, 0, 6, kValues458, 1, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamLengthMode", "string", false, 0, 0, 6, kValues456, 1, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamRandomDir", "float", true, 10.00662446, 100, 2, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamRandomGain", "float", true, 6.447026134, 73.83497953, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamRandomGrainLength", "float", true, 1.000546385, 100, 6, nullptr, 0, "unestablished" },
@@ -664,15 +662,15 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamRandomWarp2", "float", true, 73.40780497, 73.40780497, 2, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamRandomWindowAmount", "float", true, 22.44567871, 56.8590641, 2, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamRandomWindowSkew", "float", true, 16.19110107, 69.15788054, 2, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamUnisonTrigPattern", "string", false, 0, 0, 6, kValues469, 3, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamUnisonTrigPattern", "string", false, 0, 0, 6, kValues467, 3, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWarp", "float", true, 0.03324275091, 0.823453486, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWarp2", "float", true, 0.05045573041, 0.9731859565, 6, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 6, kValues472, 11, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 6, kValues473, 9, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 6, kValues470, 11, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 6, kValues471, 9, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWindowParam", "float", true, 19.63043213, 95.35627961, 6, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWindowShape", "string", false, 0, 0, 6, kValues475, 5, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWindowShape", "string", false, 0, 0, 6, kValues473, 5, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/plainParams/kParamWindowSkew", "float", true, -100, 34.18611288, 2, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamYAxisAssignment", "string", false, 0, 0, 2, kValues477, 1, "unestablished" },
+    { "Oscillator{N}/GranularOsc{N}/plainParams/kParamYAxisAssignment", "string", false, 0, 0, 2, kValues475, 1, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/samplePath", "string", false, 0, 0, 4, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/samplePathRelative", "string", false, 0, 0, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/GranularOsc{N}/sampleRate", "int", true, 44100, 48000, 6, nullptr, 0, "unestablished" },
@@ -681,7 +679,7 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/MultiSampleOsc{N}/files/{name}/numChannels", "int", true, 1, 2, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/files/{name}/numFrames", "int", true, 680, 1232271, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/files/{name}/sampleRate", "int", true, 44100, 88200, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/MultiSampleOsc{N}/plainParams", "string", false, 0, 0, 15, kValues486, 1, "unestablished" },
+    { "Oscillator{N}/MultiSampleOsc{N}/plainParams", "string", false, 0, 0, 15, kValues484, 1, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamEnvAttack", "float", true, 0, 0.3963500039, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamEnvDecay", "float", true, 0, 32, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamEnvDelay", "float", true, 3.81696987e-09, 0.01244309493, 6, nullptr, 0, "unestablished" },
@@ -695,19 +693,19 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamVelTrackOverride", "float", true, 1, 1, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarp", "float", true, 0.002000000095, 1, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarp2", "float", true, 0.01999999955, 1, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 14, kValues500, 25, "unestablished" },
-    { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 14, kValues501, 22, "unestablished" },
+    { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 14, kValues498, 25, "unestablished" },
+    { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 14, kValues499, 22, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarpVar", "float", true, 0.594999969, 0.6810785532, 4, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/plainParams/kParamWarpVar2", "float", true, 0.6810785532, 0.6810785532, 4, nullptr, 0, "unestablished" },
     { "Oscillator{N}/MultiSampleOsc{N}/sfzPathRelative", "string", false, 0, 0, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/detuneFactor", "float", true, 0.4758218478, 0.517901331, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/numChannels", "int", true, 1, 2, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/numFrames", "int", true, 90, 1354752, 15, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/NoiseOsc{N}/plainParams", "string", false, 0, 0, 15, kValues508, 1, "unestablished" },
+    { "Oscillator{N}/NoiseOsc{N}/plainParams", "string", false, 0, 0, 15, kValues506, 1, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/plainParams/kParamColor", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/plainParams/kParamFine", "float", true, -0.5739340186, 0.2456140518, 7, nullptr, 0, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/plainParams/kParamInitialPhase", "float", true, 0.9375002235, 100, 15, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/NoiseOsc{N}/plainParams/kParamNoiseType", "string", false, 0, 0, 15, kValues512, 4, "unestablished" },
+    { "Oscillator{N}/NoiseOsc{N}/plainParams/kParamNoiseType", "string", false, 0, 0, 15, kValues510, 4, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/plainParams/kParamOneShot", "float", true, 1, 1, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/plainParams/kParamRandomPhase", "float", true, 1.171875, 100, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/NoiseOsc{N}/relativePathToNoiseSample", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
@@ -717,11 +715,11 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/SampleOsc{N}/gain", "float", true, 1.021701217, 1.021701217, 2, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SampleOsc{N}/numChannels", "int", true, 1, 2, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SampleOsc{N}/numFrames", "int", true, 792, 2810505, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/SampleOsc{N}/plainParams", "string", false, 0, 0, 15, kValues522, 1, "unestablished" },
+    { "Oscillator{N}/SampleOsc{N}/plainParams", "string", false, 0, 0, 15, kValues520, 1, "unestablished" },
     { "Oscillator{N}/SampleOsc{N}/plainParams/kParamWarp", "float", true, 0.02192984708, 1, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SampleOsc{N}/plainParams/kParamWarp2", "float", true, 0.01754385978, 1, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/SampleOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 14, kValues525, 19, "unestablished" },
-    { "Oscillator{N}/SampleOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 14, kValues526, 11, "unestablished" },
+    { "Oscillator{N}/SampleOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 14, kValues523, 19, "unestablished" },
+    { "Oscillator{N}/SampleOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 14, kValues524, 11, "unestablished" },
     { "Oscillator{N}/SampleOsc{N}/plainParams/kParamWarpVar2", "float", true, 0.1884796768, 0.546875, 10, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SampleOsc{N}/samplePathRelative", "string", false, 0, 0, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SampleOsc{N}/sampleRate", "int", true, 44100, 48000, 14, nullptr, 0, "unestablished" },
@@ -735,7 +733,7 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/SpectralOsc{N}/flex/yVals[]", "float", true, 0.1665496665, 1, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/numChannels", "int", true, 1, 2, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/numFrames", "int", true, 3660, 1236088, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/SpectralOsc{N}/plainParams", "string", false, 0, 0, 15, kValues540, 1, "unestablished" },
+    { "Oscillator{N}/SpectralOsc{N}/plainParams", "string", false, 0, 0, 15, kValues538, 1, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamFreqHi", "float", true, 371.0779144, 17461.96363, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamFreqLo", "float", true, 15.94518123, 4307.266915, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamLoHiIsSmooth", "float", true, 1, 1, 2, nullptr, 0, "unestablished" },
@@ -745,16 +743,16 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamTransients", "float", true, 1, 1, 10, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarp", "float", true, 0.03508771956, 1, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarp2", "float", true, 0.1535087675, 1, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 15, kValues550, 26, "unestablished" },
-    { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 14, kValues551, 20, "unestablished" },
+    { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 15, kValues548, 26, "unestablished" },
+    { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 14, kValues549, 20, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarpVar", "float", true, 0.01171875, 1, 10, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/plainParams/kParamWarpVar2", "float", true, 0.29296875, 1, 10, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/samplePathRelative", "string", false, 0, 0, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SpectralOsc{N}/sampleRate", "int", true, 44100, 48000, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/SubOsc4/plainParams", "string", false, 0, 0, 15, kValues556, 1, "unestablished" },
+    { "Oscillator{N}/SubOsc4/plainParams", "string", false, 0, 0, 15, kValues554, 1, "unestablished" },
     { "Oscillator{N}/SubOsc4/plainParams/kParamContiguousPhase", "float", true, 1, 1, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/SubOsc4/plainParams/kParamInitialPhase", "float", true, 130.3425479, 180, 2, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/SubOsc4/plainParams/kParamShape", "string", false, 0, 0, 15, kValues559, 5, "unestablished" },
+    { "Oscillator{N}/SubOsc4/plainParams/kParamShape", "string", false, 0, 0, 15, kValues557, 5, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/embeddedWTData[]", "float", true, -1, 1, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/flex", "empty-map", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/flex/curveVals[]", "float", true, 0.2128227558, 0.9664916694, 14, nullptr, 0, "unestablished" },
@@ -764,29 +762,29 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/WTOsc{N}/interpolateAfterLoad", "int", true, 0, 2, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/numChannels", "int", true, 1, 2, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/numFrames", "int", true, 2048, 524288, 15, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/WTOsc{N}/plainParams", "string", false, 0, 0, 15, kValues569, 1, "unestablished" },
+    { "Oscillator{N}/WTOsc{N}/plainParams", "string", false, 0, 0, 15, kValues567, 1, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamInitialPhase", "float", true, 0, 360, 15, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/WTOsc{N}/plainParams/kParamPhaseMemory", "string", false, 0, 0, 14, kValues571, 2, "unestablished" },
+    { "Oscillator{N}/WTOsc{N}/plainParams/kParamPhaseMemory", "string", false, 0, 0, 14, kValues569, 2, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamRandomPhase", "float", true, 0, 99.79999065, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamTablePos", "float", true, 1.510031135, 256, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamUnisonWTPos", "float", true, -100, 100, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarp", "float", true, 0.001999276457, 1, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarp2", "float", true, 0.0005653782864, 1, 15, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 15, kValues577, 52, "unestablished" },
-    { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 15, kValues578, 45, "unestablished" },
+    { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu", "string", false, 0, 0, 15, kValues575, 52, "unestablished" },
+    { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu2", "string", false, 0, 0, 15, kValues576, 45, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpVar", "float", true, 0.1532738209, 1, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamWarpVar2", "float", true, 0.005000003614, 0.991484344, 7, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/plainParams/kParamXfadeMode", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/relativePathToWT", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/sampleRate", "int", true, 44100, 44100, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/WTOsc{N}/storedPhasePos[]", "int", true, 0, 8.767947053e+12, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/WTOsc{N}/tableDisplayName", "string", false, 0, 0, 6, kValues585, 2, "unestablished" },
-    { "Oscillator{N}/plainParams", "string", false, 0, 0, 15, kValues586, 1, "unestablished" },
+    { "Oscillator{N}/WTOsc{N}/tableDisplayName", "string", false, 0, 0, 6, kValues583, 2, "unestablished" },
+    { "Oscillator{N}/plainParams", "string", false, 0, 0, 15, kValues584, 1, "unestablished" },
     { "Oscillator{N}/plainParams/kParamAutoSliceThreshold", "float", true, 0.1212121248, 0.3965830207, 10, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamBaseTempo", "float", true, 138, 156, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamCoarsePit", "float", true, -64, 64, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamDetune", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/plainParams/kParamDetuneMode", "string", false, 0, 0, 14, kValues591, 4, "unestablished" },
+    { "Oscillator{N}/plainParams/kParamDetuneMode", "string", false, 0, 0, 14, kValues589, 4, "unestablished" },
     { "Oscillator{N}/plainParams/kParamDetuneWid", "float", true, 0, 100, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamEnable", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamEnd", "float", true, 7.368765026, 99.90314027, 10, nullptr, 0, "unestablished" },
@@ -799,7 +797,7 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/plainParams/kParamLoopCrossfade", "float", true, 0.4999999888, 63.17577958, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamLoopEnd", "float", true, 0, 99.99963641, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamLoopEndsAtRelease", "float", true, 1, 1, 2, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/plainParams/kParamLoopMode", "string", false, 0, 0, 14, kValues604, 4, "unestablished" },
+    { "Oscillator{N}/plainParams/kParamLoopMode", "string", false, 0, 0, 14, kValues602, 4, "unestablished" },
     { "Oscillator{N}/plainParams/kParamLoopStart", "float", true, 0.001026927657, 100, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamLoopStartLink", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamManualPositionMode", "float", true, 1, 1, 10, nullptr, 0, "unestablished" },
@@ -807,9 +805,9 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/plainParams/kParamPan", "float", true, -50, 50, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamPitch", "float", true, -12, 12, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamPitchBendTrack", "float", true, 0, 0, 12, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/plainParams/kParamPitchMode", "string", false, 0, 0, 14, kValues612, 2, "unestablished" },
+    { "Oscillator{N}/plainParams/kParamPitchMode", "string", false, 0, 0, 14, kValues610, 2, "unestablished" },
     { "Oscillator{N}/plainParams/kParamPitchRatio", "float", true, -1, 24.00000045, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/plainParams/kParamPitchRatioModMode", "string", false, 0, 0, 8, kValues614, 2, "unestablished" },
+    { "Oscillator{N}/plainParams/kParamPitchRatioModMode", "string", false, 0, 0, 8, kValues612, 2, "unestablished" },
     { "Oscillator{N}/plainParams/kParamPitchSource", "float", true, 0, 4, 10, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamPitchTrack", "float", true, 0, 1, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamPosition", "float", true, 3.037623316, 72.25331068, 10, nullptr, 0, "unestablished" },
@@ -820,14 +818,14 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/plainParams/kParamScanRange", "float", true, 1, 2, 10, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamScanRate", "float", true, -200, 200, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamScanTempoLock", "float", true, 1, 1, 2, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/plainParams/kParamSlicingEnabled", "string", false, 0, 0, 10, kValues625, 2, "unestablished" },
+    { "Oscillator{N}/plainParams/kParamSlicingEnabled", "string", false, 0, 0, 10, kValues623, 2, "unestablished" },
     { "Oscillator{N}/plainParams/kParamSlicingRootNote", "float", true, 6, 6, 8, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamStart", "float", true, 0.09291821043, 67.16421247, 14, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/plainParams/kParamType", "string", false, 0, 0, 14, kValues628, 4, "unestablished" },
+    { "Oscillator{N}/plainParams/kParamType", "string", false, 0, 0, 14, kValues626, 4, "unestablished" },
     { "Oscillator{N}/plainParams/kParamUnison", "float", true, 2, 16, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamUnisonRange", "float", true, 0, 48, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamUnisonSpan", "float", true, 20.3125, 59.43775177, 6, nullptr, 0, "unestablished" },
-    { "Oscillator{N}/plainParams/kParamUnisonStack", "string", false, 0, 0, 14, kValues632, 7, "unestablished" },
+    { "Oscillator{N}/plainParams/kParamUnisonStack", "string", false, 0, 0, 14, kValues630, 7, "unestablished" },
     { "Oscillator{N}/plainParams/kParamUnisonStereo", "float", true, -100, 79.84130383, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamUnisonWarp", "float", true, -12.69502044, 79.63562012, 14, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamUnisonWarp2", "float", true, -55.46875, 18.09551716, 14, nullptr, 0, "unestablished" },
@@ -835,17 +833,17 @@ inline constexpr Leaf kLeaves[] = {
     { "Oscillator{N}/plainParams/kParamVelocityZoneMin", "float", true, 2, 126, 6, nullptr, 0, "unestablished" },
     { "Oscillator{N}/plainParams/kParamVolume", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
     { "Oscillator{N}/sliceMarkers[]", "float", true, 0, 0.9966274502, 10, nullptr, 0, "unestablished" },
-    { "PitchQuantizer{N}/plainParams", "string", false, 0, 0, 15, kValues640, 1, "unestablished" },
+    { "PitchQuantizer{N}/plainParams", "string", false, 0, 0, 15, kValues638, 1, "unestablished" },
     { "PitchQuantizer{N}/plainParams/kParamKey", "float", true, 1, 5, 2, nullptr, 0, "unestablished" },
     { "PitchQuantizer{N}/plainParams/kParamScale", "float", true, 1, 51, 6, nullptr, 0, "unestablished" },
-    { "PitchQuantizer{N}/scaleName", "string", false, 0, 0, 15, kValues643, 6, "unestablished" },
+    { "PitchQuantizer{N}/scaleName", "string", false, 0, 0, 15, kValues641, 6, "unestablished" },
     { "PitchQuantizer{N}/scale[]", "int", true, 0, 2, 15, nullptr, 0, "unestablished" },
-    { "RetriggerState{N}/plainParams", "string", false, 0, 0, 15, kValues645, 1, "unestablished" },
-    { "RoutingSlot{N}/plainParams", "string", false, 0, 0, 15, kValues646, 1, "unestablished" },
+    { "RetriggerState{N}/plainParams", "string", false, 0, 0, 15, kValues643, 1, "unestablished" },
+    { "RoutingSlot{N}/plainParams", "string", false, 0, 0, 15, kValues644, 1, "unestablished" },
     { "RoutingSlot{N}/plainParams/kParamFXBus1Level", "float", true, 2.631578967, 100, 15, nullptr, 0, "unestablished" },
     { "RoutingSlot{N}/plainParams/kParamFXBus2Level", "float", true, 0.1096491236, 100, 15, nullptr, 0, "unestablished" },
     { "RoutingSlot{N}/plainParams/kParamFilterBalance", "float", true, -98.5964912, 100, 15, nullptr, 0, "unestablished" },
-    { "RoutingSlot{N}/plainParams/kParamRoutingDest", "string", false, 0, 0, 15, kValues650, 4, "unestablished" },
+    { "RoutingSlot{N}/plainParams/kParamRoutingDest", "string", false, 0, 0, 15, kValues648, 4, "unestablished" },
     { "RoutingSlot{N}/plainParams/kParamViaEnv1", "float", true, 0, 0, 14, nullptr, 0, "unestablished" },
     { "SerumGUI/kUIParamShowKeyboard", "float", true, 1, 1, 15, nullptr, 0, "unestablished" },
     { "SerumGUI/kUIParamShowMidiOut", "float", true, 0, 1, 14, nullptr, 0, "unestablished" },
@@ -857,7 +855,7 @@ inline constexpr Leaf kLeaves[] = {
     { "VoiceFilter{N}/PZs[]/qp[]", "float", true, 0, 1, 6, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/PZs[]/qz[]", "float", true, 0, 1, 6, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/PZs[]/types[]", "int", true, 0, 6, 6, nullptr, 0, "unestablished" },
-    { "VoiceFilter{N}/plainParams", "string", false, 0, 0, 15, kValues662, 1, "unestablished" },
+    { "VoiceFilter{N}/plainParams", "string", false, 0, 0, 15, kValues660, 1, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamDrive", "float", true, 0.3477933118, 100, 15, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamEnable", "float", true, 1, 1, 15, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamFreq", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
@@ -866,13 +864,13 @@ inline constexpr Leaf kLeaves[] = {
     { "VoiceFilter{N}/plainParams/kParamPad", "float", true, 1, 1, 14, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamReso", "float", true, 0, 100, 15, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamStereo", "float", true, 29.10841405, 70.10775805, 14, nullptr, 0, "unestablished" },
-    { "VoiceFilter{N}/plainParams/kParamType", "string", false, 0, 0, 15, kValues671, 83, "unestablished" },
+    { "VoiceFilter{N}/plainParams/kParamType", "string", false, 0, 0, 15, kValues669, 83, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamVar", "float", true, 1.60603486, 100, 15, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamWet", "float", true, 0, 98.68420959, 14, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamX", "float", true, 0.04419889674, 1, 6, nullptr, 0, "unestablished" },
     { "VoiceFilter{N}/plainParams/kParamY", "float", true, 0.02500000037, 1, 6, nullptr, 0, "unestablished" },
-    { "VoicePanel{N}/displayName", "string", false, 0, 0, 12, kValues676, 2, "unestablished" },
-    { "VoicePanel{N}/plainParams", "string", false, 0, 0, 15, kValues677, 1, "unestablished" },
+    { "VoicePanel{N}/displayName", "string", false, 0, 0, 12, kValues674, 2, "unestablished" },
+    { "VoicePanel{N}/plainParams", "string", false, 0, 0, 15, kValues675, 1, "unestablished" },
     { "VoicePanel{N}/plainParams/kParamGlobalRandomEnvTime", "float", true, 2.999999933, 36.00000143, 14, nullptr, 0, "unestablished" },
     { "VoicePanel{N}/plainParams/kParamGlobalRandomFilterCutoff", "float", true, 1.999999955, 37.99999952, 14, nullptr, 0, "unestablished" },
     { "VoicePanel{N}/plainParams/kParamGlobalRandomOscDetune", "float", true, 0.9999999776, 25.99999905, 14, nullptr, 0, "unestablished" },
@@ -935,8 +933,8 @@ inline constexpr Leaf kLeaves[] = {
     { "VoicePanel{N}/plainParams/kParamVoice8Pan", "float", true, -23.3766228, 34.97108221, 14, nullptr, 0, "unestablished" },
     { "VoicePanel{N}/plainParams/kParamVoiceCount", "float", true, 2, 2, 2, nullptr, 0, "unestablished" },
     { "WTOsc[]/kUIParamWTOverviewMouseTag", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
-    { "arpBankDisplayName", "string", false, 0, 0, 15, kValues740, 3, "unestablished" },
-    { "clipBankDisplayName", "string", false, 0, 0, 15, kValues741, 14, "unestablished" },
+    { "arpBankDisplayName", "string", false, 0, 0, 15, kValues738, 3, "unestablished" },
+    { "clipBankDisplayName", "string", false, 0, 0, 15, kValues739, 14, "unestablished" },
     { "fileType", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "lfoPointModAssignments[]/busID", "int", true, 0, 14, 15, nullptr, 0, "unestablished" },
     { "lfoPointModAssignments[]/lfoID", "int", true, 0, 9, 15, nullptr, 0, "unestablished" },
@@ -950,11 +948,11 @@ inline constexpr Leaf kLeaves[] = {
     { "mpeConfig", "int", true, 0, 0, 15, nullptr, 0, "unestablished" },
     { "mpeEnabled", "bool", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "mpePitchBendRange", "int", true, 48, 48, 15, nullptr, 0, "unestablished" },
-    { "presetAuthor", "string", false, 0, 0, 15, kValues755, 41, "unestablished" },
+    { "presetAuthor", "string", false, 0, 0, 15, kValues753, 41, "unestablished" },
     { "presetDescription", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "presetName", "string", false, 0, 0, 15, nullptr, 0, "unestablished" },
-    { "product", "string", false, 0, 0, 15, kValues758, 2, "unestablished" },
-    { "productVersion", "string", false, 0, 0, 15, kValues759, 5, "unestablished" },
+    { "product", "string", false, 0, 0, 15, kValues756, 2, "unestablished" },
+    { "productVersion", "string", false, 0, 0, 15, kValues757, 5, "unestablished" },
     { "scalars/note", "empty-map", false, 0, 0, 15, nullptr, 0, "unestablished" },
     { "scalars/note/curveVals[]", "float", true, 1e-12, 0.9556495284, 14, nullptr, 0, "unestablished" },
     { "scalars/note/legato", "bool", false, 0, 0, 14, nullptr, 0, "unestablished" },
@@ -967,11 +965,11 @@ inline constexpr Leaf kLeaves[] = {
     { "scalars/velo/numPoints", "int", true, 1, 3, 15, nullptr, 0, "unestablished" },
     { "scalars/velo/xVals[]", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
     { "scalars/velo/yVals[]", "float", true, 0, 1, 15, nullptr, 0, "unestablished" },
-    { "tags[]", "string", false, 0, 0, 15, kValues772, 13, "unestablished" },
+    { "tags[]", "string", false, 0, 0, 15, kValues770, 13, "unestablished" },
     { "tuningData[]", "int", true, 10, 126, 2, nullptr, 0, "unestablished" },
-    { "tuningName", "string", false, 0, 0, 2, kValues774, 1, "unestablished" },
-    { "url", "string", false, 0, 0, 15, kValues775, 1, "unestablished" },
-    { "vendor", "string", false, 0, 0, 15, kValues776, 1, "unestablished" },
+    { "tuningName", "string", false, 0, 0, 2, kValues772, 1, "unestablished" },
+    { "url", "string", false, 0, 0, 15, kValues773, 1, "unestablished" },
+    { "vendor", "string", false, 0, 0, 15, kValues774, 1, "unestablished" },
     { "version", "float", true, 3, 6, 15, nullptr, 0, "unestablished" },
 };
 

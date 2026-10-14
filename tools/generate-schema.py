@@ -19,6 +19,7 @@ the generated header is committed so a fresh clone builds without a reference in
 from __future__ import annotations
 
 import argparse
+import re
 import json
 from pathlib import Path
 
@@ -112,6 +113,45 @@ def main() -> int:
                 patterns.add(segment)
 
     patterns = sorted(patterns)
+
+    # The emitted table and `Schema::normalise` must agree on **one canonical form**, and this is where
+    # that is enforced. `normalise` collapses every bracketed index to `[]`, because a document is
+    # addressed by instance while the *schema* is addressed by shape: `lfo[0][3]` and `lfo[1][7]` are
+    # the same parameter. The research JSON spells a few paths with an enumerated first index
+    # (`lfo[0][]`, `lfo[1][]`, `embeddedIR[0][]`, `embeddedIR[1][]`), and emitting those verbatim made
+    # four rows **unreachable** — nothing can produce the string `lfo[0][]` to look them up, so every
+    # preset using either effect reported parameters it could not interpret.
+    #
+    # Canonicalising here, then merging what canonicalisation makes identical, is what keeps the two
+    # ends consistent. The merge is not bookkeeping: `lfo[0][]` and `lfo[1][]` collapse onto one row,
+    # and a duplicated row would break `describe`'s binary search, which assumes a sorted unique table.
+    def canonical(path: str) -> str:
+        return re.sub(r"\[\d+\]", "[]", path)
+
+    merged: dict[str, dict] = {}
+
+    for path, rec in leaves.items():
+        key = canonical(path)
+
+        if key not in merged:
+            merged[key] = dict(rec)
+            continue
+
+        existing = merged[key]
+
+        if existing.get("kind") != rec.get("kind"):
+            print(f"  kind conflict on {key}: {existing.get('kind')} vs {rec.get('kind')}")
+
+        # Presence is the union of the spellings: present in either is present.
+        absent = set(existing.get("versionsAbsentFrom", [])) & set(rec.get("versionsAbsentFrom", []))
+        if absent:
+            existing["versionsAbsentFrom"] = sorted(absent)
+        else:
+            existing.pop("versionsAbsentFrom", None)
+
+        print(f"  merged duplicate leaf after canonicalisation: {key}")
+
+    leaves = merged
 
     value_arrays: list[str] = []
     value_array_of: dict[int, tuple[str, int]] = {}
