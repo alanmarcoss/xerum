@@ -140,6 +140,160 @@ bool looksLikeAssetReference (std::string_view key)
     return key.find ("relativePath") != std::string_view::npos || key.ends_with ("Path");
 }
 
+template <std::size_t N>
+bool containsValue (const std::string_view (&values)[N], std::string_view wanted)
+{
+    for (const auto& value : values)
+        if (value == wanted)
+            return true;
+
+    return false;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The modulation row.
+//
+// A row is the one place in the payload where a field is a *reference* into another part of the model:
+// `destModuleParamName` names a parameter, `source` names a source, and `destModuleTypeString` names the
+// class the parameter belongs to. That makes it the place where "the field has the right shape" and "the
+// engine acts on the field" come apart, and three loads in one week came apart there: a voice filter
+// type that was never checked at all (tickets 23/26), a subtree deeper than the walk's limit that
+// returned without a word (ticket 36), and — the one this block fixes — **a destination parameter the
+// parameter model cannot describe, which the walk accepted for being a string** (ticket 27's finding,
+// ticket 39's fix).
+//
+// The rule the import contract states, and the form this takes, is: every field a row stores either
+// resolves to something the engine acts on, or appears in the report.
+// ---------------------------------------------------------------------------------------------------
+
+/// The fields of a row the **engine** acts on — one entry per member of `dsp::ModSlot`
+/// (`src/dsp/modulation.h`, the frozen contract):
+///
+///     source[]              -> ModSlot::source and ::auxSource, the reference's two-element pair
+///     destModuleTypeString  -> ModSlot::destinationClass
+///     destModuleID          -> ModSlot::destinationInstance
+///     destModuleParamID     -> ModSlot::destinationParameter
+///     destModuleParamName   -> ModSlot::destinationName
+///     kParamAmount          -> ModSlot::amount      (percent, signed: the sign IS the polarity)
+///     kParamBipolar         -> ModSlot::bipolar
+///     kParamBypass          -> ModSlot::bypassed
+///     kParamCurveIn         -> ModSlot::curveIn
+///     kParamCurveOut        -> ModSlot::curveOut
+///
+/// Everything else a preset stores inside a row is a field the engine does not read, and the corpus says
+/// that is not a corner: `flex` (the drawn transfer curve) carries points in 453 rows, and
+/// `kParamMainCurveData` is stored by 423, `kParamOut` (the OUTPUT trim) by 156, `kParamAuxCurveData` by
+/// 95, `kParamAuxInverted` by 52, the smoothing by up to 43, the delay by 7 and `kParamAuxCurve` by 3 —
+/// each of them an ordinary schema leaf, each of them loading in silence.
+///
+/// **Two statements of one fact.** `tests/model/modulation_coverage_test.cpp` classifies every field of
+/// every row in the factory bank from the document, independently of this table, and holds the result to
+/// the report preset by preset; `tests/model/structural_fidelity_test.cpp` sweeps *every* field the
+/// schema declares under `ModSlot{N}` and requires each to be either applied here or named in the
+/// report. A field the engine grows, or one it stops acting on, therefore fails a test rather than
+/// loading in silence — which is the whole point of fixing the third instance this way.
+constexpr std::string_view kAppliedRowKeys[] = { "source", "destModuleTypeString", "destModuleID",
+                                                 "destModuleParamID", "destModuleParamName" };
+
+constexpr std::string_view kAppliedRowParamKeys[] = { "kParamAmount", "kParamBipolar", "kParamBypass",
+                                                      "kParamCurveIn", "kParamCurveOut" };
+
+/// The **severity** of both classes of entry this block adds is `medium`, and the argument is the
+/// contract's own table (§3). Its `high` examples — an unsupported engine, warp, filter, effect or
+/// asset, plus ticket 37's spectral-morph substitution — are all *sound-producing components or assets
+/// on the audio path*: the things a preset's sound is made of. A row's fields shape a **control signal**
+/// whose destination is still modulated: the row applies, at the authored source, polarity and depth,
+/// and what is missing is a transfer curve, a trim, the smoothing, or a name for the destination. That
+/// is "something was present that we did not interpret" — `medium`, whose own examples ("an unknown
+/// module, parameter") are fields rather than components — and it is the severity the loader already
+/// gives a parameter outside the schema.
+struct RowFieldExplanation
+{
+    std::string_view field;   ///< relative to the row (`flex`) or to its `plainParams` (`kParamOut`)
+    std::string_view why;
+};
+
+/// What we do instead, for the three row fields whose absence a user is most likely to hear. Every other
+/// unapplied field gets the honest generic reason: the row contract has no place to put it.
+constexpr RowFieldExplanation kRowFieldExplanations[] = {
+    { "flex",
+      "the reference drew the row's transfer curve and the engine evaluates the CRV and OUT knobs "
+      "(`kParamCurveIn`/`kParamCurveOut`) in its place" },
+    { "plainParams/kParamOut",
+      "the row's output trim is dropped, so the row's depth is `kParamAmount` alone" },
+    { "plainParams/kParamAuxInverted",
+      "the row's aux invert is dropped, so the aux source scales the row un-inverted" },
+};
+
+/// The reason a report gives for a field of a row the engine does not apply.
+std::string rowFieldReason (std::string_view field)
+{
+    const auto opening = "the row's field `" + std::string (field) + "` is stored and not applied: ";
+
+    for (const auto& explained : kRowFieldExplanations)
+        if (explained.field == field)
+            return opening + std::string (explained.why);
+
+    return opening + "the engine's row contract (`dsp::ModSlot`) has no field for it";
+}
+
+/// The parameter model's module path for a modulation destination class, with `{N}` for the instance.
+///
+/// This is the model-side half of the engine's `dsp::modDestinationClassKnown`, and it is a
+/// correspondence rather than a guess in all three shapes: an FX destination names a class inside a
+/// rack's `FX` array; `Arp` destinations name the arp's parameters, which the model stores under
+/// `ArpClip{N}`; and an oscillator-engine destination names a leaf one level deeper, under the slot's
+/// own engine module. Everything else is `<Class>{N}`.
+///
+/// `modulation_coverage_test.cpp` builds the same mapping from the other side and holds the two together
+/// over the whole corpus: the report's item for an undescribed destination parameter is the leaf this
+/// produces, so a mapping that drifted would fail the walk's own assertion rather than quietly
+/// mis-resolving.
+std::string schemaModuleForDestinationClass (std::string_view destinationClass)
+{
+    if (destinationClass.starts_with ("FX"))
+        return "FXRack{N}/FX[]/" + std::string (destinationClass) + "/plainParams/";
+
+    if (destinationClass == "Arp")
+        return "ArpClip{N}/plainParams/";
+
+    for (const auto* engine : { "WTOsc", "SampleOsc", "MultiSampleOsc", "GranularOsc", "SpectralOsc",
+                                "NoiseOsc" })
+        if (destinationClass == engine)
+            return "Oscillator{N}/" + std::string (destinationClass) + "{N}/plainParams/";
+
+    return std::string (destinationClass) + "{N}/plainParams/";
+}
+
+/// Whether a value holds anything at all.
+///
+/// `{}` and `[]` are what the reference writes for a container it has nothing to say about — the schema
+/// types them `empty-map` and `empty-array` — so an empty `flex` curve means "nothing drawn", not "a
+/// drawn curve we dropped". The corpus says the difference is real: 504 rows carry a `flex` array and 51
+/// of those hold two empty curves, leaving 453 with something to lose.
+bool holdsAnything (const Value& value)
+{
+    if (value.isMap())
+        return std::any_of (value.entries.begin(), value.entries.end(),
+                            [] (const auto& entry) { return holdsAnything (entry.second); });
+
+    if (value.isArray())
+        return std::any_of (value.items.begin(), value.items.end(),
+                            [] (const Value& item) { return holdsAnything (item); });
+
+    return value.type != Value::Type::Null;
+}
+
+/// Whether a row's `source` array names a source at all. `[0, 0]` is the reference's "no source".
+bool namesSource (const Value* source)
+{
+    if (source == nullptr || ! source->isArray() || source->items.empty())
+        return false;
+
+    double first = 0.0;
+    return source->items.front().numberAsDouble (first) && first != 0.0;
+}
+
 /// Path segments that are instances get normalised by the schema, so this can build concrete paths and
 /// let `Schema::normalise` do the `{N}` work.
 struct Walker
@@ -333,6 +487,12 @@ struct Walker
 
             // A warp mode or filter family we do not ship, reported by name so a user can see which.
             checkWarpsAndFilters (name, module);
+
+            // A modulation row: the one module whose *fields* mean something elsewhere in the model, and
+            // so the one module where the shape of a field is not the meaning of it. See
+            // `checkModulationRow`.
+            if (name.starts_with ("ModSlot"))
+                checkModulationRow (name, module);
         }
     }
 
@@ -412,6 +572,118 @@ struct Walker
             if (key == "FXFilter")
                 checkFilterType (name + "/" + key, *params);
         }
+    }
+
+    /// A field of a modulation row the engine does not apply, reported once per field.
+    ///
+    /// Two silences are deliberate and each has a reason. A field holding an empty container is not a
+    /// loss (`holdsAnything`: the reference writes `{}` for "nothing here"). A field the *schema* does
+    /// not know is already reported by the generic walk as "parameter is not in the schema", and two
+    /// entries for one fact is noise rather than thoroughness.
+    void reportUnappliedRowField (const std::string& field, const Value& value)
+    {
+        if (! holdsAnything (value))
+            return;
+
+        const std::string templateRow = "ModSlot{N}";
+        const auto templatePath = templateRow + "/" + field;
+
+        // `flex` is an array in the schema (`ModSlot{N}/flex[]`) and a map at its leaves; every other
+        // row field is a leaf, so either spelling is a field the model describes.
+        if (schema.describe (templatePath) == nullptr && schema.describe (templatePath + "[]") == nullptr)
+            return;
+
+        note (Severity::Medium, templateRow, templatePath, rowFieldReason (field));
+    }
+
+    /// A modulation row, checked for **meaning** rather than for shape.
+    ///
+    /// Three checks, and the first is the ticket's whole subject:
+    ///
+    ///   1. **the destination parameter must be one the parameter model describes.**
+    ///      `destModuleParamName` is a string leaf, so the walk stored it and said nothing, whatever it
+    ///      said. 135 rows in the factory bank name a parameter the model cannot describe — 128 of them
+    ///      `Global.kParamMasterTuning`, 7 in `RetriggerState` — and every one of them imported
+    ///      "cleanly" while the matrix computed a value for a destination nothing can consume. Asking
+    ///      whether the name *addresses a schema leaf* is the check that was missing; "is a string" is
+    ///      not a resolution.
+    ///   2. **every field the row stores must be one the engine acts on**, or it appears in the report.
+    ///      This is the general rule, and it is here rather than in a test so that a fourth silent field
+    ///      is not possible: the applied vocabulary is `kAppliedRowKeys`/`kAppliedRowParamKeys`, and
+    ///      anything outside it is named.
+    ///   3. **a row that names a source must address a destination.** The 6 rows in `SY - Tetris` kept
+    ///      a source and an amount and lost their destination; that is a modulation going nowhere, and
+    ///      an *absent* field has no shape to validate, which is why only a meaning-check can see it.
+    ///
+    /// The instance is deliberately not checked here. `destModuleID`'s range is the **engine's**
+    /// contract (`dsp::modDestinationInstanceKnown`, which knows the reference's instance counts and the
+    /// FX `rackIndex * 100 + slotIndex` encoding), not the parameter model's — the schema's `{N}` admits
+    /// any index. This check is about the parameter the row names, and the coverage walk sees all 13,258
+    /// rows resolve their address.
+    void checkModulationRow (const std::string& name, const Value& module)
+    {
+        const std::string templateRow = "ModSlot{N}";
+        const auto* source = module.find ("source");
+        const auto* params = module.find ("plainParams");
+
+        for (const auto& [key, value] : module.entries)
+        {
+            if (key == "plainParams")
+            {
+                if (params == nullptr || ! params->isMap())
+                    continue;   // the "default" sentinel: the row stores no parameter at all
+
+                for (const auto& [param, paramValue] : params->entries)
+                    if (! containsValue (kAppliedRowParamKeys, param))
+                        reportUnappliedRowField ("plainParams/" + param, paramValue);
+
+                continue;
+            }
+
+            if (! containsValue (kAppliedRowKeys, key))
+                reportUnappliedRowField (key, value);
+        }
+
+        // `source` is the reference's two-element `[source, auxSource]` pair; a third element is a source
+        // the contract has no room for, and the corpus never stores one.
+        if (source != nullptr && source->isArray() && source->items.size() > 2)
+            note (Severity::Medium, templateRow, templateRow + "/source[]",
+                  "the row stores more than two sources and the engine addresses the first two");
+
+        const auto destinationClass = module.stringOr ("destModuleTypeString");
+        const auto parameterName = module.stringOr ("destModuleParamName");
+
+        if (destinationClass.empty() || destinationClass == "None")
+        {
+            // The reference leaves all 64 rows present in every preset, most of them with nothing in
+            // them at all, so an empty row is not a dropped modulation and must not be a complaint.
+            if (namesSource (source))
+                note (Severity::Medium, templateRow, templateRow + "/destination",
+                      "the row names a source and no destination — its modulation addresses nothing");
+
+            return;
+        }
+
+        if (parameterName.empty())
+        {
+            note (Severity::Medium, templateRow, templateRow + "/destination",
+                  "the row names no destination parameter — its modulation addresses nothing");
+            return;
+        }
+
+        // The name is the identity, not the id: `destModuleParamID` is version-dependent — `Oscillator[10]`
+        // is `kParamDetune` at schema 3.0 and `kParamStart` at 4.0 — so the id cannot be asked this
+        // question at all (ticket 27's finding).
+        const auto leaf = schemaModuleForDestinationClass (destinationClass) + parameterName;
+
+        if (schema.describe (leaf) != nullptr)
+            return;
+
+        // Named, not counted: the item is the parameter's path in the model's own vocabulary, which is
+        // how a user finds which of their preset's modulations goes nowhere.
+        note (Severity::Medium, templateRow, leaf,
+              "the destination parameter `" + leaf + "` is not in the parameter model — the row's "
+              "address resolves and its modulation is applied to nothing");
     }
 };
 

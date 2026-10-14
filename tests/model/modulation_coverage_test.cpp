@@ -73,6 +73,62 @@ std::string schemaPrefix (std::string_view destinationClass)
     return std::string (destinationClass) + "{N}/plainParams/";
 }
 
+/// The fields of a modulation row the **engine** acts on — the other half of the fact
+/// `src/model/document.cpp`'s `kAppliedRowKeys`/`kAppliedRowParamKeys` states, written here from the
+/// contract's side: one entry per member of `dsp::ModSlot`. The walk below classifies every field the
+/// document carries and holds this list and the loader's to each other, so a field the engine stops
+/// acting on (or a field the loader stops applying) fails here rather than in a user's ears.
+///
+/// The loader's own item for a row complaint is the vocabulary this reads back: `ModSlot{N}/<field>` for
+/// a field or a row's state, and the parameter model's leaf path for a destination parameter the model
+/// cannot describe.
+constexpr std::string_view kAppliedRowFields[] = {
+    "source",                // ModSlot::source and ::auxSource
+    "destModuleTypeString",  // ModSlot::destinationClass
+    "destModuleID",          // ModSlot::destinationInstance
+    "destModuleParamID",     // ModSlot::destinationParameter
+    "destModuleParamName",   // ModSlot::destinationName
+    "plainParams/kParamAmount",
+    "plainParams/kParamBipolar",
+    "plainParams/kParamBypass",
+    "plainParams/kParamCurveIn",
+    "plainParams/kParamCurveOut",
+};
+
+bool isAppliedRowField (std::string_view field)
+{
+    for (const auto applied : kAppliedRowFields)
+        if (applied == field)
+            return true;
+
+    return false;
+}
+
+/// Which field of its row a concrete document path belongs to.
+///
+/// `ModSlot3/plainParams/kParamOut` -> `plainParams/kParamOut` (the field), `ModSlot3/flex[0]/xVals[4]`
+/// -> `flex` (the subtree's root, since a drawn curve is one field however many points it holds) and
+/// `ModSlot3/source[0]` -> `source`. This is the granularity a report can usefully talk about: sixty rows
+/// storing the same unapplied field is one fact about the field.
+std::string rowFieldOf (std::string_view path, std::string_view rowModule)
+{
+    const auto relative = path.substr (rowModule.size() + 1);
+
+    if (relative.starts_with ("plainParams/"))
+    {
+        const auto parameter = relative.substr (std::string_view ("plainParams/").size());
+        return "plainParams/" + std::string (parameter.substr (0, parameter.find ('/')));
+    }
+
+    const auto bracket = relative.find ('[');
+    const auto slash = relative.find ('/');
+    const auto end = bracket != std::string_view::npos && (slash == std::string_view::npos || bracket < slash)
+                         ? bracket
+                         : slash;
+
+    return std::string (relative.substr (0, end));
+}
+
 struct DecodedPreset
 {
     bool ok { false };
@@ -405,6 +461,41 @@ struct CorpusFacts
 
     std::size_t presetsQueried { 0 };
     std::vector<std::string> unimplementedReportMismatches;
+
+    // --- the general rule of ticket 39, measured -----------------------------------------------------
+    //
+    // **Every field of every modulation row either resolves to something the engine acts on, or appears
+    // in the report.** Both halves are computed here and they are independent statements: the fields from
+    // the `PresetDocument` (again with the vocabulary in this file, not the loader's), the report from
+    // `loadPreset`. `rowReportMismatches` is where they are compared, preset by preset.
+    std::map<std::string, std::size_t> appliedFieldRows;   ///< a field the engine acts on -> rows storing it
+    std::map<std::string, std::size_t> rowFieldRows;       ///< a field it does not -> rows storing it
+    std::size_t rowsWithSourceBeyondTwo { 0 };
+
+    /// One import-report entry about a modulation row. The loader's item vocabulary is the classification:
+    /// `ModSlot{N}/<field>` for a field or a row's own state, and the parameter model's leaf path for a
+    /// destination parameter the model cannot describe.
+    struct RowReport
+    {
+        std::string preset;
+        std::string item;
+        Severity severity { Severity::Info };
+        std::string reason;
+    };
+
+    std::vector<RowReport> rowReports;
+    std::set<std::string> destinationReportItems;   ///< the model's leaves the report names
+    std::size_t destinationReportEntries { 0 };
+    std::size_t destinationMissingEntries { 0 };
+    std::size_t sourceBeyondTwoEntries { 0 };
+
+    /// Entries naming a field the engine *does* act on, or a field no row of that preset stores: either
+    /// would be the loader inventing a complaint, which is the mirror image of the silence this ticket is
+    /// about. Must be zero.
+    std::size_t unclassifiedRowReportEntries { 0 };
+
+    /// Presets where the report and the walk disagree, with the symmetric difference spelled out.
+    std::vector<std::string> rowReportMismatches;
 };
 
 const CorpusFacts& corpusFacts()
@@ -435,6 +526,54 @@ const CorpusFacts& corpusFacts()
             const auto rows = rowsOf (decoded, entry.path());
             const auto depths = rackDepths (decoded.result.document);
             const auto& report = decoded.result.report;
+
+            // The document's half of the general rule: every field of every row, classified by this
+            // file's own vocabulary. Read from the document, so nothing the loader believes about itself
+            // can make this agree with the report by construction.
+            std::map<std::string, std::set<std::string>> rowModulesByField;   // field -> the rows storing it
+            std::set<std::string> unappliedFields;
+            std::set<std::string> expectedRowItems;
+            std::set<std::string> rowsBeyondTwo;
+
+            for (const auto& [path, value] : decoded.result.document.parameters)
+            {
+                if (! path.starts_with ("ModSlot"))
+                    continue;
+
+                const auto rowModule = moduleOf (path);
+                const auto field = rowFieldOf (path, rowModule);
+
+                // `source[2]` and beyond: the pair's shape is two, and the engine reads two. Checked
+                // before the classification below, because `source` is one of the fields it applies.
+                if (field == "source")
+                {
+                    const auto indexAt = path.find ('[', rowModule.size());
+
+                    if (indexAt != std::string::npos && std::stoi (path.substr (indexAt + 1)) >= 2)
+                    {
+                        rowsBeyondTwo.insert (rowModule);
+                        expectedRowItems.insert ("ModSlot{N}/source[]");
+                    }
+                }
+
+                if (isAppliedRowField (field))
+                {
+                    rowModulesByField[field].insert (rowModule);
+                    continue;
+                }
+
+                unappliedFields.insert (field);
+                rowModulesByField[field].insert (rowModule);
+                expectedRowItems.insert ("ModSlot{N}/" + field);
+            }
+
+            for (const auto& [field, modules] : rowModulesByField)
+                if (isAppliedRowField (field))
+                    out.appliedFieldRows[field] += modules.size();
+                else
+                    out.rowFieldRows[field] += modules.size();
+
+            out.rowsWithSourceBeyondTwo += rowsBeyondTwo.size();
 
             std::vector<ModSlot> slots;
 
@@ -485,6 +624,11 @@ const CorpusFacts& corpusFacts()
 
                     if (! described)
                     {
+                        // What the report must carry for this row is the leaf the parameter model lacks,
+                        // and the loader builds that same path from its own table — so a mapping that
+                        // drifted on either side fails here rather than mis-resolving in silence.
+                        expectedRowItems.insert (leaf);
+
                         for (const auto& reportEntry : report.entries)
                             if (reportEntry.item == leaf)
                                 modelItem = reportEntry.item;
@@ -493,18 +637,25 @@ const CorpusFacts& corpusFacts()
                                                    row.slot.destinationName, modelItem });
                     }
                 }
-
-                if (reason.empty())
-                {
-                    ++out.resolved;
-                }
                 else
                 {
-                    // Unresolved *and* unmentioned would be a silent drop, which is the thing this walk
-                    // exists to rule out.
+                    // A row nothing can address. What is missing is a *destination*, so that is the item
+                    // the report has to carry — and nothing else in the loader can notice, because an
+                    // absent field has no shape to validate. The loader's gate is mirrored exactly: a row
+                    // that names neither a source nor a class stores no modulation at all.
+                    if (row.slot.source != 0 || ! row.slot.destinationName.empty())
+                        expectedRowItems.insert ("ModSlot{N}/destination");
+
+                    for (const auto& reportEntry : report.entries)
+                        if (reportEntry.item == "ModSlot{N}/destination")
+                            modelItem = reportEntry.item;
+
                     out.unresolved.push_back ({ row.preset, row.module, row.slot.destinationClass, reason,
                                                 modelItem });
                 }
+
+                if (reason.empty())
+                    ++out.resolved;
 
                 if (modDestinationIsDiscrete (row.slot.destinationClass, row.slot.destinationName))
                     ++out.discreteRows[row.slot.destinationClass];
@@ -525,6 +676,58 @@ const CorpusFacts& corpusFacts()
                 }
 
                 slots.push_back (row.slot);
+            }
+
+            // --- the report's half of the general rule -----------------------------------------------
+            //
+            // Everything `loadPreset` said about this preset's modulation rows, classified by the item
+            // vocabulary it promises, and compared with what the document says. As a *set*, because
+            // `note` collapses one complaint per field per preset — and because the claim is "the set of
+            // silently dropped items is empty", which is a statement about sets.
+            std::set<std::string> reportedRowItems;
+
+            for (const auto& reportEntry : report.entries)
+            {
+                if (reportEntry.modulePath != "ModSlot{N}")
+                    continue;
+
+                reportedRowItems.insert (reportEntry.item);
+                out.rowReports.push_back ({ entry.path().filename().string(), reportEntry.item,
+                                            reportEntry.severity, reportEntry.reason });
+            }
+
+            if (reportedRowItems != expectedRowItems)
+            {
+                std::string detail = entry.path().filename().string() + " —";
+
+                for (const auto& item : reportedRowItems)
+                    if (! expectedRowItems.contains (item))
+                        detail += " reported, but no row stores it: " + item + ";";
+
+                for (const auto& item : expectedRowItems)
+                    if (! reportedRowItems.contains (item))
+                        detail += " stored, but not reported: " + item + ";";
+
+                out.rowReportMismatches.push_back (detail);
+            }
+
+            for (const auto& item : reportedRowItems)
+            {
+                if (! item.starts_with ("ModSlot{N}/"))
+                {
+                    ++out.destinationReportEntries;
+                    out.destinationReportItems.insert (item);
+                    continue;
+                }
+
+                const auto field = item.substr (std::string_view ("ModSlot{N}/").size());
+
+                if (field == "destination")
+                    ++out.destinationMissingEntries;
+                else if (field == "source[]")
+                    ++out.sourceBeyondTwoEntries;
+                else if (isAppliedRowField (field) || ! unappliedFields.contains (field))
+                    ++out.unclassifiedRowReportEntries;
             }
 
             // The reporting mechanism, per preset: what the engine says is in use and unevaluated must be
@@ -727,10 +930,14 @@ TEST_CASE ("every slot in every preset resolves its destination, and the rest is
     for (const auto& row : facts.unresolved)
         UNSCOPED_INFO ("  " << row.preset << " " << row.module << ": engine reason '" << row.reason << "'");
 
-    // The acceptance, exactly: nothing is unresolved *and* unmentioned. Six of six are named, so the set
-    // of silently ignored rows is empty.
+    // The acceptance, exactly: nothing is unresolved *and* unmentioned — the engine's reason names the
+    // six, and so does the import report, which could not see them before this ticket because the field
+    // they lost is *absent* and an absent field has no shape to validate.
     for (const auto& row : facts.unresolved)
+    {
         CHECK_FALSE (row.reason.empty());
+        CHECK_FALSE (row.modelItem.empty());
+    }
 
     CHECK (facts.resolved + facts.unresolved.size() == facts.rows);
     CHECK (byClass.size() == 1);
@@ -779,11 +986,109 @@ TEST_CASE ("every slot in every preset resolves its destination, and the rest is
         CHECK (expected);
     }
 
-    // Measured, and the finding this walk carries for the import path: `loadPreset` checks a row's
-    // `destModuleParamName` for being a string, never for naming a parameter the destination class
-    // actually has, so a destination the model cannot describe is neither resolved nor reported. It is
-    // named here instead, which is what makes the set of silently ignored rows empty.
-    CHECK (named == 0);
+    // **The acceptance, measured.** Every one of the 135 rows names its parameter in the import report,
+    // so there is no third state between "resolvable" and "reported": the rows in `Global` and
+    // `RetriggerState` are not silently applied to a destination nothing can consume, they are named.
+    //
+    // `medium` and not `high`, argued from the contract's own table. Its `high` examples — an
+    // unsupported engine, warp, filter, effect or asset — are all *sound-producing components or assets
+    // on the audio path*. A modulation row's destination is a **control signal**: the row's source,
+    // polarity and depth all land, and what is missing is a name for where they land, which is exactly
+    // §3's `medium` ("something was present that we did not interpret", whose examples are an unknown
+    // module and an unknown parameter) and the severity the loader already gives a parameter the schema
+    // does not describe.
+    CHECK (named == 135);
+    CHECK (named == facts.modelGaps.size());
+
+    for (const auto& gap : facts.modelGaps)
+        CHECK_FALSE (gap.reportItem.empty());
+
+    // And the report's items are *exactly* those 135 parameters — the model's own leaf path for each,
+    // which is what holds this file's class-to-module mapping and the loader's to each other. A mapping
+    // that drifted on either side would name something no row of the corpus addresses, or fail to name
+    // something one does.
+    std::set<std::string> expectedDestinationItems;
+
+    for (const auto& gap : facts.modelGaps)
+        expectedDestinationItems.insert (schemaPrefix (gap.destinationClass) + gap.destinationName);
+
+    for (const auto& item : facts.destinationReportItems)
+        UNSCOPED_INFO ("  destination parameter named by the report: " << item);
+
+    CHECK (facts.destinationReportItems == expectedDestinationItems);
+
+    for (const auto& report : facts.rowReports)
+        if (! report.item.starts_with ("ModSlot{N}/"))
+            CHECK (report.severity == Severity::Medium);
+}
+
+TEST_CASE ("every field of every modulation row reaches the engine or the report",
+           "[modulation-coverage]")
+{
+    const auto& facts = requireCorpus();
+
+    // Ticket 39's fourth acceptance, and the form of test `loadPreset` was missing: **every field of
+    // every modulation row either resolves to something the engine acts on, or appears in the report**.
+    //
+    // Both halves are computed independently — the fields from the 626 `PresetDocument`s with this
+    // file's own vocabulary, the report from `loadPreset` — and compared **preset by preset, as sets**.
+    // That is stricter than a count: a field that loaded in silence is a missing item in the one preset
+    // that stores it, and a complaint about a field the engine does act on is an extra item in the one
+    // preset that carries it.
+    for (const auto& mismatch : facts.rowReportMismatches)
+        UNSCOPED_INFO ("  " << mismatch);
+
+    CHECK (facts.rowReportMismatches.empty());
+    CHECK (facts.unclassifiedRowReportEntries == 0);
+
+    // The corpus's own vocabulary, counted in rows, so a field either side grows cannot pass unnoticed.
+    UNSCOPED_INFO ("row fields the engine acts on:");
+    for (const auto& [field, count] : facts.appliedFieldRows)
+        UNSCOPED_INFO ("  " << field << ": " << count << " rows");
+
+    UNSCOPED_INFO ("row fields the engine does not act on:");
+    for (const auto& [field, count] : facts.rowFieldRows)
+        UNSCOPED_INFO ("  " << field << ": " << count << " rows");
+
+    UNSCOPED_INFO ("import-report entries about modulation rows: " << facts.rowReports.size());
+
+    // Ten fields the engine reads, eleven it does not. The eleven are the finding: the ticket named
+    // three (`flex`, `kParamOut`, `kParamAuxInverted`) because ticket 27 measured those; the general
+    // rule found the smoothing, the delay, both curve-data blobs and the aux curve beside them.
+    CHECK (facts.appliedFieldRows.size() == 10);
+    CHECK (facts.rowFieldRows.size() == 11);
+
+    CHECK (facts.appliedFieldRows.at ("source") == 13258);
+    CHECK (facts.appliedFieldRows.at ("plainParams/kParamAmount") == 13213);
+    CHECK (facts.appliedFieldRows.at ("plainParams/kParamBipolar") == 1549);
+    CHECK (facts.appliedFieldRows.at ("plainParams/kParamBypass") == 24);
+    CHECK (facts.appliedFieldRows.at ("plainParams/kParamCurveIn") == 277);
+    CHECK (facts.appliedFieldRows.at ("plainParams/kParamCurveOut") == 51);
+
+    CHECK (facts.rowFieldRows.at ("flex") == 453);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamMainCurveData") == 423);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamOut") == 156);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamAuxCurveData") == 95);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamAuxInverted") == 52);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamSmoothRise") == 43);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamSmoothFall") == 42);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamSmoothLink") == 16);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamDelayBeatSync") == 7);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamDelayOffset") == 7);
+    CHECK (facts.rowFieldRows.at ("plainParams/kParamAuxCurve") == 3);
+
+    // The six rows in `SY - Tetris` that lost their destination: reported, and reported once, because
+    // the complaint is about the row rather than about a parameter.
+    CHECK (facts.destinationMissingEntries == 1);
+
+    UNSCOPED_INFO ("entries naming a destination parameter the model cannot describe: "
+                   << facts.destinationReportEntries << " over " << facts.destinationReportItems.size()
+                   << " distinct parameters");
+
+    // `source` is the reference's two-element pair in every one of 13,258 rows, so the third-element
+    // complaint is not raised anywhere — and would be if a preset ever stored one.
+    CHECK (facts.rowsWithSourceBeyondTwo == 0);
+    CHECK (facts.sourceBeyondTwoEntries == 0);
 }
 
 TEST_CASE ("the discrete/continuous claim agrees with the parameter model", "[modulation-coverage]")
