@@ -46,3 +46,6 @@ add_subdirectory(tests)
 
 # The host harness (ticket 08). Layout is provisional until ticket 13 settles the architecture.
 add_subdirectory(host)
+
+# Offline authoring tools (ticket 34). After `src`, because they link xerum_dsp.
+add_subdirectory(tools)

@@ -220,6 +220,14 @@ TEST_CASE ("every container the reference ships reads and decodes", "[container]
             || std::memcmp (raw.data(), kContainerMagic, kContainerMagicSize - 1) != 0)
             continue;   // not a container: the tree also holds .wav tables, .flac samples, .pdf, .png
 
+        // **Shipped** containers only. `Presets/User/` is the user's own space — and it is where a test
+        // that drives the reference leaves its load slot, since the plugin reads
+        // `Presets/User/Default.SerumPreset` at instantiation. Counting it makes this test's result
+        // depend on the machine rather than on the corpus: a leaked probe preset from a crashed run moved
+        // the count from 1253 to 1254.
+        if (entry.path().string().find ("/Presets/User/") != std::string::npos)
+            continue;
+
         ++containers;
         if (entry.path().extension() == ".SerumPreset")
             ++presets;

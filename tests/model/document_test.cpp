@@ -306,8 +306,13 @@ TEST_CASE ("every factory preset produces a document and a report", "[document][
     // The acceptance criterion that needs the whole bank rather than one file: a report for *every*
     // preset, including the ones with nothing to report. It also answers a question the map has been
     // carrying since the cut: how much of the factory bank actually imports without material loss.
+    // `Presets/Factory`, not `Presets`: the test's claim is about the **factory** bank, and `User/` is
+    // where the user's own presets live — including whatever a test may have left there. A walk that
+    // spans all of `Presets` counts them too, so the suite's result would depend on facts about the
+    // machine rather than about the corpus (this is not hypothetical: a leaked probe preset from a
+    // crashed run made this assertion read 627 instead of 626).
     const std::filesystem::path root =
-        "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets";
+        "/Library/Audio/Presets/Xfer Records/Serum 2 Presets/Presets/Factory";
 
     if (! std::filesystem::exists (root))
         SKIP ("the reference's content tree is not installed here (docs/test-strategy.md)");
@@ -391,9 +396,10 @@ TEST_CASE ("every factory preset produces a document and a report", "[document][
             }
         }
 
-        // ...and from the storing side: everything the document holds must resolve to a descriptor. This
-        // is the acceptance sentence read literally, and it is the stronger of the two, because it checks
-        // the values the importer actually keeps rather than only what it complained about.
+        // ...and from the storing side: everything the document holds must resolve to a descriptor. A
+        // parameter outside the schema is *retained* as an opaque value (so a write cannot lose it) and
+        // reported, so it would appear in both counts; the factory bank has none, which is what this
+        // asserts. Read as: "no preset in the corpus carries a parameter our schema does not know".
         for (const auto& [path, value] : result.document.parameters)
         {
             ++parametersHeld;

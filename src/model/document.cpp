@@ -98,16 +98,19 @@ const SupportCatalogue& SupportCatalogue::v1()
 
         c.effects = { "FXEQ", "FXComp", "FXReverb", "FXDelay", "FXDistortion", "FXFilter",
                       "FXConv", "FXUtils", "FXChorus", "FXHyperD", "FXBode", "FXPhaser",
-                      "FXFlanger", "FXSplit", "FXSplit3", "FXSplitMS" };
+                      "FXFlanger", "FXSplit" };
 
-        // Empty, and that is a correction rather than an oversight. Ticket 12 cut "the 14 of 16 classes
-        // that cover 99%" from a list whose names were **guessed** — `FXConvolve`, `FXHyper`,
-        // `FXUtility` do not exist, and the finding that three classes went unused in the factory bank
-        // was an artefact of searching for names that were never real. The corpus says otherwise: all
-        // **sixteen** real classes appear, the rarest being `FXSplitMS` at 15 uses and `FXSplit3` at 19.
-        // Re-deriving the effect cut from real usage is ticket 12's follow-up; until then nothing is
-        // deferred, because deferring something in use would be a silent drop.
-        c.deferredEffects = {};
+        // Ticket 29's cut, re-derived from measured usage: `.scratch/xerum/tools/corpus-usage.py`
+        // over the 626 factory presets counts 4168 effect occurrences in 16 distinct classes, and
+        // **99% of those occurrences is reached at exactly 14 classes**. The two outside that
+        // threshold are these; `FXSplitMS` (15 uses) and `FXSplit3` (19) are the rarest of all.
+        //
+        // An earlier version of this list was built on names that do not exist — `FXConvolve`,
+        // `FXHyper` and `FXUtility` are not real, so the "three classes unused in the factory bank"
+        // it reported was an artefact of looking for those names. Every one of the sixteen real
+        // classes appears in the corpus. `tests/model/fx_topology_test.cpp` holds this list and the
+        // engine's own `dsp::fxClassIsShipped` to each other over the whole corpus.
+        c.deferredEffects = { "FXSplit3", "FXSplitMS" };
 
         return c;
     }();
@@ -184,7 +187,15 @@ struct Walker
     void walkValue (const std::string& path, const Value& value, int depth)
     {
         if (depth > 24)
+        {
+            // Reported, not just refused. This was the last place in the loader that dropped something
+            // without saying so — and the contract's rule is that the set of silent drops is empty, not
+            // that it is small. Dormant for the factory bank (its deepest path is 8 levels), live for a
+            // third-party preset that nests further.
+            note (Severity::Medium, path.substr (0, path.find ('/')), path,
+                  "nested deeper than 24 levels — we did not interpret this subtree");
             return;
+        }
 
         if (value.isMap())
         {
@@ -217,6 +228,16 @@ struct Walker
         if (value.isText() && looksLikeAssetReference (leafKey))
             document.assetReferences.push_back (value.text);
 
+        // `interpolateAfterLoad == 2` asks the engine to morph an embedded table **in the frequency
+        // domain** after load. Xerum crossfades, so the preset's sound is materially wrong — and the
+        // value is an ordinary schema leaf, so it loads quietly and nothing acts on it. That is the
+        // silent behavioural drop the contract forbids, and this is the only place the real spectral
+        // morph is ever asked for: ticket `37` measured that the `clm` modes 2/3/4, which the guide calls
+        // spectral morphing, are a plain linear crossfade. One factory preset sets this value.
+        if (leafKey == "interpolateAfterLoad" && value.type == Value::Type::Int && value.integer == 2)
+            note (Severity::High, path, "interpolateAfterLoad=2",
+                  "the preset asks for spectral morphing after load; xerum crossfades the table instead");
+
         const auto normalised = schema.normalise (path);
 
         if (const auto* leaf = schema.describe (normalised); leaf == nullptr)
@@ -224,6 +245,12 @@ struct Walker
             const auto module = normalised.substr (0, normalised.find ('/'));
             note (Severity::Medium, module, normalised,
                   "parameter is not in the schema — we did not interpret it");
+
+            // **Reported and retained.** Reporting alone satisfies "nothing is silently dropped" for a
+            // *load*, but not for a *write*: dropping it from the document means writing the preset back
+            // omits a field the reference put there, which is losing data we were shown. A newer
+            // reference's parameters round-trip as opaque values; we still say we did not interpret them.
+            document.parameters.emplace (path, value);
             return;
         }
 

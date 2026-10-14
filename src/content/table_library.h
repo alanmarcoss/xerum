@@ -43,11 +43,6 @@ struct TableLookup
     std::filesystem::path path;     ///< what it resolved to, when it did
     xerum::dsp::Wavetable table;
 
-    /// True when the table asks for a frame interpolation the engine cannot do yet. The oscillator falls
-    /// back to a linear crossfade, which is a **substitution**, and the import contract says substitutions
-    /// are reported rather than made quietly. 74 of the 288 factory tables are in this position.
-    bool needsUnimplementedInterpolation { false };
-
     bool found() const { return resolution == Resolution::Exact || resolution == Resolution::CaseInsensitive; }
 };
 

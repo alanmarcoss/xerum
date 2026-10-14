@@ -25,6 +25,12 @@ The set of things that must never end up in the distribution is therefore short 
 The reference's *formula system* is an interface and may be reimplemented for interoperability. The
 factory **formula list** it ships is content, and is not reproduced.
 
+Every shipped table lives at `content/Tables/xerum/<name>.wav` — in xerum's **own** root, resolved by
+the import contract's search order, never written into the reference's tree. The fallback is
+`xerum/Fallback Shapes.wav`, and a reference the library cannot resolve is still **reported** as missing
+rather than substituted quietly (ticket `24`): substituting the fallback is the caller's decision, and
+it is visible when made.
+
 **The formula evaluator is an offline authoring tool, not a plugin feature.** It runs when content is
 built, not when audio plays — which keeps a subsystem out of the plugin, and makes a bad formula a
 build failure rather than a session failure.
@@ -77,3 +83,22 @@ Policy prose is not a check. The release path carries one:
    because it needs the reference.
 3. Content is added **through the authoring tool**, so what ships is what the tool generated rather
    than whatever was in a working directory.
+
+### Where the enforcement lives (ticket `34`)
+
+| Piece | Path |
+|---|---|
+| The formulas, and the catalogue they generate | `src/dsp/wavetable_write.cpp` (`starterLibrary()`) |
+| The authoring tool | `tools/wavetable-author.cpp` (`build/tools/xerum-wavetable-author`) |
+| The shipped tables | `content/Tables/xerum/` |
+| The provenance manifest | `content/manifest.json` — per file: path, origin, licence, formula, frame count, interpolation, sha256 |
+| The release check | `tools/check-content-provenance.py`, wired as the CTest test `content-provenance` |
+
+    build/tools/xerum-wavetable-author --out content --write --manifest content/manifest.json
+    build/tools/xerum-wavetable-author --verify    # the shipped bytes are what the formulas generate
+    ctest --test-dir build -R content-provenance   # the release gate
+
+The gate fails on a shipped file with no manifest entry, on an entry with no origin or licence, on a
+manifest hash that no longer matches the file, and — where the reference is installed — on any shipped
+file that is byte-identical to one of the reference's. With no reference installed that last check
+**skips loudly** instead of passing silently.

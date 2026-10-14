@@ -5,3 +5,11 @@ external/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Per-slice build directories: concurrent work must never share one.
+build*/
+
+# Generated from the reference instrument's init state (ticket 38), so it is derived data and never ships.
+# The generator and its manifest are committed; this output is not, and the model compiles without it,
+# falling back to `Unestablished` — which is what keeps CI meaningful on a machine with no reference.
+src/model/generated/defaults_data.h

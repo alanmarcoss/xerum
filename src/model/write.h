@@ -10,10 +10,18 @@
 //    preset notes. The `hash` is recomputed because it identifies the payload, and the payload changed.
 //  * **Deterministic output.** The same document always produces the same bytes.
 //
-// Known gap, recorded rather than hidden: a document stores *parameters*, so an engine selection that
-// carries no parameter overrides is not reconstructed. A preset whose slot selects an engine and sets
-// nothing on it will re-read as though it selected the default. Closing that needs the engine selection
-// to live in the document, which is a change to `PresetDocument` rather than to this writer.
+// **A known gap was recorded here and is now withdrawn.** The note claimed that "a document stores
+// *parameters*, so an engine selection that carries no parameter overrides is not reconstructed". That
+// was written on the assumption that selection lives in the file's structure. It does not: as ticket 36
+// measured, `Oscillator{N}/plainParams/kParamType` **is a schema leaf**, absence of it means the
+// wavetable default (which ADR 0001 already represents), and every preset that selects a non-default
+// engine stores it. Of 3130 oscillator slots in the factory bank, 475 select a non-default engine; the
+// case the note worried about — selected, nothing overridden — occurs and round-trips, verified across
+// 262 presets in `tests/model/engine_selection_test.cpp`.
+//
+// The 434 slots that *look* like the gap — a non-wavetable engine carrying an override map — are slots 3
+// and 4, the fixed NOISE and SUB slots that are not selectable at all, plus stale overrides from an
+// engine the user tried and left. "Which sub-engine has parameters" is not a signal about selection.
 
 #pragma once
 

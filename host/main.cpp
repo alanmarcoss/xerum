@@ -18,6 +18,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include <iostream>
+#include <map>
 
 namespace
 {
@@ -42,6 +43,7 @@ struct Args
     int preRoll = 0;        // ticket 20: silent blocks to process before the note
     int settleMs = 0;       // ticket 20: wall-clock ms to wait after instantiation/state load
     juce::String className; // pick a specific VST3 class instead of the first
+    juce::String dumpParams; // ticket 38: write the parameter surface's current values as TSV, then exit
 };
 
 void printUsage()
@@ -67,7 +69,11 @@ void printUsage()
         "  --state-hex            print a hexdump of the state to stdout as well\n"
         "  --pre-roll <blocks>    process this many silent blocks before the note\n"
         "  --class <name>         VST3 class to instantiate (default: the first one)\n"
-        "  --settle-ms <n>        wait n milliseconds before rendering (preset assets load async)\n";
+        "  --settle-ms <n>        wait n milliseconds before rendering (preset assets load async)\n"
+        "\n"
+        "ticket 38, init-state dump:\n"
+        "  --dump-params <file>   write every parameter's current value as TSV, then exit\n"
+        "                         columns: index, paramID, group, name, normalised, text, steps, discrete\n";
 }
 
 bool parseArgs (Args& a, const juce::StringArray& argv)
@@ -94,6 +100,7 @@ bool parseArgs (Args& a, const juce::StringArray& argv)
         else if (arg == "--pre-roll")     a.preRoll = next().getIntValue();
         else if (arg == "--settle-ms")    a.settleMs = next().getIntValue();
         else if (arg == "--class")        a.className = next();
+        else if (arg == "--dump-params")  a.dumpParams = next();
         else if (arg == "--help" || arg == "-h") { a.help = true; printUsage(); return true; }
         else
         {
@@ -121,6 +128,38 @@ juce::File resolveFile (const juce::String& path)
 juce::String parameterName (const juce::AudioProcessorParameter& p)
 {
     return p.getName (256);
+}
+
+// Ticket 38. The parameter's own ID where it has one: this is the host-facing identity that does
+// not change with the display name, so an init-state dump keyed on it survives a rename.
+//
+// The virtual lives on HostedAudioProcessorParameter, not AudioProcessorParameterWithID — that
+// distinction cost one build: dynamic_cast-ing to the latter returned an empty string for all
+// 2623 parameters. On the VST3 path the ID is the numeric Vst::ParamID as text.
+juce::String parameterID (const juce::AudioProcessorParameter& p)
+{
+    if (auto* hosted = dynamic_cast<const juce::HostedAudioProcessorParameter*> (&p))
+        return hosted->getParameterID();
+
+    return {};
+}
+
+// Ticket 38. VST3 units arrive as a parameter tree; the group path is the plugin's own grouping of
+// its surface ("Osc A", "Filter 1"), which is what makes a crosswalk to the preset model possible
+// rather than guessed.
+void collectGroups (const juce::AudioProcessorParameterGroup& group,
+                    const juce::String& prefix,
+                    std::map<const juce::AudioProcessorParameter*, juce::String>& out)
+{
+    const auto path = prefix.isEmpty() ? group.getName() : prefix + " / " + group.getName();
+
+    for (auto* child : group.getSubgroups (false))
+        if (child != nullptr)
+            collectGroups (*child, path, out);
+
+    for (auto* p : group.getParameters (false))
+        if (p != nullptr)
+            out[p] = path;
 }
 
 } // namespace
@@ -337,6 +376,60 @@ int main (int argc, char* argv[])
         }
     }
 
+    if (! args.dumpParams.isEmpty())
+    {
+        // Ticket 38. The reference's init state, in one run: every parameter's value as the plugin
+        // exposes it, with its ID, its group path and its display text. Parameter *changes* are
+        // queued as VST3 parameter changes and only delivered during processBlock (the same reason
+        // --dump-state pushes silent blocks), so settle the wrapper before reading.
+        if (args.settleMs > 0)
+            juce::Thread::sleep (args.settleMs);
+
+        {
+            juce::AudioBuffer<float> silence (juce::jmax (1, juce::jmin (2, instance->getTotalNumOutputChannels())), args.blockSize);
+            juce::MidiBuffer none;
+
+            for (int i = 0; i < juce::jmax (4, args.preRoll); ++i)
+            {
+                silence.clear();
+                instance->processBlock (silence, none);
+            }
+        }
+
+        std::map<const juce::AudioProcessorParameter*, juce::String> groups;
+        collectGroups (instance->getParameterTree(), {}, groups);
+
+        juce::StringArray lines;
+        const auto& params = instance->getParameters();
+
+        for (int i = 0; i < params.size(); ++i)
+        {
+            auto* p = params[i];
+
+            if (p == nullptr)
+                continue;
+
+            const auto it = groups.find (p);
+            const auto group = it != groups.end() ? it->second : juce::String();
+
+            lines.add (juce::String (i) + "\t"
+                       + parameterID (*p) + "\t"
+                       + group + "\t"
+                       + parameterName (*p).replace ("\t", " ") + "\t"
+                       + juce::String (p->getValue(), 9) + "\t"
+                       + p->getText (p->getValue(), 128).replace ("\t", " ") + "\t"
+                       + juce::String (p->getNumSteps()) + "\t"
+                       + (p->isDiscrete() ? "1" : "0"));
+        }
+
+        auto out = juce::File::createFileWithoutCheckingPath (args.dumpParams);
+        out.replaceWithText (lines.joinIntoString ("\n") + "\n", false, false, "\n");
+
+        std::cout << "\nparameter dump: " << params.size() << " parameters -> "
+                  << out.getFullPathName() << "\n";
+        return 0;
+    }
+
     if (args.listParams || args.listPrograms)
         return 0;
 
@@ -346,7 +439,7 @@ int main (int argc, char* argv[])
         if (! args.dumpState.isEmpty() || args.stateHex)
             return 0;
 
-        std::cerr << "--out is required to render (or use --list-params/--list-programs/--dump-state)\n";
+        std::cerr << "--out is required to render (or use --list-params/--list-programs/--dump-state/--dump-params)\n";
         return 2;
     }
 

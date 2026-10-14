@@ -177,8 +177,6 @@ TableLookup TableLibrary::loadTable (std::string_view reference) const
                     {
                         lookup.resolution = exactSpelling ? Resolution::Exact : Resolution::CaseInsensitive;
                         lookup.table = parsed.table;
-                        lookup.needsUnimplementedInterpolation =
-                            parsed.table.interpolation == xerum::dsp::FrameInterpolation::SpectralMorph;
                     }
                     else
                     {

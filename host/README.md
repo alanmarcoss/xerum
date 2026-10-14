@@ -96,11 +96,39 @@ and requires the two files to be byte-identical.
 A state dump taken before any `processBlock` does not contain parameters set through `--set`, because
 the VST3 wrapper delivers parameter changes during `processBlock`. Dumping pushes silent blocks first.
 
+## The parameter surfaces, and the init-state dump
+
+```sh
+"$BIN" --plugin "$PLUGIN" --dump-params /tmp/init.tsv
+"$BIN" --plugin "$PLUGIN" --dump-params /tmp/loaded.tsv --settle-ms 1500 --pre-roll 8
+```
+
+`--dump-params <file>` writes one row per parameter — index, ID, unit group, name, normalised value,
+the plugin's own display text, step count, discrete flag — then exits. It pushes the same silent blocks
+`--dump-state` does first, because a preset's parameters arrive through the wrapper and a dump taken
+before any `processBlock` can read stale values.
+
+What one run of it established, from Serum 2 **2.1.5** (the `03a46bff…` build ticket `10` recorded):
+
+| Observation | Value |
+|---|---|
+| Parameters | **2623** — 2048 per-channel MIDI CC slots, 32 per-channel pitch-bend/aftertouch, 1 program `Bank`, **543** genuine automatable parameters |
+| Parameter IDs | the parameter's **ordinal** as text (`0`…`2622`), not a stable name: the VST3 `ParamID` and the index coincide, so an ID survives nothing but a reordering |
+| Unit groups | 33 of them from `getParameterTree()` — `OSC A`, `Env 1`, `Filter 1`, `Mod Matrix`, `FX (Bus 1)`, … — but the 25 global parameters sit at the root with no group |
+| Init patch | the **built-in default**: `Default.SerumPreset` does not ship, so the plugin comes up on its own init state, and that state *is* the reference's defaults. Capture with that slot **empty** — if an install has one there (the ticket `20` probe leaves one), instantiation loads *that patch*, and the capture quietly becomes its author's defaults: measured, 91 parameter values differ |
+| Content tree writes | **none.** Instantiation, `--dump-params` and `--set` leave `<contentRoot>/Presets/User/` untouched; the one `Default.SerumPreset` found there was installed by the ticket `20` probe, not by the harness |
+
+The dump is raw material, not a table: turning it into defaults for xerum's parameter model needs the
+crosswalk in `tools/reference-init-defaults.py` (ticket `38`). Both columns are captured deliberately —
+the normalised value is what the plugin automates, the display text is the reference's own rendering of
+the engineering value, and for some parameters they are in different units.
+
 ## Limits, deliberate
 
 - **It does not apply a `.SerumPreset` file.** Doing so needs the unit ranges and discrete-enum orders
   that only ticket `14` can specify; guessing them here would bake an assumption into the one tool
-  every other measurement depends on. Use `--list-params` to discover the real surface instead.
+  every other measurement depends on. Use `--list-params` to discover the real surface instead, and
+  `tools/render-preset.sh` (ticket `20`'s content-root route) to load one.
 - **No GUI, and no plan for one.** Headless is the point.
 - **One note, no MIDI file input.** Enough to capture a reference render; extend when a ticket needs it.
 - **The instrument path sends note on/off only.** No expression, no aftertouch, and effects get a

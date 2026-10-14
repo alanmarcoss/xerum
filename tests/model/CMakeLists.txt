@@ -7,7 +7,13 @@ add_executable(xerum-model-tests
     document_test.cpp
     write_test.cpp
     warp_coverage_test.cpp
-    filter_coverage_test.cpp)
+    filter_coverage_test.cpp
+    fx_topology_test.cpp
+    reference_roundtrip_test.cpp
+    modulation_coverage_test.cpp
+    defaults_test.cpp
+    engine_selection_test.cpp
+    structural_fidelity_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model
@@ -22,7 +28,11 @@ target_link_libraries(xerum-model-tests PRIVATE
 # two codecs. Committing those is what makes this suite run on a machine with no reference installed
 # (see docs/test-strategy.md).
 target_compile_definitions(xerum-model-tests PRIVATE
-    XERUM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+    XERUM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    # The build tree this binary was built in. The round-trip test needs it to find the *harness it was
+    # built alongside* rather than whichever one happens to sit at the shortest path — see
+    # `findHostBinary` in reference_roundtrip_test.cpp for why that distinction is load-bearing.
+    XERUM_BUILD_DIR="${CMAKE_BINARY_DIR}")
 
 include(Catch)
 catch_discover_tests(xerum-model-tests)

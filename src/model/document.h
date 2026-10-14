@@ -60,10 +60,10 @@ struct ImportReport
 
 /// What v1 can actually reproduce. Everything outside this catalogue is reported rather than substituted.
 ///
-/// Provisional in two places, and marked so: the **filter models** are ticket 12's families and ticket
-/// `26` will replace this with the real model table, and the **effect set** excludes the three classes
-/// that appear in none of the 626 factory presets (`FXConvolve`, `FXHyper`, `FXUtility`) — a decision
-/// taken from usage rather than from principle.
+/// The **effect set** is ticket 29's cut, measured: 14 of the corpus's 16 real classes cover 99% of
+/// effect occurrences, and the two rarest (`FXSplit3`, `FXSplitMS`) are deferred by name. The
+/// **filter models** are ticket 12's families, which ticket `26` has since replaced with the exact
+/// name table ticket `26` implements.
 struct SupportCatalogue
 {
     std::vector<std::string> schemaVersions;      ///< accepted schema versions
@@ -81,7 +81,13 @@ struct PresetDocument
 {
     std::string name;
     std::string schemaVersion;                       ///< normalised, e.g. "4.0"
-    std::map<std::string, Value> parameters;         ///< schema path -> value
+    /// Concrete path -> value.
+    ///
+    /// **May contain paths the schema does not describe.** A parameter we could not interpret is kept
+    /// as an opaque value so that writing the preset back reproduces what the reference put there; the
+    /// report still names it. Losing it would make a load faithful and a write lossy, which the contract
+    /// does not allow.
+    std::map<std::string, Value> parameters;
     std::vector<std::string> assetReferences;        ///< paths the preset refers to, unresolved here
 
     std::size_t parameterCount() const { return parameters.size(); }

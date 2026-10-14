@@ -107,19 +107,23 @@ TEST_CASE ("roots are searched in order and only real ones are kept", "[content]
     CHECK (lib.loadTable ("Basic Shapes.wav").found());
 }
 
-TEST_CASE ("a table needing unimplemented interpolation is flagged, not silently downgraded", "[content]")
+TEST_CASE ("a table declaring spectral morphing loads like any other", "[content]")
 {
-    // 74 of the 288 factory tables ask for spectral morphing, which the oscillator cannot do yet. A
-    // loader that returns them as ordinary hits lets the engine crossfade instead and never mention it.
+    // This case used to be an exception: 74 of the 288 factory tables carry `clm ` mode 2, 3 or 4, the
+    // loader flagged them, and the oscillator crossfaded a flagged table underneath the flag. Ticket 37
+    // measured the reference and found modes 1..4 all render as a plain linear crossfade (mode 0 alone
+    // is discrete), so there is nothing left to flag — the mode is recorded on the table, the table
+    // loads, and the crossfade is the faithful reading of it. See tickets/37 and src/dsp/spectral_morph.h.
     const auto lib = library();
 
     const auto linear = lib.loadTable ("Basic Shapes.wav");
     REQUIRE (linear.found());
-    CHECK_FALSE (linear.needsUnimplementedInterpolation);
+    CHECK (linear.table.interpolation == xerum::dsp::FrameInterpolation::Linear);
 
     const auto spectral = lib.loadTable ("Requires Spectral.wav");
     REQUIRE (spectral.found());
-    CHECK (spectral.needsUnimplementedInterpolation);
+    CHECK (spectral.table.interpolation == xerum::dsp::FrameInterpolation::SpectralMorph);
+    CHECK (spectral.table.frameCount > 1);
 }
 
 TEST_CASE ("a factory table resolves by the reference a preset uses", "[content][corpus]")
