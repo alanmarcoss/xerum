@@ -11,26 +11,22 @@ namespace xerum::plugin::ui
 
 namespace
 {
-constexpr int kPad = 8;
-constexpr int kLegendHeight = 16;    // names the four fields once, at the top of the drawer
-constexpr int kRowFirstLine = 16;    // the chip and path line
+constexpr int kPad = 12;
+constexpr int kLegendHeight = 18;    // names the four fields once, at the top of the drawer
+constexpr int kRowFirstLine = 17;    // the chip and path line
 constexpr int kRowLineHeight = 13;   // each wrapped line of the item and the reason
 constexpr int kRowGap = 7;
-constexpr int kChipWidth = 52;
-
-juce::Font monoFont (const float size)
-{
-    return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), size, juce::Font::plain));
-}
+constexpr int kChipWidth = 56;
+constexpr int kBarHeight = 22;       // the design system's import bar
 } // namespace
 
 //==============================================================================
 ReportBar::ReportBar()
 {
     toggle_.setButtonText ("Details");
-    toggle_.setColour (juce::TextButton::buttonColourId, look::track);
-    toggle_.setColour (juce::TextButton::textColourOffId, look::dimText);
-    toggle_.setColour (juce::TextButton::textColourOnId, look::text);
+    toggle_.setColour (juce::TextButton::buttonColourId, look::bg);
+    toggle_.setColour (juce::TextButton::textColourOffId, look::fgDim);
+    toggle_.setColour (juce::TextButton::textColourOnId, look::fg);
     toggle_.onClick = [this]
     {
         if (onToggleRequested)
@@ -66,40 +62,39 @@ void ReportBar::toggle()
 
 void ReportBar::resized()
 {
-    auto area = getLocalBounds().reduced (kPad, 4);
-    toggle_.setBounds (area.removeFromRight (juce::jmin (108, juce::jmax (72, area.getWidth() / 4))));
+    auto area = getLocalBounds().reduced (kPad, 2);
+    toggle_.setBounds (area.removeFromRight (juce::jmin (96, juce::jmax (68, area.getWidth() / 5))));
 }
 
 void ReportBar::paint (juce::Graphics& graphics)
 {
     auto area = getLocalBounds();
 
-    graphics.setColour (look::barFill);
-    graphics.fillRoundedRectangle (area.toFloat(), 5.0f);
-    graphics.setColour (look::panelBorder);
-    graphics.drawRoundedRectangle (area.toFloat().reduced (0.5f), 5.0f, 1.0f);
+    graphics.setColour (look::surface);
+    graphics.fillRect (area);
+    graphics.setColour (look::border);
+    graphics.fillRect (area.removeFromTop (1));
 
-    auto line = area.reduced (kPad, 0);
+    auto line = getLocalBounds().withSizeKeepingCentre (getWidth(), kBarHeight).reduced (kPad, 0);
 
     // The state dot. Four states, four colours: a load failure, each severity, and *clean* — because a
     // clean import is a state and must not be drawn like "no data".
-    auto dot = line.removeFromLeft (10).withSizeKeepingCentre (8, 8).toFloat();
-    graphics.setColour (failed_ ? look::severityHigh
-                                : (clean_ ? look::ok : look::severityColour (worst_)));
+    const auto dot = juce::Rectangle<float> (5.0f, 5.0f)
+                         .withCentre (line.removeFromLeft (10).withSizeKeepingCentre (10, 10).toFloat().getCentre());
+    graphics.setColour (failed_ ? look::red : (clean_ ? look::green : look::severityColour (worst_)));
     graphics.fillEllipse (dot);
 
-    line.removeFromLeft (6);
+    line.removeFromLeft (8);
 
-    const auto toggleWidth = toggle_.getWidth() + kPad;
-    auto presetArea = line.removeFromRight (juce::jmin (juce::jmax (toggleWidth, line.getWidth() / 3),
-                                                       toggleWidth + 220));
+    const auto toggleWidth = toggle_.getWidth() + 4;
+    auto presetArea = line.removeFromRight (juce::jmin (toggleWidth + 220, line.getWidth() / 2));
 
-    graphics.setColour (look::text);
-    graphics.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+    graphics.setColour (look::fgDim);
+    graphics.setFont (look::monoFont (look::type::data));
     graphics.drawText (summary_, line, juce::Justification::centredLeft, true);
 
-    graphics.setColour (look::dimText);
-    graphics.setFont (monoFont (10.5f));
+    graphics.setColour (look::fgMuted);
+    graphics.setFont (look::monoFont (look::type::data));
     graphics.drawText (preset_.isEmpty() ? juce::String ("preset: init") : "preset: " + preset_,
                        presetArea.reduced (kPad, 0), juce::Justification::centredRight, true);
 }
@@ -189,19 +184,18 @@ void ImportReportView::relayout()
 {
     // Re-wrap at the current width. Both `setReport` and `resized` land here, so what is painted is
     // always wrapped for the width it is painted at.
-    const juce::FontOptions textFont { 11.5f };
     const auto textWidth = juce::jmax (80.0f, static_cast<float> (getWidth()) - kPad * 2.0f - 12.0f);
 
     for (auto& row : rows_)
     {
-        row.itemLines = wrap (row.item, textFont, textWidth);
-        row.reasonLines = wrap (row.reason, textFont, textWidth);
+        row.itemLines = wrap (row.item, look::bodyFont (11.5f), textWidth);
+        row.reasonLines = wrap (row.reason, look::bodyFont (11.5f), textWidth);
         row.height = kRowFirstLine + (row.itemLines.size() + row.reasonLines.size()) * kRowLineHeight;
     }
 
     rootsWrapped_ = roots_.isEmpty()
                         ? juce::StringArray()
-                        : wrap (roots_, juce::FontOptions (11.0f),
+                        : wrap (roots_, look::monoFont (look::type::readoutSm),
                                 juce::jmax (80.0f, static_cast<float> (getWidth()) - kPad * 2.0f));
 }
 
@@ -245,22 +239,24 @@ void ImportReportView::paint (juce::Graphics& graphics)
 
     // The four things a row carries, named once. The rows themselves are the loader's own strings, so the
     // legend is the only hand-written text in the drawer and it says what the reader is looking at.
-    graphics.setColour (look::dimText);
-    graphics.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    graphics.setColour (look::fgMuted);
+    graphics.setFont (look::monoFont (look::type::tableHead, true));
     graphics.drawText ("SEVERITY  ·  MODULE PATH  ·  ITEM  ·  REASON", area.removeFromTop (kLegendHeight),
                        juce::Justification::centredLeft, true);
 
     if (lastError_.isNotEmpty())
     {
-        graphics.setColour (look::severityHigh);
-        graphics.setFont (juce::FontOptions (12.0f));
+        graphics.setColour (look::red);
+        graphics.setFont (look::bodyFont (12.0f));
         graphics.drawText ("Load failed — " + lastError_, area.removeFromTop (kRowFirstLine),
                            juce::Justification::centredLeft, true);
     }
     else if (rows_.empty())
     {
-        graphics.setColour (look::ok);
-        graphics.setFont (juce::FontOptions (12.0f));
+        // The clean state, in the same green the bar's dot uses: an empty report is a state, and the words
+        // are the contract's.
+        graphics.setColour (look::green);
+        graphics.setFont (look::bodyFont (12.0f));
         graphics.drawText ("Nothing to report: every module, parameter and asset this preset asks for is one "
                            "xerum implements.",
                            area.removeFromTop (kRowFirstLine), juce::Justification::centredLeft, true);
@@ -274,29 +270,29 @@ void ImportReportView::paint (juce::Graphics& graphics)
         auto chip = firstLine.removeFromLeft (kChipWidth).reduced (0, 2);
         graphics.setColour (look::severityColour (row.severity));
         graphics.fillRoundedRectangle (chip.toFloat(), 3.0f);
-        graphics.setColour (look::background);
-        graphics.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        graphics.setColour (look::bg);
+        graphics.setFont (look::monoFont (look::type::tag, true));
         graphics.drawText (look::severityName (row.severity).toUpperCase(), chip,
                            juce::Justification::centred, false);
 
         // The module path, so a user can find the thing in the reference's own tree.
-        graphics.setColour (look::text);
-        graphics.setFont (monoFont (11.5f));
+        graphics.setColour (look::fg);
+        graphics.setFont (look::monoFont (11.5f));
         graphics.drawText (row.modulePath, firstLine.reduced (6, 0), juce::Justification::centredLeft, true);
 
         // Then what the preset asked for, bright, and why it did not get it, quiet.
         for (const auto& line : row.itemLines)
         {
-            graphics.setColour (look::text);
-            graphics.setFont (juce::FontOptions (11.5f));
+            graphics.setColour (look::fg);
+            graphics.setFont (look::bodyFont (11.5f));
             graphics.drawText (line, rowArea.removeFromTop (kRowLineHeight).withTrimmedLeft (8),
                                juce::Justification::centredLeft, true);
         }
 
         for (const auto& line : row.reasonLines)
         {
-            graphics.setColour (look::dimText);
-            graphics.setFont (juce::FontOptions (11.5f));
+            graphics.setColour (look::fgDim);
+            graphics.setFont (look::bodyFont (11.5f));
             graphics.drawText (line, rowArea.removeFromTop (kRowLineHeight).withTrimmedLeft (8),
                                juce::Justification::centredLeft, true);
         }
@@ -304,8 +300,8 @@ void ImportReportView::paint (juce::Graphics& graphics)
         area.removeFromTop (kRowGap);
     }
 
-    graphics.setColour (look::dimText);
-    graphics.setFont (juce::FontOptions (11.0f));
+    graphics.setColour (look::fgMuted);
+    graphics.setFont (look::monoFont (look::type::readoutSm));
 
     for (const auto& line : rootsWrapped_)
         graphics.drawText (line, area.removeFromTop (kRowLineHeight), juce::Justification::centredLeft, true);

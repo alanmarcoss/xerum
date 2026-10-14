@@ -381,9 +381,13 @@ TEST_CASE ("a half-loading preset's report is visible in the interface", "[inter
         CHECK (row.contains (look::severityName (entry.severity).toUpperCase()));
     }
 
-    // Severity is a colour as well as a word, and the ramp is one ramp.
+    // Severity is a colour as well as a word, and the ramp is one ramp. Ticket `51`: the ramp is the design
+    // system's own three colours — `red`, `orange`, `green` — rather than the old bespoke trio, so this
+    // asserts the mapping rather than a named constant that no longer exists.
     CHECK (look::severityColour (xerum::model::Severity::High) != look::severityColour (xerum::model::Severity::Info));
-    CHECK (look::severityColour (xerum::model::Severity::High) == look::severityHigh);
+    CHECK (look::severityColour (xerum::model::Severity::High) == look::red);
+    CHECK (look::severityColour (xerum::model::Severity::Medium) == look::orange);
+    CHECK (look::severityColour (xerum::model::Severity::Info) == look::green);
 
     // The summary names the counts and the worst severity, which is the one word a user needs first.
     CHECK (view.summaryText().contains ("high"));
@@ -876,16 +880,18 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
         return found;
     };
 
-    // A device page: the window is the palette's background, the device's panel is drawn in it, and the
-    // interface's own accent and the strip's fill are on screen.
+    // A device page: the window is the palette's `bg`, the device's panel is `surface` drawn in it, the
+    // header's gradient is `surface2` and the interface's own accent is on screen. Ticket `51` renamed
+    // every one of these to the design system's role — `background`/`panelFill`/`barFill` no longer exist,
+    // and the colours are the design's own.
     editor->showDevice (0);
     const auto pageImage = editor->createComponentSnapshot (editor->getLocalBounds());
 
     REQUIRE_FALSE (pageImage.isNull());
-    CHECK (count (pageImage, ui::look::background, 8) > 1000);
-    CHECK (count (pageImage, ui::look::panelFill, 8) > 100);
-    CHECK (count (pageImage, ui::look::accent, 8) > 10);
-    CHECK (count (pageImage, ui::look::barFill, 8) > 100);   // the strip and the report bar
+    CHECK (count (pageImage, ui::look::bg, 8) > 1000);
+    CHECK (count (pageImage, ui::look::surface, 8) > 100);    // the panel, the strip and the report bar
+    CHECK (count (pageImage, ui::look::surface2, 8) > 20);    // the header gradient, the knob bodies
+    CHECK (count (pageImage, ui::look::accent, 8) > 10);      // the wordmark, the value arcs, the module tag
 
     // The matrix: the column titles' bar, 64 rows of cells drawn, and the amount column in the accent
     // colour — the one cell the view colours specially, because an amount is the row's whole point when it
@@ -896,11 +902,11 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
 
     const auto matrixImage = editor->matrixView().createComponentSnapshot (
         editor->matrixView().getLocalBounds());
-    CHECK (count (matrixImage, ui::look::barFill, 8) > 100);
-    CHECK (count (matrixImage, ui::look::panelFill, 8) > 100);
-    CHECK (count (matrixImage, ui::look::text, 48) > 20);
-    CHECK (count (matrixImage, ui::look::dimText, 48) > 200);
-    CHECK (count (matrixImage, ui::look::accent, 40) > 5);
+    CHECK (count (matrixImage, ui::look::bg, 8) > 100);        // the un-stored rows, on the window
+    CHECK (count (matrixImage, ui::look::surface, 8) > 100);   // the header bar and the stored rows
+    CHECK (count (matrixImage, ui::look::fg, 48) > 20);        // the stored rows' own cells
+    CHECK (count (matrixImage, ui::look::fgDim, 48) > 200);    // the notes and the em-dashed columns
+    CHECK (count (matrixImage, ui::look::accent, 40) > 5);     // the source column
 
     // **Twelve real columns**, measured positionally rather than by counting text: each column's title is
     // drawn inside that column's own x-range in the header, so a matrix whose columns collapsed into one
@@ -913,15 +919,16 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
             left += ModulationMatrixView::columnWidth (previous);
 
         auto title = 0;
+        const auto head = ui::look::fgMuted;   // ticket `51`: the table head is the design's muted role
 
         for (int y = 4; y < ModulationMatrixView::kHeaderHeight - 4; ++y)
             for (int x = left + 2; x < left + ModulationMatrixView::columnWidth (column) - 2; ++x)
             {
                 const auto pixel = matrixImage.getPixelAt (x, y);
 
-                if (std::abs (static_cast<int> (pixel.getRed()) - 141) <= 48
-                    && std::abs (static_cast<int> (pixel.getGreen()) - 151) <= 48
-                    && std::abs (static_cast<int> (pixel.getBlue()) - 166) <= 48)
+                if (std::abs (static_cast<int> (pixel.getRed()) - static_cast<int> (head.getRed())) <= 48
+                    && std::abs (static_cast<int> (pixel.getGreen()) - static_cast<int> (head.getGreen())) <= 48
+                    && std::abs (static_cast<int> (pixel.getBlue()) - static_cast<int> (head.getBlue())) <= 48)
                     ++title;
             }
 
@@ -929,8 +936,11 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
         CHECK (title > 5);
     }
 
-    // A filter page: the panel and the pole/zero plane, whose zero markers are drawn in the report's own
-    // info colour — so a plane that did not paint its sections shows no such pixels.
+    // A filter page: the panel and the pole/zero plane. Ticket `51` changed how the plane is drawn — a pole
+    // in `accent`, a zero in `accentDim` (the old zero colour was the report's info blue, which the design
+    // system does not have) — so the measurement is taken on the **plane's own snapshot** rather than on
+    // the page: a plane that painted no sections shows neither colour, which is what the old count of
+    // info-blue pixels was standing in for.
     auto filterDevice = -1;
 
     for (int index = 0; index < editor->deviceCount(); ++index)
@@ -941,9 +951,223 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
     editor->showDevice (filterDevice);
 
     const auto filterImage = editor->createComponentSnapshot (editor->getLocalBounds());
+    CHECK (count (filterImage, ui::look::surface, 8) > 100);   // the panel and the plane's page
     CHECK (editor->poleZeroPlane (0).sectionCount() == 16);
     CHECK (editor->poleZeroPlane (0).caption().startsWith ("16 of 32"));
-    CHECK (count (filterImage, ui::look::severityInfo, 8) > 2);
+
+    auto& plane = editor->poleZeroPlane (0);
+    const auto planeImage = plane.createComponentSnapshot (plane.getLocalBounds());
+
+    REQUIRE (plane.getWidth() > 0);
+    CHECK (count (planeImage, ui::look::accent, 8) > 4);      // the poles' crosses
+    CHECK (count (planeImage, ui::look::accentDim, 8) > 4);   // the zeros' circles
+}
+
+//==============================================================================
+TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own modulation",
+           "[interface][ui]")
+{
+    // Ticket `51`. Three claims, each measured rather than asserted about a paint routine:
+    //
+    //   1. a slider is a `ui::Knob` — still a `juce::Slider`, so the attachment binds it — at the design's
+    //      exact diameter, chosen from the plan (`knobSizeFor`);
+    //   2. the arc runs 225° to 315° (the design's 7 o'clock to 5 o'clock), read back through the same
+    //      geometry the paint routine uses, and the knob actually paints `accent` and `border` pixels;
+    //   3. the **modulation arc** is the loaded preset's: the matrix rows that address a parameter set its
+    //      depth, and a parameter no row addresses draws no second arc.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+
+    // Two rows onto filter 1's cutoff — slot 0 at -42.5 and slot 7 at +50 — so the summed depth is
+    // -0.425 + 0.5 = 0.075, and a third row with no destination (slot 9) contributes nothing.
+    processor.applyDocument (matrixDocument(), {}, 0);
+
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    // A control has a real rectangle only on its own page — one device is laid out at a time — so a
+    // measurement of geometry has to open the page the control lives on first.
+    const auto showModule = [&editor] (const juce::String& module)
+    {
+        for (int index = 0; index < editor->deviceCount(); ++index)
+            if (editor->deviceModule (index) == module)
+            {
+                editor->showDevice (index);
+                return true;
+            }
+
+        return false;
+    };
+
+    REQUIRE (showModule ("Oscillator0"));
+
+    auto* volume = editor->controlFor ("oscillator0.volume");
+    REQUIRE (volume != nullptr);
+    auto* knob = volume->knob();
+    REQUIRE (knob != nullptr);
+
+    // Still a `juce::Slider`, which is what the binding and the harness require, and now a knob.
+    CHECK (dynamic_cast<juce::Slider*> (&volume->widget()) != nullptr);
+    CHECK (knob->size() == knobSizeFor (volume->spec()));
+    CHECK (knob->size() == KnobSize::Default);
+    CHECK (knob->mode() == Knob::Mode::Dial);
+
+    // The design's diameter, on screen rather than in a constant: 44 px for a default knob, 28 for the
+    // fixed slots the design puts in its compact band.
+    CHECK (knob->getWidth() == ui::look::knobDiameter);
+    CHECK (knob->getHeight() == ui::look::knobDiameter);
+
+    auto* noiseLevel = editor->controlFor ("oscillator3.volume");
+    REQUIRE (noiseLevel != nullptr);
+    REQUIRE (noiseLevel->knob() != nullptr);
+    CHECK (noiseLevel->knob()->size() == KnobSize::Small);
+
+    REQUIRE (showModule ("Oscillator3"));
+    CHECK (noiseLevel->knob()->getWidth() == ui::look::knobSmallDiameter);
+
+    REQUIRE (showModule ("Oscillator0"));   // back to the page the knob snapshot is taken on
+
+    // The arc, through the geometry the painter uses: both ends are below the centre — 7 o'clock and 5
+    // o'clock — the start is left of the middle and the end is right of it, and the middle of the sweep is
+    // at the top (225° + 135° = 360° = 12 o'clock).
+    const auto start = knob->pointAtProportion (0.0);
+    const auto middle = knob->pointAtProportion (0.5);
+    const auto end = knob->pointAtProportion (1.0);
+
+    CHECK (start.y > middle.y);
+    CHECK (end.y > middle.y);
+    CHECK (start.x < middle.x);
+    CHECK (end.x > middle.x);
+    CHECK (std::abs (middle.x - static_cast<float> (knob->getWidth()) * 0.5f) < 1.5f);
+
+    // And it paints: the track in `border` and the value arc in `accent`, counted on the knob's own
+    // snapshot so nothing else on the page can supply the pixels.
+    const auto count = [] (const juce::Image& image, const juce::Colour colour, const int tolerance)
+    {
+        int found = 0;
+
+        for (int y = 0; y < image.getHeight(); ++y)
+            for (int x = 0; x < image.getWidth(); ++x)
+            {
+                const auto pixel = image.getPixelAt (x, y);
+
+                if (std::abs (static_cast<int> (pixel.getRed()) - static_cast<int> (colour.getRed())) <= tolerance
+                    && std::abs (static_cast<int> (pixel.getGreen()) - static_cast<int> (colour.getGreen())) <= tolerance
+                    && std::abs (static_cast<int> (pixel.getBlue()) - static_cast<int> (colour.getBlue())) <= tolerance)
+                    ++found;
+            }
+
+        return found;
+    };
+
+    const auto knobImage = knob->createComponentSnapshot (knob->getLocalBounds());
+    CHECK (count (knobImage, ui::look::border, 6) > 20);    // the track's whole sweep
+    CHECK (count (knobImage, ui::look::accent, 6) > 5);     // the value arc
+    CHECK (count (knobImage, ui::look::surface2, 6) > 100); // the body
+
+    // The second arc is the preset's, not decoration.
+    auto* cutoff = editor->controlFor ("voicefilter0.freq");
+    REQUIRE (cutoff != nullptr);
+    REQUIRE (cutoff->knob() != nullptr);
+
+    CHECK (cutoff->knob()->isModulated());
+    CHECK (cutoff->knob()->modulationDepth() == Catch::Approx (0.075));
+
+    // A parameter no matrix row addresses: no arc, and zero depth — the state the design calls "a control
+    // with no modulated state is not finished" and this build answers with a fact rather than a stub.
+    CHECK_FALSE (volume->knob()->isModulated());
+    CHECK (volume->knob()->modulationDepth() == Catch::Approx (0.0));
+
+    // With no preset loaded there is no modulation at all, so every knob is unmodulated.
+    {
+        XerumAudioProcessor fresh;
+        fresh.prepareToPlay (48000.0, 512);
+
+        auto otherEditor = openEditor (fresh);
+        REQUIRE (otherEditor != nullptr);
+
+        CHECK_FALSE (otherEditor->controlFor ("voicefilter0.freq")->knob()->isModulated());
+    }
+}
+
+//==============================================================================
+TEST_CASE ("the interface is laid out at the design's baseline window size", "[interface][ui]")
+{
+    // The acceptance: "the window works at the design's baseline size and resizable, legible at 100 %".
+    // This session has no eyes and the standalone could not be resized by hand — driving another app's
+    // window needs Assistive access this machine does not grant `osascript` — so the measurement is made
+    // where it can be: the editor is set to the design's 900×600, every device page is opened, and every
+    // control on it is required to have a real rectangle *inside its panel*. A page that clipped, or a row
+    // that never got laid out, would leave a control at zero size or hanging outside the panel.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    editor->setSize (900, 600);
+    CHECK (editor->getWidth() == 900);
+    CHECK (editor->getHeight() == 600);
+
+    const auto editorBounds = editor->getLocalBounds();
+
+    for (int index = 0; index < editor->deviceCount(); ++index)
+    {
+        editor->showDevice (index);
+
+        INFO ("device " << index << ": " << editor->deviceTitle (index));
+
+        if (auto* panel = editor->shownPanel())
+        {
+            INFO ("panel " << panel->title());
+
+            CHECK (panel->getWidth() > 0);
+            CHECK (panel->getHeight() > 0);
+            CHECK (editorBounds.contains (panel->getBounds()));
+
+            // Every row of the plan is on the panel, laid out, and inside it.
+            for (int row = 0; row < panel->rows(); ++row)
+            {
+                auto* control = panel->controlAtRow (row);
+                REQUIRE (control != nullptr);
+
+                INFO ("row " << row << ": " << control->label().toStdString());
+
+                CHECK (control->getWidth() > 0);
+                CHECK (control->getHeight() > 0);
+                CHECK (panel->getLocalBounds().contains (control->getBounds()));
+                CHECK (control->isBound());
+            }
+        }
+        else
+        {
+            // The matrix page: its viewport is on screen and the grid is bigger than it, so it scrolls.
+            CHECK (editor->matrixPageVisible());
+        }
+    }
+
+    // And it draws at that size: the palette is present in a snapshot of the baseline window, so this is
+    // "a page was painted" as well as "a page was laid out".
+    editor->showDevice (0);
+
+    const auto image = editor->createComponentSnapshot (editorBounds);
+
+    auto background = 0;
+
+    for (int y = 0; y < image.getHeight(); y += 4)
+        for (int x = 0; x < image.getWidth(); x += 4)
+        {
+            const auto pixel = image.getPixelAt (x, y);
+
+            if (std::abs (static_cast<int> (pixel.getRed()) - static_cast<int> (ui::look::bg.getRed())) <= 8
+                && std::abs (static_cast<int> (pixel.getGreen()) - static_cast<int> (ui::look::bg.getGreen())) <= 8
+                && std::abs (static_cast<int> (pixel.getBlue()) - static_cast<int> (ui::look::bg.getBlue())) <= 8)
+                ++background;
+        }
+
+    CHECK (background > 500);
 }
 
 //==============================================================================

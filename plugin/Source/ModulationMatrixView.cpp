@@ -173,6 +173,15 @@ void ModulationMatrixView::bindToBridge (const ParameterBridge& bridge)
                 *spec, *bridge.parameters()[static_cast<std::size_t> (spec->paramIndex)],
                 bridge.choices (spec->choiceSet), /* showLabel */ false);
 
+            // The two cells the design draws specially: an **amount** colours its sign, because for an
+            // amount the sign is the polarity, and a **bypass** is a dot that is green while the row is
+            // live. The parameter is `kParamBypass` — 1 when the row is *not* live — so the cell inverts
+            // the dot rather than the parameter.
+            if (column == 3)
+                control->setSignColouring (true);
+            else if (column == 5)
+                control->setCompactToggle (true, /* inverted */ true);
+
             cells_[static_cast<std::size_t> (row * kColumnCount + column)] = std::move (control);
             addAndMakeVisible (*cells_[static_cast<std::size_t> (row * kColumnCount + column)]);
         }
@@ -324,16 +333,16 @@ juce::String ModulationMatrixView::noteForRow (const int rowIndex) const
 
 void ModulationMatrixView::paint (juce::Graphics& graphics)
 {
-    const auto mono = juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 11.5f,
-                                                      juce::Font::plain));
+    const auto mono = look::monoFont (11.0f);
 
-    graphics.setColour (look::background);
+    graphics.setColour (look::bg);
     graphics.fillAll();
 
-    // The header: the columns' names, on the bar the rows scroll under.
+    // The header: the columns' names, on the bar the rows scroll under. The design's own table head —
+    // 7px monospaced, uppercase, in the muted foreground.
     {
         auto header = getLocalBounds().removeFromTop (kHeaderHeight);
-        graphics.setColour (look::barFill);
+        graphics.setColour (look::surface);
         graphics.fillRect (header);
 
         int x = 0;
@@ -341,14 +350,14 @@ void ModulationMatrixView::paint (juce::Graphics& graphics)
         for (int column = 0; column < kColumnCount; ++column)
         {
             const auto cell = juce::Rectangle<int> (x, header.getY(), kColumns[column].width, kHeaderHeight);
-            graphics.setColour (look::dimText);
-            graphics.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+            graphics.setColour (look::fgMuted);
+            graphics.setFont (look::monoFont (look::type::tableHead, true));
             graphics.drawText (juce::String (kColumns[column].title).toUpperCase(),
                                cell.reduced (6, 0), juce::Justification::centredLeft, true);
             x += kColumns[column].width;
         }
 
-        graphics.setColour (look::panelBorder);
+        graphics.setColour (look::border);
         graphics.fillRect (header.removeFromBottom (1));
     }
 
@@ -364,7 +373,9 @@ void ModulationMatrixView::paint (juce::Graphics& graphics)
 
         if (row.stored)
         {
-            graphics.setColour (rowIndex % 2 == 0 ? look::panelFill : look::background);
+            // A stored row is a row on the surface; an empty slot is the page behind it. Striping the
+            // stored rows keeps a 64-row table readable without a grid of rules.
+            graphics.setColour (rowIndex % 2 == 0 ? look::surface : look::surface2);
             graphics.fillRect (rowArea);
         }
 
@@ -385,11 +396,13 @@ void ModulationMatrixView::paint (juce::Graphics& graphics)
             }
 
             if (column == 11)
-                graphics.setColour (note.isEmpty() ? look::dimText : look::severityMedium);
+                graphics.setColour (note.isEmpty() ? look::fgDim : look::orange);
+            else if (column == 1 && row.stored)
+                graphics.setColour (look::accent);   // a source is the row's subject, and the accent says so
             else if (column == 3 && row.stored && std::abs (row.slot.amount) > 0.0)
                 graphics.setColour (look::accent);   // an amount is the row's whole point when it has one
             else
-                graphics.setColour (row.stored ? look::text : look::dimText);
+                graphics.setColour (row.stored ? look::fg : look::fgMuted);
 
             graphics.setFont (mono);
             graphics.drawText (cellText (rowIndex, column), cell, juce::Justification::centredLeft, true);
@@ -397,7 +410,7 @@ void ModulationMatrixView::paint (juce::Graphics& graphics)
             x += kColumns[column].width;
         }
 
-        graphics.setColour (look::rowDivider);
+        graphics.setColour (look::border);
         graphics.fillRect (rowArea.removeFromBottom (1));
     }
 }

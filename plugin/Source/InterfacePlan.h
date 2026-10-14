@@ -60,20 +60,50 @@ constexpr ControlKind controlKindFor (const ParamType type)
     return ControlKind::Slider;   // unreachable; `-Wswitch` already failed the build above
 }
 
+/// The diameter a slider (a `ui::Knob`) is drawn at. Ticket `51`: total, like `controlKindFor`, and a
+/// function of the **spec** rather than of a hand-placed layout — a new panel gets the default diameter
+/// without anyone editing a table, and the two sizes the design system names for something other than a
+/// full-size knob are recognised by the model's own group.
+///
+/// A `ParamSpec` carries no "size" field and is not going to grow one: the size is decoration, the kind is
+/// structure. The macro groups get the macro knob because a macro is a macro, and the two fixed non-
+/// container slots (NOISE, SUB) get the small knob because the design puts them in one compact band.
+enum class KnobSize
+{
+    Default,   ///< 44px — every knob on a device page
+    Small,     ///< 28px — NOISE and SUB, the design's compact band
+    Macro      ///< 26px — the eight macros
+};
+
+KnobSize knobSizeFor (const ParamSpec& spec);
+
 //==============================================================================
 // The design's numbers, in one place.
 
-constexpr int kRowHeight = 26;         ///< one parameter's row inside a page
+/// A row's height, from the design system and from what the row's control actually is: a toggle or a
+/// choice is one compact line, and a knob is its own diameter plus its readout and its label. This is a
+/// function of the spec for the same reason `knobSizeFor` is — the plan's derivation decides everything.
+int rowHeightFor (const ParamSpec& spec);
+
+constexpr int kRowHeight = 26;              ///< a toggle or a choice row
+constexpr int kKnobRowHeight = 68;          ///< a 44px knob, its readout and its label
+constexpr int kSmallKnobRowHeight = 52;     ///< a 28px knob, its readout and its label
+constexpr int kMacroRowHeight = 50;         ///< a 26px macro knob, its readout and its label
 constexpr int kRowGap = 4;
 constexpr int kPanelHeaderHeight = 26; ///< the page's own title bar
 constexpr int kPanelPadding = 10;
-constexpr int kColumnGap = 12;         ///< between the columns of one page
-constexpr int kRowLabelWidth = 156;    ///< the label column of a row (a toggle takes the whole row)
+constexpr int kColumnGap = 10;         ///< between the columns of one page
+constexpr int kColumnWidth = 168;      ///< the width a control's cell wants inside a column
+constexpr int kRowLabelWidth = 156;    ///< the label column of a choice row
 constexpr int kPageHeaderHeight = 30;  ///< the editor's line above the page: device name and module
-constexpr int kRowsPerColumn = 8;      ///< how tall a column is allowed to get before one more is started
+constexpr int kRowsPerColumn = 5;      ///< how tall a column is allowed to get before one more is started
 
 /// How many columns a page's rows are spread over: one for a short page, otherwise enough to keep a
 /// column at or under `kRowsPerColumn`, capped at the editor's `columnCount`.
+///
+/// `kRowsPerColumn` is 5 rather than 8 because ticket `51` made a slider row a 44px knob: at eight rows a
+/// column of knobs is 576px tall, which does not fit the design's 600px window, and the balance is the
+/// only thing that decides how tall a page is.
 inline int columnsForRows (const int rows, const int columnCount)
 {
     if (rows <= 4 || columnCount <= 1)
@@ -97,19 +127,34 @@ struct PanelPlan
 
     int columnsCount() const { return static_cast<int> (columns.size()); }
 
-    /// The tallest column, which is the page's natural height.
+    /// The tallest column, which is the page's natural height. Ticket `51`: a column's height is the sum of
+    /// its **rows'** heights, not its row count times one number, because a knob's row is three times a
+    /// toggle's — and a page that reserved the old uniform height would leave a tall gap under a short page.
     int height() const
     {
-        std::size_t tallest = 0;
+        int tallest = 0;
 
         for (const auto& column : columns)
-            tallest = column.size() > tallest ? column.size() : tallest;
+        {
+            int columnHeight = 0;
 
+            for (const auto row : column)
+                if (row >= 0 && row < rows())
+                    columnHeight += rowHeightFor (*specs[static_cast<std::size_t> (row)]) + kRowGap;
+
+            if (columnHeight > 0)
+                columnHeight -= kRowGap;   // no gap under the last row
+
+            tallest = columnHeight > tallest ? columnHeight : tallest;
+        }
+
+        // No columns set means one column — the same rule `ParameterPanel::resized` applies — so the panel
+        // is as tall as all of its rows.
         if (tallest == 0)
-            tallest = static_cast<std::size_t> (rows());
+            for (const auto* spec : specs)
+                tallest += rowHeightFor (*spec) + kRowGap;
 
-        return kPanelHeaderHeight + kPanelPadding * 2
-                   + static_cast<int> (tallest) * (kRowHeight + kRowGap) - kRowGap;
+        return kPanelHeaderHeight + kPanelPadding * 2 + tallest;
     }
 };
 

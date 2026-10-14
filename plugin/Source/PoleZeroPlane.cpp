@@ -194,21 +194,23 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
 {
     auto bounds = getLocalBounds();
 
-    graphics.setColour (look::panelFill);
-    graphics.fillRoundedRectangle (bounds.toFloat(), 5.0f);
-    graphics.setColour (look::panelBorder);
-    graphics.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 5.0f, 1.0f);
+    // The design's "Filter Display": the plane is a display, so its background is the window's own `bg`
+    // closed by a 3px-cornered `border`, not a second panel.
+    graphics.setColour (look::bg);
+    graphics.fillRoundedRectangle (bounds.toFloat(), 3.0f);
+    graphics.setColour (look::border);
+    graphics.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), 3.0f, 1.0f);
 
     auto title = bounds.removeFromTop (kPanelHeaderHeight);
-    graphics.setColour (look::text);
-    graphics.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    graphics.drawText ("Pole / zero plane", title.reduced (kPanelPadding + 4, 0),
+    graphics.setColour (look::fg);
+    graphics.setFont (look::bodyFont (look::type::section, true));
+    graphics.drawText ("POLE / ZERO PLANE", title.reduced (kPanelPadding + 2, 0),
                        juce::Justification::centredLeft, true);
 
-    graphics.setColour (look::dimText);
-    graphics.setFont (juce::FontOptions (11.0f));
+    graphics.setColour (look::accent);
+    graphics.setFont (look::monoFont (look::type::tag));
     graphics.drawText (type_.isEmpty() ? juce::String ("filter type not set") : type_,
-                       title.reduced (kPanelPadding + 4, 0), juce::Justification::centredRight, true);
+                       title.reduced (kPanelPadding + 2, 0), juce::Justification::centredRight, true);
 
     const auto area = planeAreaFor (getLocalBounds());
     const auto axis = area.getCentreY();
@@ -218,22 +220,38 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
     for (int i = 1; i < 8; ++i)
     {
         const auto line = area.getX() + area.getWidth() * static_cast<float> (i) / 8.0f;
-        graphics.setColour (look::rowDivider);
+        graphics.setColour (look::border);
         graphics.fillRect (juce::Rectangle<float> (line, area.getY(), 1.0f, area.getHeight()));
     }
 
-    graphics.setColour (look::panelBorder);
+    // The quarter points are labelled, because the axis is a fraction of Nyquist and "where is 0.5" should
+    // not need a ruler. The design's own display labels its axis the same way.
+    graphics.setColour (look::fgMuted);
+    graphics.setFont (look::monoFont (6.0f));
+
+    for (int i = 0; i <= 4; ++i)
+    {
+        const auto fraction = i / 4.0f;
+        const auto x = area.getX() + area.getWidth() * fraction;
+        const auto text = i == 0 ? juce::String ("0") : juce::String (fraction, 2);
+
+        graphics.drawText (text,
+                           juce::Rectangle<int> (static_cast<int> (x) - 12,
+                                                 static_cast<int> (area.getBottom()) - 11, 40, 10),
+                           juce::Justification::centredLeft, false);
+    }
+
+    graphics.setColour (look::border);
     graphics.fillRect (juce::Rectangle<float> (area.getX(), axis, area.getWidth(), 1.0f));
 
-    graphics.setColour (look::dimText);
-    graphics.setFont (juce::FontOptions (9.5f));
+    graphics.setColour (look::fgDim);
+    graphics.setFont (look::monoFont (look::type::readoutSm));
     graphics.drawText ("poles", juce::Rectangle<int> (static_cast<int> (area.getX()),
                                                       static_cast<int> (area.getY()), 60, 12),
                        juce::Justification::centredLeft, false);
     graphics.drawText ("zeros", juce::Rectangle<int> (static_cast<int> (area.getX()),
-                                                      static_cast<int> (area.getBottom()) - 12, 60, 12),
+                                                      static_cast<int> (area.getBottom()) - 25, 60, 12),
                        juce::Justification::centredLeft, false);
-    graphics.drawText ("freq: 0 … 1 of Nyquist", area.toNearestInt(), juce::Justification::bottomRight, false);
 
     for (int section = 0; section < sectionCount(); ++section)
     {
@@ -245,18 +263,20 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
 
         // The two frequencies of one section are tied together, so a section reads as one object rather
         // than as two unrelated marks.
-        graphics.setColour (look::rowDivider);
+        graphics.setColour (look::border);
         graphics.drawLine (pole.x, pole.y, zero.x, zero.y, 1.0f);
 
         // A pole is a cross and a zero is a circle: the convention every pole/zero plot uses, and the
-        // reason the two are not both drawn as the prototype's identical crossed circles.
+        // reason the two are not both drawn as the prototype's identical crossed circles. The pole takes
+        // the accent, the zero the accent's dimmed partner — the same "primary / secondary" pair the
+        // design system uses for a value and its modulation, because that is what the two are.
         graphics.setColour (look::accent);
         graphics.drawEllipse (pole.x - poleRadius, pole.y - poleRadius, poleRadius * 2.0f, poleRadius * 2.0f,
                               1.4f);
         graphics.drawLine (pole.x - poleRadius, pole.y, pole.x + poleRadius, pole.y, 1.4f);
         graphics.drawLine (pole.x, pole.y - poleRadius, pole.x, pole.y + poleRadius, 1.4f);
 
-        graphics.setColour (look::severityInfo);
+        graphics.setColour (look::accentDim);
         graphics.drawEllipse (zero.x - zeroRadius, zero.y - zeroRadius, zeroRadius * 2.0f, zeroRadius * 2.0f,
                               1.4f);
 
@@ -264,7 +284,7 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
         // inferred from the pointer.
         if (section == selected_)
         {
-            graphics.setColour (look::text);
+            graphics.setColour (look::fg);
             graphics.drawEllipse (pole.x - poleRadius - 3.0f, pole.y - poleRadius - 3.0f,
                                   (poleRadius + 3.0f) * 2.0f, (poleRadius + 3.0f) * 2.0f, 1.0f);
             graphics.drawEllipse (zero.x - zeroRadius - 3.0f, zero.y - zeroRadius - 3.0f,
@@ -273,12 +293,12 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
     }
 
     auto footer = bounds.removeFromBottom (kPlaneCaptionHeight).reduced (kPanelPadding, 0);
-    graphics.setColour (look::text);
-    graphics.setFont (juce::FontOptions (11.5f));
+    graphics.setColour (look::fg);
+    graphics.setFont (look::bodyFont (11.5f));
     graphics.drawText (caption(), footer.removeFromTop (16), juce::Justification::centredLeft, true);
 
-    graphics.setColour (look::dimText);
-    graphics.setFont (juce::FontOptions (10.5f));
+    graphics.setColour (look::fgDim);
+    graphics.setFont (look::bodyFont (10.5f));
     graphics.drawFittedText (
         editable_ ? "drag a pole or zero to move its frequency, and up or down to change its Q"
                   : "the preset draws this response; the engine plays it through its pole/zero model",

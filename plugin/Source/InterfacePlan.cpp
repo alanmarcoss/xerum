@@ -21,6 +21,38 @@ std::string moduleOf (const ParamSpec& spec)
 }
 } // namespace
 
+KnobSize knobSizeFor (const ParamSpec& spec)
+{
+    // Only a slider becomes a knob at all — a boolean is a toggle and a choice is a picker, whatever
+    // diameter a table might want to write down — so this is the *second* decision about a control and it
+    // is only ever asked about the first one's answer.
+    if (controlKindFor (spec.type) != ControlKind::Slider)
+        return KnobSize::Default;
+
+    // The eight macros: one knob each, and the design draws them at 26px.
+    if (spec.group.rfind ("Macro ", 0) == 0)
+        return KnobSize::Macro;
+
+    // The two fixed non-container slots. The design puts NOISE and SUB in one compact band with the small
+    // knob; they are the model's own groups, so this is still the table speaking rather than a hand list.
+    if (spec.group == "Noise" || spec.group == "Sub Osc")
+        return KnobSize::Small;
+
+    return KnobSize::Default;
+}
+
+int rowHeightFor (const ParamSpec& spec)
+{
+    switch (knobSizeFor (spec))
+    {
+        case KnobSize::Small: return kSmallKnobRowHeight;
+        case KnobSize::Macro: return kMacroRowHeight;
+        case KnobSize::Default: break;
+    }
+
+    return controlKindFor (spec.type) == ControlKind::Slider ? kKnobRowHeight : kRowHeight;
+}
+
 std::vector<std::string> InterfacePlan::ids() const
 {
     std::vector<std::string> out;

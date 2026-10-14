@@ -587,6 +587,170 @@ is applied** (`VoiceFilter::setPoleZero`, with the `high` report retracted). Wha
   pages they belong to, and this interface shows what the bridge binds — 75 page controls and 512 matrix
   cells — with the gap stated in the header rather than a page of raw arrays with no engine behind them.
 
+# Ticket 51 — the visual design language
+
+Ticket `44` implemented `43`'s *structure* — one device per page behind a strip — and left the interface
+as **stock JUCE widgets plus a palette**: 66 lines of `InterfaceLook.h` and a `ParameterPanels.cpp` that
+drove `juce::Slider`s. Nothing drew anything, which is why the dev's reaction was "the ui looks nothing
+like serum2". This ticket is the drawing half. The boundary is unchanged and is the dev's own call: the
+design is a **conventional wavetable-synth grammar**, not the reference's skin, and everything here comes
+from `docs/design/` (`xerum-design-system.html` for the tokens, `xerum-svg-elements.html` for the control
+geometry, `xerum-direction-warm.html` for the composed screen). Nothing was sampled or traced from
+anywhere else.
+
+## The tokens are the design system's, and one place holds every colour
+
+`InterfaceLook.h` is now the fourteen roles of `xerum-design-system.html` — `bg`, `surface`, `surface2`,
+`border`, `borderHi`, `fg`, `fgDim`, `fgMuted`, `accent`, `accentDim`, `accentBg`, `red`, `orange`,
+`green` — plus the type scale, the 2px spacing grid and the knob geometry (44/28/26px, the 225°–495° arc,
+the body/track/stroke/pointer fractions). **No hex lives outside that header**, and the old bespoke names
+(`background`, `panelFill`, `barFill`, `dimText`, `selectedTab`, `severityHigh`…) are gone rather than
+aliased, because "cold and phosphor are a swap rather than a rewrite" only holds if the drawing code asks
+for a role. Every call site and every assertion that used the old names was updated with it.
+
+**Type.** The design's families are DM Sans and IBM Plex Mono, both OFL. Neither is embedded: the
+load-bearing use is the **monospaced numerals** (a value that jitters as it changes is the thing to avoid)
+and `juce::Font::getDefaultMonospacedFontName()` is a monospaced face that already ships with JUCE, so the
+numbers do not jitter and no font binary enters the repository — therefore no new `THIRD_PARTY.md` entry.
+Body text is JUCE's default sans. That is a deliberate substitution of the body face and is recorded here
+rather than implied.
+
+## What draws now
+
+* **The knob** (`ui::Knob`, a `juce::Slider` subclass so the attachment and the harness still see a
+  slider). A track arc over the whole 225°→495° sweep, the value arc in `accent`, **a modulation arc** in
+  `accentDim` from the value to the modulated value, a pointer at the value's angle, the design's hover /
+  drag / focused body strokes, and a focus ring on keyboard focus. Diameter comes from the plan
+  (`ui::knobSizeFor`, total like `controlKindFor`); a 44px knob for a page, 28px for NOISE and SUB, 26px
+  for the eight macros. A matrix cell is the same widget in `Cell` mode: a compact numeric field, because
+  512 dials down a table is a grid of dials, not a matrix.
+* **The second arc is a fact about the loaded preset**, not decoration: `updateModulationArcs` walks the
+  document's 64 rows, skips the ones the engine does not apply, composes each destination's
+  `(class, instance, parameter)` into the very `ParamSpec::modelPath` the controls are built from, and sums
+  the amounts. A knob no row addresses draws no second arc.
+* **A boolean** is a pill toggle with a state dot, not a stock checkbox; a choice is a themed picker; a
+  matrix boolean is the dot alone, and the **bypass** dot is green while the row is live (the parameter is
+  `kParamBypass`, so the cell inverts the dot rather than the parameter).
+* **Panels and pages**: a `surface` panel with the design's 5px radius and 9px uppercase title, a header
+  with the gradient, the wordmark, the preset field, the coverage readout and the import button, and a page
+  header that names the device, tags its model module and says how many controls and columns it has.
+* **`DeviceStrip` is a tab strip**: pills, `fgDim` when inactive and the accent on `accent-bg` when
+  active, with the severity dot on the tab of the device whose module the report named.
+* **The matrix is a grid**: the header in the design's 7px monospaced table-head colour, stored rows
+  striped on the surface and empty slots on the window, the source column in the accent, the amount cell
+  colouring its **sign** (for an amount the sign is the polarity) and the bypass a dot.
+* **The report is a designed surface**: a 22px bar with a 5px state dot (`green` clean, `red` load
+  failure, else the severity ramp), the summary in monospace, the preset name at the right, and the drawer
+  with severity chips in **red / orange / green** for high / medium / info and the loader's own strings.
+  `Nothing to report` is the clean state's words, and an absent report is the failure's — they do not look
+  alike. The design system's three colours force one overload — `green` is both info and clean — and the
+  states are told apart by their words, which is exactly the distinction the contract requires be visible.
+* **`PoleZeroPlane`** is the design's filter display: a `bg` surface with a 3px radius, a quarter-labelled
+  frequency axis, poles as crosses in `accent` above the axis, zeros as circles in `accentDim` below it,
+  marker size carrying Q, and the selected section ringed.
+
+## What did not move
+
+`InterfacePlan` still derives everything: which control a parameter gets is `controlKindFor` over its model
+type, which panel is its `ParamSpec` group in the table's order, and which column is a greedy balance over
+the panel's rows. Two things were added and both are functions of the spec, not hand placement:
+`knobSizeFor` and `rowHeightFor` — a knob row is its own diameter plus its readout and label, so a page's
+height had to become the sum of its rows' heights rather than a row count times one number. `kRowsPerColumn`
+moved from 8 to 5 because eight 68px knob rows do not fit the design's 600px window, and the balance is the
+only thing that decides how tall a page is. The coverage readout, the one-device-per-page structure, the
+headless-construction counters and the lazy editor are all untouched.
+
+## Acceptance, measured
+
+```sh
+cmake --build build-51 -j8
+./build-51/plugin/tests/xerum-plugin-tests "[interface]"      # 5146 assertions, 18 cases — all passed
+./build-51/plugin/tests/xerum-plugin-tests                    # the full plugin suite: 15004 assertions
+                                                              # in 68 cases — all passed
+/tmp/pluginval-104/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 \
+    --validate build-51/plugin/xerum_artefacts/Release/VST3/xerum.vst3      # SUCCESS, including
+                                                                            # Editor + Editor Automation
+cp -R build-51/plugin/xerum_artefacts/Release/AU/xerum.component \
+      ~/Library/Audio/Plug-Ins/Components/                    # an install, recorded: it replaced the
+                                                              # xerum.component a previous ticket left there
+auval -strict -v aumu Xrm2 Xerm                               # AU VALIDATION SUCCEEDED
+```
+
+Two new cases cover what the old look's assertions could not: **`a slider is a drawn knob, and its second
+arc is the preset's own modulation`** measures the widget class, the diameter (44px on screen, 28px for
+NOISE), the arc's own geometry through `pointAtProportion` (both ends below the centre, the middle at the
+top), the `accent`/`border`/`surface2` pixels in the knob's own snapshot, and the depth two matrix rows sum
+to (0.075) against a parameter no row addresses (0). **`the interface is laid out at the design's baseline
+window size`** sets the editor to **900×600** and requires every control of every page to be non-empty and
+inside its panel — the measurement of "works at the baseline size" that this session could make, since
+driving another app's window needs Assistive access this machine does not grant `osascript`.
+
+The palette assertions in `the interface draws xerum's own identity, and the pages draw` were updated, not
+weakened: the old constants no longer exist, and the filter page's zero markers moved from the report's
+info blue to `accentDim`, so that check now counts `accent` and `accentDim` on **the plane's own snapshot**
+rather than on the whole page.
+
+## The standalone, run and observed
+
+```sh
+open build-51/plugin/xerum_artefacts/Release/Standalone/xerum.app
+xcrun swift /tmp/xerum51-winid.swift        # CGWindowListCopyWindowInfo -> 31079, xerum, 1082×668
+screencapture -x -o -l31079 /tmp/xerum51-final2.png
+```
+
+**The palette actually on screen.** The capture is 2164×1336, i.e. the window's 1082×668 logical pixels at
+this display's 2× backing. The two most frequent *exact* colours are the design's own:
+
+| Exact colour on screen | Share of the window |
+|---|---|
+| `rgb(26,25,23)` = `surface` #1a1917 | 48.10 % |
+| `rgb(17,17,16)` = `bg` #111110 | 40.63 % |
+| `rgb(38,50,55)` | 3.70 % — **the macOS title bar**, logical rows 1–26, full width |
+| `rgb(34,33,32)` = `surface2` #222120 | 1.04 % |
+| `rgb(43,40,38)` = `border` #2a2826 (+1 per channel from the profile) | 0.97 % |
+
+Every other colour in the top twenty is an anti-aliased blend of those. Counting against the tokens (the
+two large areas match their tokens exactly; the small ones are counted within a tolerance of a few counts
+per channel, and the accent — a saturated colour, which the display profile shifts most — within 40):
+`accent` #e89b30 0.100 % in logical rows 42–368 (the wordmark, the coverage number, the module tag and the
+knobs' value arcs), `fgDim` #7a756b 0.109 % (rows 42–659: labels and readouts), `fgMuted` 0.081 %,
+`fg` #d4cec4 0.061 % (rows 105–388: the knob readouts and the panel titles), `border-hi` 0.037 %,
+`green` #50b868 0.002 % (rows 653–658: the report bar's clean dot). **`red` is absent**, which is what a
+clean import must be. The palette is therefore on screen at the proportions a page of panels and knobs
+predicts, and nothing outside it is drawn except the OS title bar.
+
+**No interface code on the audio path**, reproduced the way ticket `44` measured it:
+
+```sh
+sample 4531 4 -file /tmp/xerum51-final2-sample.txt
+```
+
+The `com.apple.audio.IOThread.client` block runs the render path —
+`juce::AudioProcessorPlayer::audioDeviceIOCallbackWithContext` → `XerumAudioProcessor::processBlock` →
+`refreshSettingsFromParameters` → `ParameterBridge::currentModelValue` — and contains **0** interface
+frames. The `JUCE v9.0.4: Message Thread` block contains **2** of them,
+`xerum::plugin::ui::PillToggle::paintButton` and `xerum::plugin::ui::DeviceTab::paintButton` (an earlier
+sample of the same build caught `DeviceTab::paintButton` ← `ui::look::bodyFont` instead; the sample's
+timing decides which drawing call it lands in), so the two are separated in the running product and not
+merely in the source. `sample` caught fewer editor frames than ticket `44` did because this session could
+not resize the window to force a layout pass.
+
+## What could not be seen, and is not claimed
+
+**Nobody looked at it.** Every statement above is a measurement: a count of colours at a position, a
+rectangle's size, a symbol in a stack. Nothing here says the interface *looks* good, or that it looks like
+a finished instrument — that judgement needs a person, and the acceptance's own first line ("a person
+familiar with wavetable synths can find an oscillator's tuning and a filter's cutoff without instruction")
+is precisely the one this session cannot answer. **Who judged it: nobody yet.** The layout makes an
+oscillator's tuning a knob labelled `A Pitch (semitones)` on the page tagged `Oscillator0` and a filter's
+cutoff a knob labelled `1 Cutoff` on the page tagged `VoiceFilter0`, with the values in monospace
+underneath — that is what is on screen; whether it is findable is the test that requires eyes.
+
+Also not observed: no knob was dragged in the standalone, no tab clicked, no preset imported through the
+standalone's own dialog, and the window was never resized by hand (that needs Assistive access). Those
+paths are covered in-process: `showDevice`, the plane's synthesised drag, `loadPresetFromFile`, and the
+900×600 layout assertion.
+
 # Ticket 48 — the modulation sources that had no generator
 
 Thirty-seven of the matrix's fifty-seven source cases read a field nothing in `src/dsp` or

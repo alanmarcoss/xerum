@@ -11,10 +11,11 @@ namespace xerum::plugin::ui
 
 namespace
 {
-constexpr int kTabGap = 6;
+constexpr int kTabGap = 4;
 constexpr int kTabMaxWidth = 200;
-constexpr int kStripHeight = 42;
-constexpr int kDotSize = 7;
+constexpr int kStripHeight = 30;
+constexpr int kDotSize = 6;
+constexpr int kPillHeight = 24;
 } // namespace
 
 //==============================================================================
@@ -47,41 +48,56 @@ void DeviceTab::setSelected (const bool selected)
 void DeviceTab::paintButton (juce::Graphics& graphics, const bool shouldDrawButtonAsHighlighted,
                              const bool shouldDrawButtonAsDown)
 {
-    auto area = getLocalBounds().toFloat();
+    // The design's tab: a pill, `fg-dim` when inactive and the accent with an `accent-bg` fill when
+    // active. The module the device is stays on the pill in the muted colour — a device strip that did not
+    // say which model module a page is would make the report's own module paths unreadable.
+    const auto pill = getLocalBounds().toFloat()
+                          .withSizeKeepingCentre (getWidth(), static_cast<float> (kPillHeight))
+                          .reduced (1.0f, 0.0f);
+    const auto radius = pill.getHeight() * 0.5f;
+    const juce::Graphics::ScopedSaveState save (graphics);
 
     if (selected_)
     {
-        graphics.setColour (look::selectedTab);
-        graphics.fillRoundedRectangle (area.withTrimmedBottom (2.0f), 4.0f);
-        graphics.setColour (look::accent);
-        graphics.fillRect (area.withTop (area.getBottom() - 2.0f));
+        graphics.setColour (look::accentBg);
+        graphics.fillRoundedRectangle (pill, radius);
     }
     else if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown)
     {
-        graphics.setColour (look::panelFill);
-        graphics.fillRoundedRectangle (area.withTrimmedBottom (2.0f), 4.0f);
+        graphics.setColour (look::surface2);
+        graphics.fillRoundedRectangle (pill, radius);
     }
 
-    auto text = area.toNearestInt().reduced (7, 4);
-    text.removeFromTop (2);
-
-    graphics.setColour (selected_ ? look::text : look::dimText);
-    graphics.setFont (juce::FontOptions (12.5f, juce::Font::bold));
-    graphics.drawText (title_, text.removeFromTop (15), juce::Justification::centredLeft, true);
-
-    graphics.setColour (look::dimText);
-    graphics.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 9.5f,
-                                                      juce::Font::plain)));
-    graphics.drawText (module_, text.removeFromTop (11), juce::Justification::centredLeft, true);
+    auto content = pill.reduced (10.0f, 0.0f);
 
     if (hasSeverity_)
     {
         // The dot says *this device's module* reported something, which is what makes the strip a map of
         // the import rather than a second copy of it. Its colour is the severity ramp, one function.
-        const auto dot = juce::Rectangle<float> (area.getRight() - kDotSize - 5.0f, area.getY() + 5.0f,
-                                                 kDotSize, kDotSize);
+        auto dotArea = content.removeFromRight (kDotSize + 5.0f);
         graphics.setColour (look::severityColour (severity_));
-        graphics.fillEllipse (dot);
+        graphics.fillEllipse (
+            juce::Rectangle<float> (kDotSize, kDotSize).withCentre (dotArea.getCentre()));
+        content.removeFromRight (4.0f);
+    }
+
+    const auto moduleFont = look::monoFont (look::type::tag);
+    const auto moduleWidth = juce::jmin (content.getWidth() * 0.5f,
+                                         juce::GlyphArrangement::getStringWidth (moduleFont, module_));
+    auto moduleArea = content.removeFromRight (moduleWidth);
+
+    graphics.setColour (look::fgMuted);
+    graphics.setFont (moduleFont);
+    graphics.drawText (module_, moduleArea.toNearestInt(), juce::Justification::centredRight, true);
+
+    graphics.setColour (selected_ ? look::accent : (shouldDrawButtonAsHighlighted ? look::fg : look::fgDim));
+    graphics.setFont (look::bodyFont (look::type::section, true));
+    graphics.drawText (title_.toUpperCase(), content.toNearestInt(), juce::Justification::centredLeft, true);
+
+    if (hasKeyboardFocus (true))
+    {
+        graphics.setColour (look::accent);
+        graphics.drawRoundedRectangle (pill.reduced (0.5f), radius, look::kFocusStroke);
     }
 }
 
@@ -185,11 +201,12 @@ void DeviceStrip::resized()
 
 void DeviceStrip::paint (juce::Graphics& graphics)
 {
+    // A tab bar, not a second panel: the surface colour, closed by the border underneath.
     auto area = getLocalBounds();
 
-    graphics.setColour (look::barFill);
+    graphics.setColour (look::surface);
     graphics.fillRect (area);
-    graphics.setColour (look::panelBorder);
+    graphics.setColour (look::border);
     graphics.fillRect (area.removeFromBottom (1));
 }
 

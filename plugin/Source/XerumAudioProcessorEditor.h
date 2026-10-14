@@ -150,6 +150,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
     void importPreset();
     void updateDeviceSeverity (const model::ImportReport& report);
+    void updateModulationArcs();
     int naturalHeight() const;
     int naturalWidth() const;
 
@@ -174,6 +175,10 @@ private:
     juce::TextButton import_ { "Import .SerumPreset…" };
     juce::Label status_;
     std::unique_ptr<juce::FileChooser> chooser_;
+
+    /// What is loaded, drawn in the header's own field. Read from the document when the report is
+    /// refreshed, so it is the same value the rest of the interface is showing.
+    juce::String presetName_;
 
     int currentDevice_ { 0 };
     int schemaLeaves_ { 0 };
