@@ -13,7 +13,8 @@ add_executable(xerum-model-tests
     modulation_coverage_test.cpp
     defaults_test.cpp
     engine_selection_test.cpp
-    structural_fidelity_test.cpp)
+    structural_fidelity_test.cpp
+    third_party_pack_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model

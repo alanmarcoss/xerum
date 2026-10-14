@@ -16,7 +16,8 @@ add_executable(xerum-plugin-tests
     audio_test.cpp
     preset_test.cpp
     realtime_test.cpp
-    interface_test.cpp)
+    interface_test.cpp
+    third_party_test.cpp)
 
 target_sources(xerum-plugin-tests PRIVATE ${XERUM_PLUGIN_SOURCES})
 
