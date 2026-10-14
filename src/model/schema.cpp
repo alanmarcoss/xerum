@@ -2,6 +2,18 @@
 
 #include "generated/schema_data.h"
 
+// The established defaults, when this machine has generated them.
+//
+// **Conditionally compiled, deliberately.** The table is derived from the reference instrument's init
+// state (ticket `38`), so it is generated locally and never committed — which means the repository has to
+// build, and CI has to stay meaningful, on a machine with no reference installed. With this header,
+// defaults are established for the 118 leaves that have a counterpart in the reference's parameter
+// surface; without it every leaf is `Unestablished` and `defaultFor` returns nullopt, which is how this
+// behaved before the table existed. Nothing downstream needs to care which machine it is on.
+#if __has_include("generated/defaults_data.h")
+#include "generated/defaults_data.h"
+#endif
+
 #include <algorithm>
 #include <cctype>
 
@@ -10,6 +22,19 @@ namespace xerum::model
 
 namespace
 {
+
+#if __has_include("generated/defaults_data.h")
+/// The established default for a path, or nullptr when this machine has no table or the path is not in
+/// it. A linear scan: 118 entries, consulted at load time rather than per sample.
+const generated::EstablishedDefault* establishedDefault (std::string_view path)
+{
+    for (const auto& entry : generated::kDefaults)
+        if (entry.path == path)
+            return &entry;
+
+    return nullptr;
+}
+#endif
 
 LeafKind kindFromString (std::string_view k)
 {
@@ -180,6 +205,15 @@ const LeafDescriptor* Schema::describe (std::string_view normalisedPath) const
     descriptor.defaultProvenance = it->defaultProvenance == "authored"
                                  ? DefaultProvenance::Authored
                                  : DefaultProvenance::Unestablished;
+
+#if __has_include("generated/defaults_data.h")
+    // The generated schema can only say `unestablished` — it is built from the decoded model, which never
+    // stores a default. The table this machine generated from the reference's init state is the other
+    // half, so the descriptor reports what is actually known rather than the placeholder.
+    if (establishedDefault (normalisedPath) != nullptr)
+        descriptor.defaultProvenance = DefaultProvenance::Authored;
+#endif
+
     return &descriptor;
 }
 
@@ -196,14 +230,35 @@ bool Schema::presentIn (const LeafDescriptor& leaf, std::string_view version) co
 
 std::optional<double> Schema::defaultFor (std::string_view normalisedPath) const
 {
-    const auto* leaf = describe (normalisedPath);
+#if __has_include("generated/defaults_data.h")
+    // In the preset model's units, from the reference's own init state.
+    if (const auto* entry = establishedDefault (normalisedPath); entry != nullptr && entry->hasValue)
+        return entry->value;
+#endif
 
-    if (leaf == nullptr || leaf->defaultProvenance != DefaultProvenance::Authored)
-        return std::nullopt;
-
-    // No authored defaults exist yet. When they do, they are read from a table in the generated
-    // data — deliberately not from `min` or the corpus mode, both of which would be a guess.
+    // No established default for this path — 658 of the 776 leaves have no counterpart in the reference's
+    // parameter surface at all (ticket `38`: 310 payload, 319 scalar-with-no-counterpart, 24 metadata, 5
+    // structural), so this is a permanent state for them rather than a gap waiting to be filled.
+    //
+    // Deliberately not derived from `min`, from the leaf's range, or from the most common corpus value:
+    // a preset never stores a default, so the corpus can only ever report a *mode*, and ticket `38`
+    // measured that the mode differs from the default in 11 of the 14 cases where both are known.
     return std::nullopt;
+}
+
+std::string_view Schema::defaultStringFor (std::string_view normalisedPath) const
+{
+#if __has_include("generated/defaults_data.h")
+    // Seven leaves are known only as the reference's own display text — a discrete whose position maps to
+    // a label rather than to a number we can apply. Returning the text lets a caller show something
+    // honest instead of nothing.
+    if (const auto* entry = establishedDefault (normalisedPath); entry != nullptr)
+        return entry->referenceText;
+#else
+    (void) normalisedPath;
+#endif
+
+    return {};
 }
 
 std::string Schema::normalise (std::string_view concretePath) const

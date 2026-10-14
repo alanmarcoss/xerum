@@ -63,9 +63,19 @@ public:
 
     bool presentIn (const LeafDescriptor& leaf, std::string_view version) const;
 
-    /// The default for a parameter, or nullopt when it is unestablished. Returns nullopt for an
-    /// unknown path too — the caller distinguishes the two by asking `describe` first.
+    /// The established default for a parameter, in the preset model's units, or nullopt.
+    ///
+    /// **nullopt is not "zero".** A preset omits every default, so a caller that cannot obtain one must
+    /// decide what to do rather than apply a value nobody chose — which is why this returns an optional
+    /// instead of a number. Where a default *is* known it comes from the reference's own init state,
+    /// generated into a local table (ticket `38`); where the reference has no counterpart for a leaf, no
+    /// default exists and none ever will. Returns nullopt for an unknown path too — the caller
+    /// distinguishes the two by asking `describe` first.
     std::optional<double> defaultFor (std::string_view normalisedPath) const;
+
+    /// The reference's own display text for a parameter, when that is all that is known — a discrete
+    /// whose position maps to a label rather than to an applicable number. Empty when there is nothing.
+    std::string_view defaultStringFor (std::string_view normalisedPath) const;
 
     /// Convert a concrete path into its schema form:
     ///   `/Oscillator0/WTOsc1/plainParams/kParamWarpMenu` -> `Oscillator{N}/WTOsc{N}/plainParams/kParamWarpMenu`

@@ -18,6 +18,7 @@
 // is refused rather than returned as a plausible zero, and that the premise the defaults table exists
 // for — absence as the ordinary case — is true of the factory bank.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "generated/schema_data.h"
@@ -133,9 +134,16 @@ TEST_CASE ("every leaf either refuses a default or holds one it can actually hol
     {
         const auto* described = schema.describe (leaf->path);
 
-        // The generated table and the lookup agree about every row they both know about.
+        // The generated table and the lookup agree about every row they both know about — **except
+        // provenance**, which is now a combination of two sources rather than a copy: the record from the
+        // decoded model, and the defaults table this machine generated from the reference's init state
+        // (ticket 38). So the guarantee is one-directional: a row the model authored stays authored, and a
+        // row the model could not establish may be established by the table. Nothing can be *downgraded*,
+        // and nothing can claim authorship the model itself claimed falsely.
         REQUIRE (described != nullptr);
-        CHECK (toString (described->defaultProvenance) == leaf->defaultProvenance);
+
+        if (leaf->defaultProvenance == "authored")
+            CHECK (described->defaultProvenance == DefaultProvenance::Authored);
 
         const auto value = schema.defaultFor (leaf->path);
 
@@ -149,14 +157,15 @@ TEST_CASE ("every leaf either refuses a default or holds one it can actually hol
         ++established;
 
         // A default is either a number the leaf can hold, or explicitly absent.
+        //
+        // **Deliberately not range-checked against `described->min`/`max`.** Those bounds are
+        // *corpus-observed* ranges rather than the parameter's legal range — a preset never stores a
+        // default, so the corpus says nothing about what a default may be. Ticket `38` measured that 7 of
+        // the 14 established defaults fall **outside** the observed range, which is exactly why the table
+        // had to be generated from the instrument rather than inferred from the bank. Asserting inside the
+        // range would forbid the correct answers.
         if (value.has_value())
         {
-            if (described->hasRange)
-            {
-                CHECK (*value >= described->min);
-                CHECK (*value <= described->max);
-            }
-
             CHECK (described->kind != LeafKind::String);
 
             if (described->kind == LeafKind::String)
@@ -167,14 +176,14 @@ TEST_CASE ("every leaf either refuses a default or holds one it can actually hol
     CHECK (unestablished + established == schema.leafCount());
     CHECK (schema.leafCount() == 776);
 
-    // The state the model is in today, named rather than implied: defaults are *generated* from the
-    // reference's init state, not authored into the committed schema, so the committed table carries
-    // none. If this ever changes, the generated table was replaced by an authored one and the
-    // provenance in `src/model/generated/schema_data.h` moved with it — which is a decision, not a
-    // detail, and should show up here.
+    // The count depends on the machine, and that is deliberate: the table is generated from the
+    // reference's init state (ticket 38) and is not committed, so this build has either the 118 leaves the
+    // reference's parameter surface can address, or none at all on a machine with no reference installed.
+    // CI is the second case, which is what keeps the committed schema free of reference-derived values.
+    // Both states are correct; what would be wrong is a count that is neither.
     UNSCOPED_INFO ("established " << established << ", unestablished " << unestablished
                                   << ", string leaves " << stringLeaves);
-    CHECK (established == 0);
+    CHECK ((established == 0 || established > 100));
 }
 
 TEST_CASE ("a captured reference init table is consistent with the schema it claims to address",
@@ -502,4 +511,53 @@ TEST_CASE ("the factory bank's most common value is not the reference's default"
 
     CHECK (compared >= 8);
     CHECK (differ > agree);
+}
+
+TEST_CASE ("an established default is a value or a text, and never a plausible zero", "[defaults]")
+{
+    // The wiring of the generated table into the schema, asserted as a *rule* rather than as a value —
+    // because the table is generated locally from the reference (ticket 38) and is not committed, so this
+    // suite has to mean the same thing on a machine that has one and on a machine that does not.
+    //
+    // What must never happen in either state: `authored` provenance with nothing behind it, or a number
+    // invented for a leaf the reference has no counterpart for.
+    const auto& schema = Schema::instance();
+
+    // A leaf with no counterpart in the reference's parameter surface can never have a default — 658 of
+    // the 776 are like this (310 payload, 319 scalar-with-no-counterpart, 24 metadata, 5 structural), so
+    // nullopt here is permanent rather than a gap. This assertion holds on every machine.
+    const auto* payload = schema.describe ("Oscillator{N}/MultiSampleOsc{N}/embedded_sfz");
+    REQUIRE (payload != nullptr);
+    CHECK (payload->defaultProvenance == DefaultProvenance::Unestablished);
+    CHECK_FALSE (schema.defaultFor ("Oscillator{N}/MultiSampleOsc{N}/embedded_sfz").has_value());
+
+    // And an unknown path is an unknown path, not a default.
+    CHECK_FALSE (schema.defaultFor ("Oscillator{N}/Nonsense{N}/plainParams/kParamNope").has_value());
+    CHECK (schema.defaultStringFor ("Oscillator{N}/Nonsense{N}/plainParams/kParamNope").empty());
+
+    // Where a default *is* established, the descriptor says so and there is something behind it: a value
+    // in the preset model's units, or the reference's own text when only a label is known. Conditional on
+    // the machine by construction; the invariant is not.
+    const auto* reso = schema.describe ("VoiceFilter{N}/plainParams/kParamReso");
+    REQUIRE (reso != nullptr);
+
+    if (reso->defaultProvenance == DefaultProvenance::Authored)
+    {
+        const auto value = schema.defaultFor ("VoiceFilter{N}/plainParams/kParamReso");
+        const auto text = schema.defaultStringFor ("VoiceFilter{N}/plainParams/kParamReso");
+
+        UNSCOPED_INFO ("kParamReso: value "
+                       << (value ? std::to_string (*value) : std::string ("none")) << ", text '" << text
+                       << "'");
+
+        // Ticket 38 measured this one as an exact affine fit: the reference reports 10, so the preset's
+        // value is 10, and the plugin's normalised position would be 0.1.
+        CHECK (value.has_value());
+        CHECK (*value == Catch::Approx (10.0));
+    }
+    else
+    {
+        CHECK_FALSE (schema.defaultFor ("VoiceFilter{N}/plainParams/kParamReso").has_value());
+        CHECK (schema.defaultStringFor ("VoiceFilter{N}/plainParams/kParamReso").empty());
+    }
 }

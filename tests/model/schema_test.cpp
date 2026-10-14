@@ -133,26 +133,14 @@ TEST_CASE ("version sets say what each schema version contains", "[schema]")
     CHECK_FALSE (schema.presentIn (*attack, "9.9"));   // an unknown version is not present
 }
 
-TEST_CASE ("no parameter has a default yet, and none pretends to", "[schema][defaults]")
-{
-    const auto& schema = Schema::instance();
-
-    // This is the honest state of the defaults table, asserted so that it cannot quietly change.
-    // Ticket 21's remaining work is to author defaults and validate them behaviourally; until that
-    // happens, `defaultFor` must refuse rather than return a plausible-looking zero.
-    for (const auto* path : { "Env{N}/plainParams/kParamAttack",
-                              "ModSlot{N}/plainParams/kParamAmount",
-                              "VoiceFilter{N}/plainParams/kParamType" })
-    {
-        const auto* leaf = schema.describe (path);
-        REQUIRE (leaf != nullptr);
-        CHECK (leaf->defaultProvenance == DefaultProvenance::Unestablished);
-        CHECK_FALSE (schema.defaultFor (path).has_value());
-    }
-
-    // And an unknown path is also nullopt — the caller distinguishes the cases with `describe`.
-    CHECK_FALSE (schema.defaultFor ("NoSuchModule/whatever").has_value());
-}
+// A case here used to assert that *no* parameter had a default ("no parameter has a default yet, and none
+// pretends to"). That is no longer true, and re-pinning it would be wrong twice over: defaults now come
+// from the reference's init state (ticket `38`) where the reference has a counterpart for the leaf, so the
+// absence it asserted was a statement about the model's progress rather than about its correctness.
+//
+// The rule it was protecting — a leaf with no established default refuses rather than inventing a
+// plausible zero — is asserted in `tests/model/defaults_test.cpp`, in a form that holds on a machine with
+// the generated table and on one without it.
 
 TEST_CASE ("enum sets and their counts agree", "[schema]")
 {
