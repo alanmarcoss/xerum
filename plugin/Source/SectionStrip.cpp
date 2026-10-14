@@ -1,6 +1,6 @@
-// xerum::plugin — the device strip, in code. See DeviceStrip.h.
+// xerum::plugin — the composition's strip, in code. See SectionStrip.h.
 
-#include "DeviceStrip.h"
+#include "SectionStrip.h"
 
 #include "InterfaceLook.h"
 
@@ -19,38 +19,36 @@ constexpr int kPillHeight = 24;
 } // namespace
 
 //==============================================================================
-DeviceTab::DeviceTab()
+SectionTab::SectionTab()
     : juce::Button ({})
 {
     setClickingTogglesState (false);
 }
 
-void DeviceTab::setDevice (juce::String title, juce::String module)
+void SectionTab::setSection (juce::String title)
 {
     title_ = std::move (title);
-    module_ = std::move (module);
     repaint();
 }
 
-void DeviceTab::setSeverity (const bool has, const model::Severity severity)
+void SectionTab::setSeverity (const bool has, const model::Severity severity)
 {
     hasSeverity_ = has;
     severity_ = severity;
     repaint();
 }
 
-void DeviceTab::setSelected (const bool selected)
+void SectionTab::setSelected (const bool selected)
 {
     selected_ = selected;
     repaint();
 }
 
-void DeviceTab::paintButton (juce::Graphics& graphics, const bool shouldDrawButtonAsHighlighted,
-                             const bool shouldDrawButtonAsDown)
+void SectionTab::paintButton (juce::Graphics& graphics, const bool shouldDrawButtonAsHighlighted,
+                              const bool shouldDrawButtonAsDown)
 {
     // The design's tab: a pill, `fg-dim` when inactive and the accent with an `accent-bg` fill when
-    // active. The module the device is stays on the pill in the muted colour — a device strip that did not
-    // say which model module a page is would make the report's own module paths unreadable.
+    // active.
     const auto pill = getLocalBounds().toFloat()
                           .withSizeKeepingCentre (getWidth(), static_cast<float> (kPillHeight))
                           .reduced (1.0f, 0.0f);
@@ -72,7 +70,7 @@ void DeviceTab::paintButton (juce::Graphics& graphics, const bool shouldDrawButt
 
     if (hasSeverity_)
     {
-        // The dot says *this device's module* reported something, which is what makes the strip a map of
+        // The dot says *this section's modules* reported something, which is what makes the strip a map of
         // the import rather than a second copy of it. Its colour is the severity ramp, one function.
         auto dotArea = content.removeFromRight (kDotSize + 5.0f);
         graphics.setColour (look::severityColour (severity_));
@@ -80,15 +78,6 @@ void DeviceTab::paintButton (juce::Graphics& graphics, const bool shouldDrawButt
             juce::Rectangle<float> (kDotSize, kDotSize).withCentre (dotArea.getCentre()));
         content.removeFromRight (4.0f);
     }
-
-    const auto moduleFont = look::monoFont (look::type::tag);
-    const auto moduleWidth = juce::jmin (content.getWidth() * 0.5f,
-                                         juce::GlyphArrangement::getStringWidth (moduleFont, module_));
-    auto moduleArea = content.removeFromRight (moduleWidth);
-
-    graphics.setColour (look::fgMuted);
-    graphics.setFont (moduleFont);
-    graphics.drawText (module_, moduleArea.toNearestInt(), juce::Justification::centredRight, true);
 
     graphics.setColour (selected_ ? look::accent : (shouldDrawButtonAsHighlighted ? look::fg : look::fgDim));
     graphics.setFont (look::bodyFont (look::type::section, true));
@@ -102,21 +91,19 @@ void DeviceTab::paintButton (juce::Graphics& graphics, const bool shouldDrawButt
 }
 
 //==============================================================================
-DeviceStrip::DeviceStrip()
+SectionStrip::SectionStrip()
 {
     setInterceptsMouseClicks (false, true);
 }
 
-void DeviceStrip::setDevices (std::vector<juce::String> titles, std::vector<juce::String> modules)
+void SectionStrip::setSections (std::vector<juce::String> titles)
 {
     tabs_.clear();
 
-    const auto count = std::min (titles.size(), modules.size());
-
-    for (std::size_t i = 0; i < count; ++i)
+    for (std::size_t i = 0; i < titles.size(); ++i)
     {
-        auto* tab = tabs_.add (new DeviceTab());
-        tab->setDevice (titles[i], modules[i]);
+        auto* tab = tabs_.add (new SectionTab());
+        tab->setSection (titles[i]);
         tab->onClick = [this, index = static_cast<int> (i)]
         {
             if (onSelect)
@@ -126,63 +113,58 @@ void DeviceStrip::setDevices (std::vector<juce::String> titles, std::vector<juce
         addAndMakeVisible (*tab);
     }
 
-    selected_ = count == 0 ? 0 : std::min (selected_, static_cast<int> (count) - 1);
+    selected_ = titles.empty() ? 0 : std::min (selected_, static_cast<int> (titles.size()) - 1);
     resized();
 }
 
-juce::String DeviceStrip::deviceTitle (const int index) const
+juce::String SectionStrip::sectionTitle (const int index) const
 {
-    return index >= 0 && index < deviceCount() ? tabs_[index]->deviceTitle() : juce::String();
+    return index >= 0 && index < sectionCount() ? tabs_[index]->sectionTitle() : juce::String();
 }
 
-juce::String DeviceStrip::deviceModule (const int index) const
+void SectionStrip::setSelected (const int index)
 {
-    return index >= 0 && index < deviceCount() ? tabs_[index]->moduleName() : juce::String();
-}
-
-void DeviceStrip::setSelected (const int index)
-{
-    if (index < 0 || index >= deviceCount())
+    if (index < 0 || index >= sectionCount())
         return;
 
     selected_ = index;
 
-    for (int i = 0; i < deviceCount(); ++i)
+    for (int i = 0; i < sectionCount(); ++i)
         tabs_[i]->setSelected (i == index);
 
     repaint();
 }
 
-void DeviceStrip::setSeverity (const int index, const bool has, const model::Severity severity)
+void SectionStrip::setSeverity (const int index, const bool has, const model::Severity severity)
 {
-    if (index >= 0 && index < deviceCount())
+    if (index >= 0 && index < sectionCount())
         tabs_[index]->setSeverity (has, severity);
 }
 
-void DeviceStrip::clearSeverity()
+void SectionStrip::clearSeverity()
 {
     for (auto* tab : tabs_)
         tab->setSeverity (false, model::Severity::Info);
 }
 
-bool DeviceStrip::hasDeviceSeverity (const int index) const
+bool SectionStrip::hasSectionSeverity (const int index) const
 {
-    return index >= 0 && index < deviceCount() && tabs_[index]->hasSeverity();
+    return index >= 0 && index < sectionCount() && tabs_[index]->hasSeverity();
 }
 
-model::Severity DeviceStrip::deviceSeverity (const int index) const
+model::Severity SectionStrip::sectionSeverity (const int index) const
 {
-    return index >= 0 && index < deviceCount() ? tabs_[index]->severity() : model::Severity::Info;
+    return index >= 0 && index < sectionCount() ? tabs_[index]->severity() : model::Severity::Info;
 }
 
-juce::Rectangle<int> DeviceStrip::tabBounds (const int index) const
+juce::Rectangle<int> SectionStrip::tabBounds (const int index) const
 {
-    return index >= 0 && index < deviceCount() ? tabs_[index]->getBounds() : juce::Rectangle<int>();
+    return index >= 0 && index < sectionCount() ? tabs_[index]->getBounds() : juce::Rectangle<int>();
 }
 
-void DeviceStrip::resized()
+void SectionStrip::resized()
 {
-    const auto count = deviceCount();
+    const auto count = sectionCount();
 
     if (count == 0)
         return;
@@ -199,7 +181,7 @@ void DeviceStrip::resized()
     }
 }
 
-void DeviceStrip::paint (juce::Graphics& graphics)
+void SectionStrip::paint (juce::Graphics& graphics)
 {
     // A tab bar, not a second panel: the surface colour, closed by the border underneath.
     auto area = getLocalBounds();

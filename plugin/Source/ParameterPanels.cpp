@@ -3,8 +3,10 @@
 #include "ParameterPanels.h"
 
 #include "InterfaceLook.h"
+#include "ModulationMatrixView.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace xerum::plugin::ui
 {
@@ -14,6 +16,11 @@ namespace
 constexpr int kReadoutHeight = 13;
 constexpr int kLabelHeight = 11;
 constexpr int kToggleMaxWidth = 150;
+constexpr int kPillHeight = 18;
+constexpr int kPillGap = 2;
+constexpr int kCompactTitleHeight = 12;
+constexpr int kArrowSize = 16;
+constexpr int kArrowGap = 1;
 
 /// The diameters the design system names, in one place.
 float diameterFor (const KnobSize size)
@@ -26,6 +33,13 @@ float diameterFor (const KnobSize size)
     }
 
     return static_cast<float> (look::knobDiameter);
+}
+
+/// The face a slider's label is drawn in — the same one `ParameterControl::paint` uses, so a cell's width
+/// and the text drawn in it cannot disagree.
+juce::Font labelFontFor (const KnobSize size)
+{
+    return look::bodyFont (size == KnobSize::Default ? look::type::label : look::type::tag);
 }
 
 /// A knob's parts at a given diameter: the design's 44px spec, as fractions.
@@ -84,6 +98,29 @@ juce::Colour signColour (const double value)
         return look::red;
 
     return look::fgMuted;
+}
+
+/// How wide a choice's option row wants to be: the design's `btn-opt` pill, 2px 7px of padding around
+/// text, in a row with its own 2px gaps.
+int pillsWidth (const ChoiceList& choices)
+{
+    const auto font = look::bodyFont (look::type::label, true);
+    int width = 0;
+
+    for (int i = 0; i < choices.size(); ++i)
+        width += static_cast<int> (juce::GlyphArrangement::getStringWidth (font, choices.labels[i])) + 14
+                 + (i > 0 ? kPillGap : 0);
+
+    return width;
+}
+
+/// A toggle's pill, as `PillToggle` draws it: the dot, its gap and the label, inside 6px of padding.
+int togglePillWidth (const juce::String& text)
+{
+    const auto font = look::bodyFont (look::type::label);
+
+    return juce::jmin (kToggleMaxWidth,
+                       static_cast<int> (juce::GlyphArrangement::getStringWidth (font, text)) + 5 + 3 + 12);
 }
 } // namespace
 
@@ -311,6 +348,293 @@ void PillToggle::paintButton (juce::Graphics& graphics, const bool shouldDrawBut
 }
 
 //==============================================================================
+ChoiceButtons::ChoiceButtons (juce::RangedAudioParameter& parameter, const ChoiceList& choices)
+    : juce::ParameterAttachment (parameter,
+                                 [this] (const float value) { parameterChanged (indexFor (value)); }),
+      choices_ (choices)
+{
+    setWantsKeyboardFocus (true);
+
+    // The parameter may already be somewhere else than the default: read it, do not assume it.
+    sendInitialUpdate();
+}
+
+int ChoiceButtons::choiceCount() const
+{
+    return choices_.size();
+}
+
+juce::String ChoiceButtons::choiceText (const int index) const
+{
+    return index >= 0 && index < choiceCount() ? choices_.labels[index] : juce::String();
+}
+
+int ChoiceButtons::indexFor (const float denormalised) const
+{
+    // JUCE's own `ParameterAttachment` hands its callback the parameter's value in **its own units**, and
+    // an `AudioParameterChoice`'s own unit *is* the choice index (its normalisable range is `0..items-1`
+    // with a step of 1). So this is a rounding, not a scale — the scale is the host's business.
+    const auto count = choiceCount();
+
+    return count <= 0 ? 0 : juce::jlimit (0, count - 1, static_cast<int> (std::lround (denormalised)));
+}
+
+void ChoiceButtons::parameterChanged (const int index)
+{
+    if (index == selected_)
+        return;
+
+    selected_ = index;
+    repaint();
+}
+
+juce::Rectangle<int> ChoiceButtons::buttonBounds (const int index) const
+{
+    if (index < 0 || index >= choiceCount())
+        return {};
+
+    const auto font = look::bodyFont (look::type::label, true);
+    const auto top = (getHeight() - kPillHeight) / 2;
+    auto x = 0;
+
+    for (int i = 0; i <= index; ++i)
+    {
+        const auto width = static_cast<int> (juce::GlyphArrangement::getStringWidth (font, choices_.labels[i])) + 14;
+
+        if (i == index)
+            return { x, top, width, kPillHeight };
+
+        x += width + kPillGap;
+    }
+
+    return {};
+}
+
+int ChoiceButtons::preferredWidth() const
+{
+    return pillsWidth (choices_);
+}
+
+void ChoiceButtons::resized()
+{
+    repaint();
+}
+
+void ChoiceButtons::paint (juce::Graphics& graphics)
+{
+    const auto font = look::bodyFont (look::type::label, true);
+
+    for (int i = 0; i < choiceCount(); ++i)
+    {
+        const auto pill = buttonBounds (i).toFloat();
+        const auto active = i == selected_;
+        const auto hovered = i == hovered_;
+
+        if (active)
+        {
+            graphics.setColour (look::accentBg);
+            graphics.fillRoundedRectangle (pill, pill.getHeight() * 0.5f);
+            graphics.setColour (look::accentDim);
+            graphics.drawRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f, 1.0f);
+        }
+        else if (hovered)
+        {
+            graphics.setColour (look::borderHi);
+            graphics.drawRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f, 1.0f);
+        }
+        else
+        {
+            graphics.setColour (look::border);
+            graphics.drawRoundedRectangle (pill.reduced (0.5f), pill.getHeight() * 0.5f, 1.0f);
+        }
+
+        graphics.setColour (active ? look::accent : (hovered ? look::fg : look::fgDim));
+        graphics.setFont (font);
+        graphics.drawText (choices_.labels[i], pill.toNearestInt(), juce::Justification::centred, true);
+    }
+}
+
+bool ChoiceButtons::keyPressed (const juce::KeyPress& key)
+{
+    const auto code = key.getKeyCode();
+    const auto step = (code == juce::KeyPress::leftKey || code == juce::KeyPress::upKey)
+                          ? -1
+                          : ((code == juce::KeyPress::rightKey || code == juce::KeyPress::downKey) ? 1 : 0);
+
+    if (step == 0 || choiceCount() <= 1)
+        return false;
+
+    const auto next = juce::jlimit (0, choiceCount() - 1, selected_ + step);
+
+    if (next != selected_)
+        setValueAsCompleteGesture (static_cast<float> (next));
+
+    return true;
+}
+
+void ChoiceButtons::mouseDown (const juce::MouseEvent&)
+{
+    grabKeyboardFocus();
+}
+
+void ChoiceButtons::mouseUp (const juce::MouseEvent& event)
+{
+    for (int i = 0; i < choiceCount(); ++i)
+        if (buttonBounds (i).contains (event.getPosition()))
+        {
+            // A click is a complete gesture, not a drag: the host sees one value change. The value is the
+            // choice **index**, in the parameter's own units (see `indexFor`).
+            setValueAsCompleteGesture (static_cast<float> (i));
+            return;
+        }
+}
+
+void ChoiceButtons::mouseMove (const juce::MouseEvent& event)
+{
+    auto found = -1;
+
+    for (int i = 0; i < choiceCount(); ++i)
+        if (buttonBounds (i).contains (event.getPosition()))
+            found = i;
+
+    if (found == hovered_)
+        return;
+
+    hovered_ = found;
+    repaint();
+}
+
+void ChoiceButtons::mouseExit (const juce::MouseEvent&)
+{
+    if (hovered_ < 0)
+        return;
+
+    hovered_ = -1;
+    repaint();
+}
+
+//==============================================================================
+WavetableSlot::WavetableSlot()
+{
+    setWantsKeyboardFocus (false);
+}
+
+void WavetableSlot::setTableName (juce::String name)
+{
+    name_ = std::move (name);
+    repaint();
+}
+
+void WavetableSlot::setSteppable (const bool steppable)
+{
+    steppable_ = steppable;
+    repaint();
+}
+
+juce::Rectangle<int> WavetableSlot::arrowBounds (const int step) const
+{
+    if (! steppable_)
+        return {};
+
+    const auto top = (getHeight() - kArrowSize) / 2;
+    const auto right = getWidth() - kArrowSize;
+
+    return step < 0 ? juce::Rectangle<int> (right - kArrowSize - kArrowGap, top, kArrowSize, kArrowSize)
+                    : juce::Rectangle<int> (right, top, kArrowSize, kArrowSize);
+}
+
+void WavetableSlot::resized()
+{
+    repaint();
+}
+
+void WavetableSlot::paint (juce::Graphics& graphics)
+{
+    // The design's `wavetable-name`: a monospaced field on `bg`, 1px border, 3px radius, taking the width
+    // the arrows do not.
+    const auto arrows = steppable_ ? kArrowSize * 2 + kArrowGap : 0;
+    auto field = getLocalBounds().withTrimmedRight (arrows > 0 ? arrows + 4 : 0)
+                     .withSizeKeepingCentre (getWidth() - (arrows > 0 ? arrows + 4 : 0), 18);
+
+    graphics.setColour (look::bg);
+    graphics.fillRoundedRectangle (field.toFloat(), 3.0f);
+    graphics.setColour (look::border);
+    graphics.drawRoundedRectangle (field.toFloat().reduced (0.5f), 3.0f, 1.0f);
+
+    graphics.setColour (look::fg);
+    graphics.setFont (look::monoFont (9.0f));
+    graphics.drawText (name_.isEmpty() ? juce::String ("\xe2\x80\x94 off \xe2\x80\x94") : name_,
+                       field.reduced (7, 0), juce::Justification::centredLeft, true);
+
+    if (! steppable_)
+        return;
+
+    for (const auto step : { -1, 1 })
+    {
+        const auto box = arrowBounds (step).toFloat();
+
+        graphics.setColour (look::bg);
+        graphics.fillRoundedRectangle (box, 3.0f);
+        graphics.setColour (hovered_ == step ? look::borderHi : look::border);
+        graphics.drawRoundedRectangle (box.reduced (0.5f), 3.0f, 1.0f);
+
+        // The design's arrows are glyphs; drawn as paths so the direction is a shape rather than a
+        // character that a fallback font might render as a box.
+        const auto centre = box.getCentre();
+        juce::Path triangle;
+        const auto half = 3.0f;
+
+        if (step < 0)
+            triangle.addTriangle (centre.x + half, centre.y - half, centre.x + half, centre.y + half,
+                                  centre.x - half, centre.y);
+        else
+            triangle.addTriangle (centre.x - half, centre.y - half, centre.x - half, centre.y + half,
+                                  centre.x + half, centre.y);
+
+        graphics.setColour (hovered_ == step ? look::fg : look::fgDim);
+        graphics.fillPath (triangle);
+    }
+}
+
+void WavetableSlot::mouseDown (const juce::MouseEvent& event)
+{
+    if (! steppable_ || ! onStep)
+        return;
+
+    for (const auto step : { -1, 1 })
+        if (arrowBounds (step).contains (event.getPosition()))
+        {
+            onStep (step);
+            return;
+        }
+}
+
+void WavetableSlot::mouseMove (const juce::MouseEvent& event)
+{
+    auto found = 0;
+
+    if (steppable_)
+        for (const auto step : { -1, 1 })
+            if (arrowBounds (step).contains (event.getPosition()))
+                found = step;
+
+    if (found == hovered_)
+        return;
+
+    hovered_ = found;
+    repaint();
+}
+
+void WavetableSlot::mouseExit (const juce::MouseEvent&)
+{
+    if (hovered_ == 0)
+        return;
+
+    hovered_ = 0;
+    repaint();
+}
+
+//==============================================================================
 ParameterControl::ParameterControl (const ParamSpec& spec, juce::RangedAudioParameter& parameter,
                                     const ChoiceList& choices, const bool showLabel)
     : spec_ (spec),
@@ -333,19 +657,29 @@ ParameterControl::ParameterControl (const ParamSpec& spec, juce::RangedAudioPara
     }
     else if (kind == ControlKind::Choice)
     {
-        // The items are the bridge's vocabulary, in its order: the attachment maps item index onto the
-        // parameter's steps linearly, so the combo must hold exactly the choices the parameter has — no
-        // more (a phantom choice) and no fewer (a choice the user cannot reach).
-        for (int i = 0; i < choices.size(); ++i)
-            combo_.addItem (choices.labels[i], i + 1);
+        // The design draws a short vocabulary as a row of option buttons and a long one as a picker, and
+        // the choice is the vocabulary's length rather than the group's name.
+        if (choiceStyleFor (choices.size()) == ChoiceStyle::Buttons)
+        {
+            choiceButtons_ = std::make_unique<ChoiceButtons> (parameter, choices);
+            widget_ = choiceButtons_.get();
+        }
+        else
+        {
+            // The items are the bridge's vocabulary, in its order: the attachment maps item index onto the
+            // parameter's steps linearly, so the combo must hold exactly the choices the parameter has — no
+            // more (a phantom choice) and no fewer (a choice the user cannot reach).
+            for (int i = 0; i < choices.size(); ++i)
+                combo_.addItem (choices.labels[i], i + 1);
 
-        combo_.setColour (juce::ComboBox::backgroundColourId, look::bg);
-        combo_.setColour (juce::ComboBox::textColourId, look::fg);
-        combo_.setColour (juce::ComboBox::outlineColourId, look::border);
-        combo_.setColour (juce::ComboBox::arrowColourId, look::accent);
-        combo_.setWantsKeyboardFocus (true);
-        widget_ = &combo_;
-        choiceAttachment_ = std::make_unique<juce::ComboBoxParameterAttachment> (parameter, combo_);
+            combo_.setColour (juce::ComboBox::backgroundColourId, look::bg);
+            combo_.setColour (juce::ComboBox::textColourId, look::fg);
+            combo_.setColour (juce::ComboBox::outlineColourId, look::border);
+            combo_.setColour (juce::ComboBox::arrowColourId, look::accent);
+            combo_.setWantsKeyboardFocus (true);
+            widget_ = &combo_;
+            choiceAttachment_ = std::make_unique<juce::ComboBoxParameterAttachment> (parameter, combo_);
+        }
     }
     else
     {
@@ -374,9 +708,44 @@ juce::String ParameterControl::label() const
     return juce::String (spec_.label);
 }
 
+ChoiceStyle ParameterControl::choiceStyle() const
+{
+    if (controlKindFor (spec_.type) != ControlKind::Choice)
+        return ChoiceStyle::Menu;
+
+    return choiceButtons_ != nullptr ? ChoiceStyle::Buttons : ChoiceStyle::Menu;
+}
+
 bool ParameterControl::isBound() const
 {
-    return toggleAttachment_ != nullptr || choiceAttachment_ != nullptr || sliderAttachment_ != nullptr;
+    return toggleAttachment_ != nullptr || choiceAttachment_ != nullptr || sliderAttachment_ != nullptr
+           || choiceButtons_ != nullptr;
+}
+
+int ParameterControl::preferredWidth() const
+{
+    const auto kind = controlKindFor (spec_.type);
+
+    if (kind == ControlKind::Toggle)
+        return togglePillWidth (showLabel_ ? label() : juce::String());
+
+    if (kind == ControlKind::Choice)
+    {
+        const auto labelWidth = static_cast<int> (juce::GlyphArrangement::getStringWidth (
+                                     look::bodyFont (look::type::label), label())) + 8;
+
+        if (choiceButtons_ != nullptr)
+            return labelWidth + juce::jmax (80, choiceButtons_->preferredWidth()) + 6;
+
+        // The picker takes the row it is on: the label column and the control share the width.
+        return juce::jmax (kRowLabelWidth, 240);
+    }
+
+    const auto diameter = static_cast<int> (diameterFor (knob_.size()));
+    const auto labelWidth = static_cast<int> (juce::GlyphArrangement::getStringWidth (
+                                labelFontFor (knob_.size()), label()));
+
+    return juce::jmax (diameter + 4, labelWidth + 4);
 }
 
 void ParameterControl::paint (juce::Graphics& graphics)
@@ -406,8 +775,7 @@ void ParameterControl::paint (juce::Graphics& graphics)
         const auto labelCentre = juce::Rectangle<int> (0, 0, juce::jmax (footprint, 60), labelArea.getHeight())
                                      .withCentre ({ area.getCentreX(), labelArea.getCentreY() });
         graphics.setColour (look::fgDim);
-        graphics.setFont (look::bodyFont (knob_.size() == KnobSize::Default ? look::type::label
-                                                                           : look::type::tag));
+        graphics.setFont (labelFontFor (knob_.size()));
         graphics.drawText (label(), labelCentre, juce::Justification::centred, true);
     }
     else if (kind == ControlKind::Choice)
@@ -416,7 +784,8 @@ void ParameterControl::paint (juce::Graphics& graphics)
         const auto labelWidth = juce::jmin (kRowLabelWidth, (area.getWidth() * 2) / 5);
 
         graphics.setColour (look::fgDim);
-        graphics.setFont (look::bodyFont (11.0f));
+        graphics.setFont (choiceButtons_ != nullptr ? look::bodyFont (look::type::label)
+                                                    : look::bodyFont (11.0f));
         graphics.drawText (label(), area.removeFromLeft (labelWidth).reduced (2, 0),
                            juce::Justification::centredLeft, true);
     }
@@ -447,7 +816,13 @@ void ParameterControl::resized()
         const auto labelWidth = juce::jmin (kRowLabelWidth, (area.getWidth() * 2) / 5);
 
         area.removeFromLeft (labelWidth);
-        combo_.setBounds (area.reduced (2, 3));
+
+        if (choiceButtons_ != nullptr)
+            choiceButtons_->setBounds (area.removeFromLeft (
+                juce::jmin (area.getWidth(), choiceButtons_->preferredWidth())));
+        else
+            combo_.setBounds (area.reduced (2, 3));
+
         return;
     }
 
@@ -471,9 +846,29 @@ void ParameterPanel::addControl (std::unique_ptr<ParameterControl> control)
     controls_.add (control.release());
 }
 
-void ParameterPanel::setColumns (std::vector<std::vector<int>> columns)
+void ParameterPanel::setWavetableSlot (std::unique_ptr<WavetableSlot> slot)
 {
-    columns_ = std::move (columns);
+    wavetable_ = std::move (slot);
+
+    if (wavetable_ != nullptr)
+        addAndMakeVisible (*wavetable_);
+
+    resized();
+}
+
+void ParameterPanel::setInlineDisplay (juce::Component* display)
+{
+    display_ = display;
+
+    if (display_ != nullptr)
+        addAndMakeVisible (*display_);
+
+    resized();
+}
+
+void ParameterPanel::setCompact (const bool compact)
+{
+    compact_ = compact;
     resized();
 }
 
@@ -491,8 +886,139 @@ ParameterControl* ParameterPanel::controlFor (const std::string_view id) const
     return nullptr;
 }
 
+int ParameterPanel::displayReserve (const int width) const
+{
+    if (display_ == nullptr)
+        return 0;
+
+    const auto available = width - kPanelPadding * 2;
+
+    return juce::jlimit (0, juce::jmax (0, available / 2),
+                         juce::jmax (kInlineDisplayMinWidth, available * 2 / 5));
+}
+
+int ParameterPanel::cellWidthFor (const ParameterControl& control, const int inner) const
+{
+    const auto kind = controlKindFor (control.spec().type);
+
+    if (kind == ControlKind::Choice && control.choiceStyle() == ChoiceStyle::Menu)
+        return inner;   // a picker takes its whole row — the design's label column plus the control
+
+    return juce::jmin (inner, control.preferredWidth());
+}
+
+std::vector<ParameterPanel::Row> ParameterPanel::rowsFor (const int width) const
+{
+    const auto reserve = displayReserve (width);
+    const auto inner = juce::jmax (60, width - kPanelPadding * 2 - reserve
+                                             - (display_ != nullptr ? kInlineGap : 0));
+
+    // How the design groups a panel's controls. `KnobSize::Small` is the design's one compact band —
+    // NOISE and SUB put their knobs and their option buttons on one line (`--gap-inline`) — and every
+    // other panel groups by kind in the design's order: the knobs are the body, then the pickers, then the
+    // pills at the bottom (`osc-knobs` then `osc-controls`).
+    const auto smallBand = controls_.size() > 0
+                           && knobSizeFor (controls_.getFirst()->spec()) == KnobSize::Small;
+
+    std::vector<std::vector<int>> groups;
+
+    if (smallBand)
+    {
+        std::vector<int> band;
+        std::vector<int> pills;
+
+        for (int i = 0; i < controls_.size(); ++i)
+        {
+            if (controlKindFor (controls_[i]->spec().type) == ControlKind::Toggle)
+                pills.push_back (i);
+            else
+                band.push_back (i);
+        }
+
+        if (! band.empty())
+            groups.push_back (std::move (band));
+
+        if (! pills.empty())
+            groups.push_back (std::move (pills));
+    }
+    else
+    {
+        for (const auto kind : { ControlKind::Slider, ControlKind::Choice, ControlKind::Toggle })
+        {
+            std::vector<int> group;
+
+            for (int i = 0; i < controls_.size(); ++i)
+                if (controlKindFor (controls_[i]->spec().type) == kind)
+                    group.push_back (i);
+
+            if (! group.empty())
+                groups.push_back (std::move (group));
+        }
+    }
+
+    std::vector<Row> rows;
+
+    for (const auto& group : groups)
+    {
+        Row row;
+        int used = 0;
+
+        for (const auto index : group)
+        {
+            const auto cell = cellWidthFor (*controls_[index], inner);
+            const auto gap = row.controls.empty() ? 0 : kKnobCellGap;
+
+            if (! row.controls.empty() && used + gap + cell > inner)
+            {
+                rows.push_back (row);
+                row = Row {};
+                used = 0;
+            }
+
+            used += (row.controls.empty() ? 0 : kKnobCellGap) + cell;
+            row.height = juce::jmax (row.height, rowHeightFor (controls_[index]->spec()));
+            row.controls.push_back (index);
+        }
+
+        if (! row.controls.empty())
+            rows.push_back (std::move (row));
+    }
+
+    return rows;
+}
+
+int ParameterPanel::preferredHeight (const int width) const
+{
+    int content = 0;
+
+    for (const auto& row : rowsFor (width))
+        content += row.height + kRowGap;
+
+    if (content > 0)
+        content -= kRowGap;
+
+    const auto chrome = compact_ ? kPanelPadding / 2 + kCompactTitleHeight : kPanelPadding * 2;
+    const auto table = (! compact_ && wavetable_ != nullptr) ? kWavetableHeadHeight : 0;
+    auto height = (compact_ ? 0 : kPanelHeaderHeight) + table + chrome + content;
+
+    if (display_ != nullptr)
+        height = juce::jmax (height, chrome + kInlineDisplayMinHeight);
+
+    return height;
+}
+
 void ParameterPanel::paint (juce::Graphics& graphics)
 {
+    if (compact_)
+    {
+        // A macro item: the design draws the knob bare, with its label under it and no panel around it.
+        graphics.setColour (look::fgMuted);
+        graphics.setFont (look::bodyFont (look::type::tag, true));
+        graphics.drawText (juce::String (title_).toUpperCase(), getLocalBounds().removeFromBottom (kCompactTitleHeight),
+                           juce::Justification::centred, true);
+        return;
+    }
+
     auto area = getLocalBounds().toFloat();
 
     graphics.setColour (look::surface);
@@ -511,44 +1037,268 @@ void ParameterPanel::paint (juce::Graphics& graphics)
 
 void ParameterPanel::resized()
 {
-    auto area = getLocalBounds().reduced (kPanelPadding);
+    auto area = getLocalBounds();
 
-    area.removeFromTop (kPanelHeaderHeight);
+    if (! compact_)
+        area = area.reduced (kPanelPadding);
 
-    // No columns set means one column: the plan always sets them, but a panel built by hand (a test) must
-    // still be laid out rather than left with every control at zero size.
-    if (columns_.empty())
+    if (! compact_)
+        area.removeFromTop (kPanelHeaderHeight);
+
+    if (! compact_ && wavetable_ != nullptr)
+        wavetable_->setBounds (area.removeFromTop (kWavetableHeadHeight));
+
+    if (compact_)
+        area.removeFromBottom (kCompactTitleHeight);
+
+    if (display_ != nullptr)
     {
-        for (auto* control : controls_)
-        {
-            control->setBounds (area.removeFromTop (rowHeightFor (control->spec())));
-            area.removeFromTop (kRowGap);
-        }
-
-        return;
+        auto displayArea = area.removeFromRight (displayReserve (getWidth()));
+        display_->setBounds (displayArea);
+        area.removeFromRight (kInlineGap);
     }
 
-    const auto columns = static_cast<int> (columns_.size());
-    const auto columnWidth = (area.getWidth() - kColumnGap * (columns - 1)) / columns;
-
-    auto remaining = area;
-
-    for (const auto& column : columns_)
+    for (const auto& row : rowsFor (getWidth()))
     {
-        auto slot = remaining.removeFromLeft (columnWidth);
-        remaining.removeFromLeft (kColumnGap);
+        auto line = area.removeFromTop (row.height);
+        int x = 0;
 
-        for (const auto row : column)
+        for (const auto index : row.controls)
         {
-            if (auto* control = controlAtRow (row))
+            auto* control = controls_[index];
+            const auto cell = juce::jmin (cellWidthFor (*control, line.getWidth()),
+                                          juce::jmax (0, line.getWidth() - x));
+
+            if (cell <= 0)
+                break;
+
+            control->setBounds (line.getX() + x, line.getY(), cell, row.height);
+            x += cell + kKnobCellGap;
+        }
+
+        area.removeFromTop (kRowGap);
+    }
+}
+
+//==============================================================================
+CompositionView::CompositionView()
+{
+    setInterceptsMouseClicks (false, true);
+}
+
+void CompositionView::setComposition (std::vector<SectionPlan> sections,
+                                      std::vector<ParameterPanel*> panels)
+{
+    sections_ = std::move (sections);
+    panels_.assign (sections_.size(), {});
+    bounds_.assign (sections_.size(), {});
+
+    for (std::size_t index = 0; index < sections_.size(); ++index)
+        for (const auto panel : sections_[index].panels)
+            if (panel >= 0 && panel < static_cast<int> (panels.size()) && panels[static_cast<std::size_t> (panel)] != nullptr)
             {
-                // The control takes the whole column: a knob centres itself in it, and a label/control row
-                // uses the width it is given rather than being clipped to a written-down number.
-                control->setBounds (slot.removeFromTop (rowHeightFor (control->spec())));
-                slot.removeFromTop (kRowGap);
+                panels_[index].push_back (panels[static_cast<std::size_t> (panel)]);
+                addAndMakeVisible (*panels_[index].back());
+            }
+}
+
+void CompositionView::setMatrix (juce::Component* matrixViewport)
+{
+    matrix_ = matrixViewport;
+
+    if (matrix_ != nullptr)
+        addAndMakeVisible (*matrix_);
+}
+
+juce::Rectangle<int> CompositionView::sectionBounds (const int index) const
+{
+    return index >= 0 && index < static_cast<int> (bounds_.size()) ? bounds_[static_cast<std::size_t> (index)]
+                                                                   : juce::Rectangle<int>();
+}
+
+int CompositionView::sectionAt (const int y) const
+{
+    for (std::size_t index = 0; index < bounds_.size(); ++index)
+        if (y >= bounds_[index].getY() && y < bounds_[index].getBottom())
+            return static_cast<int> (index);
+
+    return -1;
+}
+
+int CompositionView::layout (const int width)
+{
+    // The sections are laid out in **bands**: consecutive entries sharing a `band` sit side by side in one
+    // row. That is the design's `bottom-row` — the effects cards beside the macro strip — expressed as
+    // data, and the reason a section carries its row rather than its own y.
+    int y = 0;
+    std::size_t index = 0;
+
+    while (index < sections_.size())
+    {
+        std::size_t end = index + 1;
+
+        while (end < sections_.size() && sections_[end].band == sections_[index].band)
+            ++end;
+
+        const auto count = static_cast<int> (end - index);
+
+        // A strip is as wide as its own items; the panels sections of the band share what is left — the
+        // design's `flex: 1` beside a natural-width strip.
+        std::vector<int> widths (static_cast<std::size_t> (count), 0);
+        int fixed = 0;
+        int flexibleCount = 0;
+
+        for (int i = 0; i < count; ++i)
+        {
+            const auto& section = sections_[index + static_cast<std::size_t> (i)];
+
+            if (section.kind == SectionKind::Strip)
+            {
+                const auto items = static_cast<int> (panels_[index + static_cast<std::size_t> (i)].size());
+                widths[static_cast<std::size_t> (i)] = items == 0
+                                                           ? 0
+                                                           : items * kMacroItemWidth + (items - 1) * kPanelGap;
+                fixed += widths[static_cast<std::size_t> (i)];
+            }
+            else
+            {
+                ++flexibleCount;
             }
         }
+
+        const auto gaps = (count - 1) * kPanelGap;
+        auto remaining = juce::jmax (flexibleCount * 80, width - fixed - gaps);
+
+        for (int i = 0; i < count; ++i)
+        {
+            const auto& section = sections_[index + static_cast<std::size_t> (i)];
+
+            if (section.kind == SectionKind::Strip)
+                continue;
+
+            widths[static_cast<std::size_t> (i)] = remaining / flexibleCount;
+            remaining -= widths[static_cast<std::size_t> (i)];
+            --flexibleCount;
+        }
+
+        // The band's height is its tallest section, and a section's height is its heading plus the tallest
+        // panel it holds at the width it was given.
+        int bandHeight = 0;
+        std::vector<int> heights (static_cast<std::size_t> (count), 0);
+
+        for (int i = 0; i < count; ++i)
+        {
+            const auto& section = sections_[index + static_cast<std::size_t> (i)];
+            const auto& sectionPanels = panels_[index + static_cast<std::size_t> (i)];
+
+            int tallest = 0;
+
+            if (section.kind == SectionKind::Matrix)
+            {
+                tallest = ModulationMatrixView::kHeaderHeight
+                          + kMatrixVisibleRows * ModulationMatrixView::kRowHeight + 2;
+            }
+            else if (! sectionPanels.empty())
+            {
+                const auto panelWidth = (widths[static_cast<std::size_t> (i)]
+                                         - (static_cast<int> (sectionPanels.size()) - 1) * kPanelGap)
+                                        / static_cast<int> (sectionPanels.size());
+
+                for (auto* panel : sectionPanels)
+                    tallest = juce::jmax (tallest, panel->preferredHeight (panelWidth));
+            }
+
+            heights[static_cast<std::size_t> (i)] = tallest == 0 ? 0 : kSectionTitleHeight + tallest;
+            bandHeight = juce::jmax (bandHeight, heights[static_cast<std::size_t> (i)]);
+        }
+
+        // A single strip alone in its band is centred, which is where the design's `macro-section` puts
+        // it (`align-items: center`).
+        auto x = flexibleCount == 0 && fixed > 0 && fixed < width
+                     ? (width - fixed - gaps) / 2
+                     : 0;
+
+        for (int i = 0; i < count; ++i)
+        {
+            const auto& section = sections_[index + static_cast<std::size_t> (i)];
+            auto& sectionPanels = panels_[index + static_cast<std::size_t> (i)];
+
+            const auto sectionRect = juce::Rectangle<int> (x, y, widths[static_cast<std::size_t> (i)], bandHeight);
+            bounds_[index + static_cast<std::size_t> (i)] = sectionRect;
+
+            auto content = sectionRect.withTrimmedTop (kSectionTitleHeight);
+
+            if (section.kind == SectionKind::Matrix)
+            {
+                if (matrix_ != nullptr)
+                    matrix_->setBounds (content.removeFromTop (
+                        juce::jmin (content.getHeight(),
+                                    ModulationMatrixView::kHeaderHeight
+                                        + kMatrixVisibleRows * ModulationMatrixView::kRowHeight + 2)));
+            }
+            else if (! sectionPanels.empty())
+            {
+                const auto panelWidth = (content.getWidth()
+                                         - (static_cast<int> (sectionPanels.size()) - 1) * kPanelGap)
+                                        / static_cast<int> (sectionPanels.size());
+                auto px = content.getX();
+
+                for (auto* panel : sectionPanels)
+                {
+                    panel->setBounds (px, content.getY(), panelWidth, content.getHeight());
+                    px += panelWidth + kPanelGap;
+                }
+            }
+
+            x += widths[static_cast<std::size_t> (i)] + kPanelGap;
+        }
+
+        y += bandHeight + kSectionGap;
+        index = end;
     }
+
+    totalHeight_ = juce::jmax (0, y - kSectionGap);
+    setSize (width, totalHeight_);
+    return totalHeight_;
+}
+
+void CompositionView::paintSectionHeading (juce::Graphics& graphics, const SectionPlan& section,
+                                           juce::Rectangle<int> bounds) const
+{
+    auto heading = bounds.removeFromTop (kSectionTitleHeight);
+
+    graphics.setColour (look::fgMuted);
+    graphics.setFont (look::bodyFont (look::type::section, true).withExtraKerningFactor (0.18f));
+    graphics.drawText (juce::String (section.title).toUpperCase(), heading,
+                       juce::Justification::centredLeft, false);
+
+    if (section.kind != SectionKind::Matrix)
+        return;
+
+    // The design's tag on the matrix's panel title: how many of the rows are on screen. The number is the
+    // geometry's own — the section is as tall as this many rows — rather than a written-down "8 / 64".
+    const auto font = look::monoFont (look::type::tag, true);
+    const auto label = juce::String (kMatrixVisibleRows) + " / " + juce::String (kModulationSlots);
+    const auto width = static_cast<int> (juce::GlyphArrangement::getStringWidth (font, label)) + 12;
+    const auto tag = juce::Rectangle<int> (heading.getX()
+                                               + static_cast<int> (juce::GlyphArrangement::getStringWidth (
+                                                     look::bodyFont (look::type::section, true), section.title)) + 22,
+                                           heading.getY(), width, heading.getHeight())
+                         .withSizeKeepingCentre (width, 14)
+                         .toFloat();
+
+    graphics.setColour (look::accentBg);
+    graphics.fillRoundedRectangle (tag, 7.0f);
+    graphics.setColour (look::accent);
+    graphics.setFont (font);
+    graphics.drawText (label, tag.toNearestInt(), juce::Justification::centred, true);
+}
+
+void CompositionView::paint (juce::Graphics& graphics)
+{
+    for (std::size_t index = 0; index < sections_.size(); ++index)
+        if (index < bounds_.size() && ! bounds_[index].isEmpty())
+            paintSectionHeading (graphics, sections_[index], bounds_[index]);
 }
 
 } // namespace xerum::plugin::ui

@@ -22,14 +22,9 @@ constexpr int kMargin = 10;
 constexpr int kStripHeight = 30;
 constexpr int kReportBarHeight = 22;
 constexpr int kDrawerHeight = 300;
-constexpr int kColumns = 3;          ///< the most columns a page's rows are spread over
 constexpr int kWordmarkWidth = 84;
 constexpr int kImportWidth = 168;
 constexpr int kStatusWidth = 260;
-
-/// A filter page's pole/zero plane: the height it wants, and the height a page that carries one must
-/// therefore have room for.
-constexpr int kPlaneHeight = 320;
 
 constexpr int kMinWidth = 900;
 constexpr int kMinHeight = 600;
@@ -49,7 +44,7 @@ int XerumAudioProcessorEditor::instancesAlive() { return alive_.load (std::memor
 XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& processor)
     : AudioProcessorEditor (&processor),
       processor_ (processor),
-      plan_ (ui::planInterface (processor.bridge().specs(), kColumns))
+      plan_ (ui::planInterface (processor.bridge().specs(), ui::designedComposition()))
 {
     // The interface's own existence, counted. A host opening the interface is the only thing that moves
     // these, and `plugin/tests/interface_test.cpp` asserts it.
@@ -58,52 +53,64 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
     schemaLeaves_ = static_cast<int> (model::Schema::instance().leafCount());
 
-    // One page per group, one control per parameter, both straight out of the plan. Nothing below names a
-    // parameter: that is the point, and it is what `controlCount()`/`controlFor()` let a test check
-    // without reading this file.
-    for (int index = 0; index < static_cast<int> (plan_.panels.size()); ++index)
+    // One panel per group and one control per parameter, both straight out of the plan. Nothing below
+    // names a parameter: that is the point, and it is what `controlCount()`/`controlFor()` let a test
+    // check without reading this file.
+    for (const auto& panelPlan : plan_.panels)
     {
-        const auto& panelPlan = plan_.panels[static_cast<std::size_t> (index)];
         auto* panel = panels_.add (new ui::ParameterPanel (panelPlan.title));
 
         for (const auto* spec : panelPlan.specs)
         {
             auto* parameter = processor_.bridge().parameters()[static_cast<std::size_t> (spec->paramIndex)];
             panel->addControl (std::make_unique<ui::ParameterControl> (*spec, *parameter,
-                                                                       processor_.bridge().choices (spec->choiceSet)));
+                                                                      processor_.bridge().choices (spec->choiceSet)));
         }
 
-        // The plan's balance, reaching the screen: the page places rows, it does not choose their column.
-        panel->setColumns (panelPlan.columns);
+        // The design's wavetable slot, in an oscillator panel's head. The arrows step the slot's own
+        // frame position — the one per-slot table control the model has — and a slot without one gets the
+        // field and no arrows rather than arrows that write nothing.
+        if (panelPlan.wavetableSlot >= 0)
+        {
+            auto slot = std::make_unique<ui::WavetableSlot>();
+            auto* raw = slot.get();
+
+            if (auto* position = panelPlan.positionRow >= 0 ? panel->controlAtRow (panelPlan.positionRow)
+                                                            : nullptr)
+                if (auto* knob = position->knob())
+                {
+                    raw->onStep = [knob] (const int step)
+                    { knob->setValue (knob->getValue() + step, juce::sendNotificationSync); };
+                }
+
+            raw->setSteppable (raw->onStep != nullptr);
+            panel->setWavetableSlot (std::move (slot));
+        }
 
         addChildComponent (*panel);
-        devices_.push_back ({ panelPlan.title, panelPlan.module, index, -1 });
     }
 
-    // A voice filter's page carries the filter's drawn response as well — the second surface ticket `43`
-    // called hard. Two planes, one per voice filter, each on the device page whose module it belongs to.
+    // A voice filter's panel carries the filter's **drawn response inside itself**, beside its knobs —
+    // the design's `filter-viz` — because the plane is that filter's display and it edits the very
+    // response it draws (ticket `45`).
     for (int slot = 0; slot < dsp::kFilterSlots; ++slot)
     {
         auto* plane = planes_.add (new ui::PoleZeroPlane());
-        addChildComponent (*plane);
 
-        // Ticket 45: the plane edits, so a section dragged here reaches `VoiceFilter::setPoleZero` through
-        // the processor, which writes the document's `PZs[]` object and republishes the response.
         plane->setEditable (true);
         plane->onSectionChanged = [this, slot] (const int section, const dsp::PoleZeroSection& value)
         { processor_.setPoleZeroSection (slot, section, value); };
 
         const auto module = "VoiceFilter" + std::to_string (slot);
 
-        for (auto& device : devices_)
-            if (device.module == module)
-                device.plane = planes_.size() - 1;
+        for (int index = 0; index < static_cast<int> (plan_.panels.size()); ++index)
+            if (plan_.panels[static_cast<std::size_t> (index)].module == module)
+                panels_[index]->setInlineDisplay (plane);
     }
 
-    // The matrix page. **The one device the table does not derive**: ticket `45` gave the bridge a
-    // modulation parameter surface, but it is deliberately kept out of `specs()` so `InterfacePlan` does
-    // not turn it into a page — a 512-row page is not a matrix. The page already exists; it is this grid.
-    addChildComponent (matrixViewport_);
+    // The matrix. **The one section the table does not derive**: ticket `45` gave the bridge a modulation
+    // parameter surface, but it is deliberately kept out of `specs()` so `InterfacePlan` does not turn it
+    // into a page of 512 controls — a 512-row page is not a matrix.
     matrixViewport_.setViewedComponent (&matrix_, false);
     matrixViewport_.setScrollBarsShown (true, true);
     matrix_.setSize (ui::ModulationMatrixView::preferredWidth(), ui::ModulationMatrixView::preferredHeight());
@@ -113,23 +120,51 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
     // reads. The other four columns stay painted from the document.
     matrix_.bindToBridge (processor_.bridge());
 
+    // The composition, as data reaching the screen: the plan's sections, the plan's panels, and the matrix.
+    std::vector<ui::ParameterPanel*> panelPointers;
+
+    for (auto* panel : panels_)
+        panelPointers.push_back (panel);
+
+    composition_.setComposition (plan_.sections, panelPointers);
+    composition_.setMatrix (&matrixViewport_);
+    compositionViewport_.setViewedComponent (&composition_, false);
+    compositionViewport_.setScrollBarsShown (true, false);
+    addAndMakeVisible (compositionViewport_);
+
+    // A strip item — a macro in the bottom row — is drawn the way the design draws one: a bare knob with
+    // its label, no panel around it. The section's kind is what says so.
+    for (const auto& section : plan_.sections)
+        if (section.kind == ui::SectionKind::Strip)
+            for (const auto panel : section.panels)
+                panels_[panel]->setCompact (true);
+
     {
-        // The strip, from the devices in the plan's own order, then the matrix. Titles are the table's own
-        // group names — xerum's, not the reference's.
-        devices_.push_back ({ "Matrix", "ModSlot", -1, -1 });
+        // The strip, from the sections in the composition's own order. Titles are xerum's own words for
+        // the bands — not the reference's, and not the plan's group names.
+        std::vector<juce::String> titles;
 
-        std::vector<juce::String> titles, modules;
+        sectionModules_.clear();
 
-        for (const auto& device : devices_)
+        for (const auto& section : plan_.sections)
         {
-            titles.push_back (device.title);
-            modules.push_back (device.module);
+            titles.push_back (juce::String (section.title));
+
+            std::vector<juce::String> modules;
+
+            for (const auto panel : section.panels)
+                modules.push_back (juce::String (plan_.panels[static_cast<std::size_t> (panel)].module));
+
+            if (section.kind == ui::SectionKind::Matrix)
+                modules.push_back ("ModSlot");
+
+            sectionModules_.push_back (std::move (modules));
         }
 
-        strip_.setDevices (std::move (titles), std::move (modules));
+        strip_.setSections (std::move (titles));
     }
 
-    strip_.onSelect = [this] (const int index) { showDevice (index); };
+    strip_.onSelect = [this] (const int index) { scrollToSection (index); };
     addAndMakeVisible (strip_);
 
     // The report surface: the drawer first, so it is *under* the bar it opens from and over the page.
@@ -159,11 +194,10 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
     setResizable (true, true);
     setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
-    setSize (juce::jmax (kMinWidth, juce::jmax (kDefaultWidth, naturalWidth())),
-             juce::jmax (kMinHeight, juce::jmax (kDefaultHeight, naturalHeight())));
+    setSize (kDefaultWidth, kDefaultHeight);
 
     processor_.addChangeListener (this);
-    showDevice (0);
+    scrollToSection (0);
     refreshReport();
 }
 
@@ -171,35 +205,6 @@ XerumAudioProcessorEditor::~XerumAudioProcessorEditor()
 {
     processor_.removeChangeListener (this);
     alive_.fetch_sub (1, std::memory_order_relaxed);
-}
-
-int XerumAudioProcessorEditor::naturalHeight() const
-{
-    int tallest = 200;
-
-    for (int index = 0; index < static_cast<int> (plan_.panels.size()); ++index)
-    {
-        auto page = plan_.panels[static_cast<std::size_t> (index)].height();
-
-        for (const auto& device : devices_)
-            if (device.panel == index && device.plane >= 0)
-                page = juce::jmax (page, kPlaneHeight);
-
-        tallest = juce::jmax (tallest, page);
-    }
-
-    return kHeaderHeight + kStripHeight + ui::kPageHeaderHeight + tallest + kReportBarHeight + kMargin * 3;
-}
-
-int XerumAudioProcessorEditor::naturalWidth() const
-{
-    // A page's own columns are the width that matters, and they come from the plan rather than from a
-    // written-down number: a page with more columns needs a wider window. The matrix is deliberately not
-    // part of this — it scrolls rather than forcing the window wider than a device page needs. Ticket `51`
-    // made a control's cell `kColumnWidth` wide, because a knob is a circle with nothing beside it.
-    const auto columns = plan_.widestPanel();
-
-    return kMargin * 2 + columns * ui::kColumnWidth + (columns - 1) * ui::kColumnGap;
 }
 
 int XerumAudioProcessorEditor::controlCount() const
@@ -226,31 +231,65 @@ ui::ParameterControl* XerumAudioProcessorEditor::controlFor (const std::string_v
     return nullptr;
 }
 
-juce::String XerumAudioProcessorEditor::deviceTitle (const int index) const
+juce::String XerumAudioProcessorEditor::sectionTitle (const int index) const
 {
-    return index >= 0 && index < deviceCount() ? juce::String (devices_[static_cast<std::size_t> (index)].title)
-                                               : juce::String();
+    const auto& sections = composition_.sections();
+
+    return index >= 0 && index < static_cast<int> (sections.size())
+               ? juce::String (sections[static_cast<std::size_t> (index)].title)
+               : juce::String();
 }
 
-juce::String XerumAudioProcessorEditor::deviceModule (const int index) const
+juce::String XerumAudioProcessorEditor::sectionId (const int index) const
 {
-    return index >= 0 && index < deviceCount() ? juce::String (devices_[static_cast<std::size_t> (index)].module)
-                                               : juce::String();
+    const auto& sections = composition_.sections();
+
+    return index >= 0 && index < static_cast<int> (sections.size())
+               ? juce::String (sections[static_cast<std::size_t> (index)].id)
+               : juce::String();
 }
 
-bool XerumAudioProcessorEditor::deviceIsMatrix (const int index) const
+std::vector<juce::String> XerumAudioProcessorEditor::sectionModules (const int index) const
 {
-    return index >= 0 && index < deviceCount() && devices_[static_cast<std::size_t> (index)].panel < 0;
+    return index >= 0 && index < static_cast<int> (sectionModules_.size())
+               ? sectionModules_[static_cast<std::size_t> (index)]
+               : std::vector<juce::String>();
 }
 
-ui::ParameterPanel* XerumAudioProcessorEditor::panelForDevice (const int index) const
+const ui::SectionPlan* XerumAudioProcessorEditor::sectionPlan (const int index) const
 {
-    if (index < 0 || index >= deviceCount())
-        return nullptr;
+    const auto& sections = composition_.sections();
 
-    const auto panel = devices_[static_cast<std::size_t> (index)].panel;
+    return index >= 0 && index < static_cast<int> (sections.size())
+               ? &sections[static_cast<std::size_t> (index)]
+               : nullptr;
+}
 
-    return panel >= 0 ? panels_[panel] : nullptr;
+int XerumAudioProcessorEditor::sectionForModule (const juce::String& module) const
+{
+    for (int index = 0; index < sectionCount(); ++index)
+        for (const auto& candidate : sectionModules (index))
+            if (candidate == module)
+                return index;
+
+    return -1;
+}
+
+bool XerumAudioProcessorEditor::sectionIsMatrix (const int index) const
+{
+    const auto& sections = composition_.sections();
+
+    return index >= 0 && index < static_cast<int> (sections.size())
+           && sections[static_cast<std::size_t> (index)].kind == ui::SectionKind::Matrix;
+}
+
+ui::ParameterPanel* XerumAudioProcessorEditor::panelForGroup (const std::string& group) const
+{
+    for (int index = 0; index < static_cast<int> (plan_.panels.size()); ++index)
+        if (plan_.panels[static_cast<std::size_t> (index)].title == group)
+            return panels_[index];
+
+    return nullptr;
 }
 
 const ui::PoleZeroPlane& XerumAudioProcessorEditor::poleZeroPlane (const int filterSlot) const
@@ -263,33 +302,25 @@ ui::PoleZeroPlane& XerumAudioProcessorEditor::poleZeroPlane (const int filterSlo
     return *planes_[filterSlot];
 }
 
-void XerumAudioProcessorEditor::showDevice (const int index)
+void XerumAudioProcessorEditor::scrollToSection (const int index)
 {
-    if (index < 0 || index >= deviceCount())
+    if (index < 0 || index >= sectionCount())
         return;
 
-    currentDevice_ = index;
+    currentSection_ = index;
     strip_.setSelected (index);
 
-    const auto& device = devices_[static_cast<std::size_t> (index)];
+    // The one page is taller than the window, so a tab is a scroll: the section's own top, which is what
+    // makes the strip a map of the composition rather than a menu of hidden pages.
+    const auto bounds = composition_.sectionBounds (index);
+    compositionViewport_.setViewPosition (0, juce::jmax (0, bounds.getY()));
+    repaint();
+}
 
-    // One device at a time, and the strip is what says so.
-    for (auto* panel : panels_)
-        panel->setVisible (false);
-
-    for (auto* plane : planes_)
-        plane->setVisible (false);
-
-    matrixViewport_.setVisible (device.panel < 0);
-
-    if (device.panel >= 0)
-    {
-        panels_[device.panel]->setVisible (true);
-
-        if (device.plane >= 0)
-            planes_[device.plane]->setVisible (true);
-    }
-
+void XerumAudioProcessorEditor::setReportDrawerOpen (const bool open)
+{
+    reportBar_.setDrawerOpen (open);
+    reportViewport_.setVisible (open);
     resized();
     repaint();
 }
@@ -299,12 +330,41 @@ void XerumAudioProcessorEditor::changeListenerCallback (juce::ChangeBroadcaster*
     refreshReport();
 }
 
-void XerumAudioProcessorEditor::setReportDrawerOpen (const bool open)
+//==============================================================================
+juce::String XerumAudioProcessorEditor::tableNameFor (const model::PresetDocument& document, const int slot)
 {
-    reportBar_.setDrawerOpen (open);
-    reportViewport_.setVisible (open);
-    resized();
-    repaint();
+    const auto prefix = "Oscillator" + std::to_string (slot) + "/WTOsc" + std::to_string (slot);
+
+    // An inline table takes precedence over a path reference in the contract (§5), so the name says which
+    // one the slot is actually rendering from.
+    if (document.parameters.find (prefix + "/embeddedWTData[0]") != document.parameters.end())
+        return "inline";
+
+    const auto found = document.parameters.find (prefix + "/relativePathToWT");
+
+    if (found == document.parameters.end() || ! found->second.isText())
+        return {};
+
+    const auto& path = found->second.text;
+    const auto slash = path.find_last_of ("/\\");
+
+    return juce::String (slash == std::string::npos ? path : path.substr (slash + 1));
+}
+
+void XerumAudioProcessorEditor::updateWavetableHeads()
+{
+    const auto document = processor_.document();
+
+    for (const auto& panelPlan : plan_.panels)
+    {
+        if (panelPlan.wavetableSlot < 0)
+            continue;
+
+        for (auto* panel : panels_)
+            if (panel->title() == panelPlan.title)
+                if (auto* slot = panel->wavetableSlot())
+                    slot->setTableName (tableNameFor (document, panelPlan.wavetableSlot));
+    }
 }
 
 void XerumAudioProcessorEditor::refreshReport()
@@ -345,8 +405,11 @@ void XerumAudioProcessorEditor::refreshReport()
     // one, and a knob nothing addresses draws none.
     updateModulationArcs();
 
-    // The strip's dots: where the import went wrong, on the device it went wrong in.
-    updateDeviceSeverity (report);
+    // The oscillator heads, from the same document: the table a preset names, or `inline`, or nothing.
+    updateWavetableHeads();
+
+    // The strip's dots: where the import went wrong, on the section it went wrong in.
+    updateSectionSeverity (report);
 }
 
 void XerumAudioProcessorEditor::updateModulationArcs()
@@ -392,33 +455,34 @@ void XerumAudioProcessorEditor::updateModulationArcs()
     }
 }
 
-void XerumAudioProcessorEditor::updateDeviceSeverity (const model::ImportReport& report)
+void XerumAudioProcessorEditor::updateSectionSeverity (const model::ImportReport& report)
 {
     strip_.clearSeverity();
 
-    for (int index = 0; index < deviceCount(); ++index)
+    for (int index = 0; index < sectionCount(); ++index)
     {
-        const auto module = deviceModule (index);
         auto has = false;
         auto worst = model::Severity::Info;
 
-        for (const auto& entry : report.entries)
-        {
-            const juce::String path (entry.modulePath);
+        for (const auto& module : sectionModules (index))
+            for (const auto& entry : report.entries)
+            {
+                const juce::String path (entry.modulePath);
 
-            // `ModSlot{N}` is the matrix's module path in a report — the loader reports a row's fields
-            // against the template row, because a row's identity is its slot rather than an instance.
-            const auto matches = module == "ModSlot" ? path.startsWith ("ModSlot")
-                                                     : (path == module || path.startsWith (module + "/"));
+                // `ModSlot{N}` is the matrix's module path in a report — the loader reports a row's fields
+                // against the template row, because a row's identity is its slot rather than an instance.
+                const auto matches = module == "ModSlot"
+                                         ? path.startsWith ("ModSlot")
+                                         : (path == module || path.startsWith (module + "/"));
 
-            if (! matches)
-                continue;
+                if (! matches)
+                    continue;
 
-            has = true;
+                has = true;
 
-            if (entry.severity > worst)
-                worst = entry.severity;
-        }
+                if (entry.severity > worst)
+                    worst = entry.severity;
+            }
 
         strip_.setSeverity (index, has, worst);
     }
@@ -493,7 +557,7 @@ void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
                        field.reduced (8, 0), juce::Justification::centredLeft, true);
 
     // **The honest measure of the gap**, on screen: how many of the schema's leaves this build binds. The
-    // count is the bridge's own length, so it cannot drift from what is actually on the pages.
+    // count is the bridge's own length, so it cannot drift from what is actually on the composition.
     {
         const auto reserved = kStatusWidth + kImportWidth + 24;
         auto coverage = header.removeFromLeft (juce::jmax (0, header.getWidth() - reserved));
@@ -509,61 +573,6 @@ void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
         graphics.setColour (ui::look::fgMuted);
         graphics.drawText (" schema leaves bound", coverage, juce::Justification::centredLeft, true);
     }
-
-    if (devices_.empty() || pageArea_.isEmpty())
-        return;
-
-    // The page's own header: which device, which model module, and how much of it there is. A local copy,
-    // so `paint` never mutates the geometry `resized` computed.
-    auto pageHeader = pageArea_;
-    pageHeader = pageHeader.removeFromTop (ui::kPageHeaderHeight);
-
-    const auto& device = devices_[static_cast<std::size_t> (currentDevice_)];
-
-    graphics.setColour (ui::look::fg);
-    graphics.setFont (ui::look::bodyFont (15.0f, true));
-    auto titleArea = pageHeader.removeFromLeft (190);
-    graphics.drawText (juce::String (device.title).toUpperCase(), titleArea,
-                       juce::Justification::centredLeft, true);
-
-    // The module as a tag — the design's pill tag, in the accent on `accent-bg`.
-    {
-        const auto font = ui::look::monoFont (ui::look::type::tag, true);
-        const auto label = juce::String (device.module);
-        const auto width = static_cast<int> (juce::GlyphArrangement::getStringWidth (font, label)) + 12;
-        auto tag = pageHeader.removeFromLeft (width)
-                       .withSizeKeepingCentre (width, 15)
-                       .toFloat();
-
-        graphics.setColour (ui::look::accentBg);
-        graphics.fillRoundedRectangle (tag, 7.5f);
-        graphics.setColour (ui::look::accent);
-        graphics.setFont (font);
-        graphics.drawText (label, tag.toNearestInt(), juce::Justification::centred, true);
-    }
-
-    juce::String subtitle;
-
-    if (device.panel >= 0)
-    {
-        const auto& panel = plan_.panels[static_cast<std::size_t> (device.panel)];
-
-        subtitle = "device " + juce::String (device.panel + 1) + " of "
-                   + juce::String (static_cast<int> (plan_.panels.size())) + "  ·  "
-                   + juce::String (panel.rows())
-                   + (panel.rows() == 1 ? " control" : " controls") + "  ·  " + juce::String (panel.columnsCount())
-                   + (panel.columnsCount() == 1 ? " column" : " columns");
-    }
-    else
-    {
-        subtitle = "device  ·  " + juce::String (ui::kModulationSlots) + " rows × "
-                   + juce::String (ui::ModulationMatrixView::columnCount())
-                   + " columns, the editable eight bound to the bridge";
-    }
-
-    graphics.setColour (ui::look::fgMuted);
-    graphics.setFont (ui::look::monoFont (ui::look::type::readoutSm));
-    graphics.drawText (subtitle, pageHeader, juce::Justification::centredLeft, true);
 }
 
 void XerumAudioProcessorEditor::resized()
@@ -582,39 +591,31 @@ void XerumAudioProcessorEditor::resized()
     reportBar_.setBounds (area.removeFromBottom (kReportBarHeight));
 
     area = area.reduced (kMargin, 0);
-    pageArea_ = area;
 
-    if (devices_.empty())
-        return;
+    // The composed page. It is one page — the design's whole instrument — and it is taller than the
+    // window, so it lives in a viewport and the strip scrolls it. Its width is the viewport's **visible**
+    // width, which the vertical scrollbar's own presence changes, so the layout runs to a fixed point
+    // rather than assuming one.
+    compositionViewport_.setBounds (area);
 
-    const auto& device = devices_[static_cast<std::size_t> (currentDevice_)];
-    auto content = area.withTrimmedTop (ui::kPageHeaderHeight);
+    auto composeWidth = compositionViewport_.getMaximumVisibleWidth();
 
-    if (device.panel < 0)
+    for (int pass = 0; pass < 3; ++pass)
     {
-        matrixViewport_.setBounds (content);
-    }
-    else
-    {
-        if (device.plane >= 0)
-        {
-            auto planeArea = content.removeFromRight (juce::jmax (300, content.getWidth() * 2 / 5));
+        composition_.layout (composeWidth);
 
-            if (planeArea.getWidth() < content.getWidth())
-                content.removeFromRight (ui::kColumnGap);
+        const auto visible = compositionViewport_.getMaximumVisibleWidth();
 
-            planes_[device.plane]->setBounds (planeArea.removeFromTop (juce::jmin (kPlaneHeight,
-                                                                                   planeArea.getHeight())));
-        }
+        if (visible == composeWidth || visible <= 0)
+            break;
 
-        panels_[device.panel]->setBounds (content.removeFromTop (
-            plan_.panels[static_cast<std::size_t> (device.panel)].height()));
+        composeWidth = visible;
     }
 
     // The drawer: the lower part of the page, over whatever the page is showing and above the bar. It is a
     // component of this window rather than a dialog, which is what "never a modal" means in practice.
     auto drawer = area.removeFromBottom (
-        juce::jmin (kDrawerHeight, juce::jmax (kDrawerHeight / 2, area.getHeight() - ui::kPageHeaderHeight - 20)));
+        juce::jmin (kDrawerHeight, juce::jmax (kDrawerHeight / 2, area.getHeight() - 20)));
 
     reportViewport_.setBounds (drawer);
     reportViewport_.setVisible (reportBar_.drawerOpen());

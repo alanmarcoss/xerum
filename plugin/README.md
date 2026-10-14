@@ -37,8 +37,9 @@ value nothing reads — the placeholder-fallback smell this project forbids — 
 parameters are not lost, because they stay in the document and in the import report.
 
 The two surfaces are separate lists on purpose. `ParameterBridge::specs()` is the interface surface
-(75), and `InterfacePlan` turns it into device pages; `ParameterBridge::modulationSpecs()` is the
-matrix surface, which `InterfacePlan` deliberately never sees — a 512-row page is not a matrix.
+(86), and `InterfacePlan` turns it into panels placed in the design's composition — one panel per group,
+one section per row of `docs/design/xerum-direction-warm.html`; `ParameterBridge::modulationSpecs()` is
+the matrix surface, which `InterfacePlan` deliberately never sees — a 512-row section is not a matrix.
 Everything that feeds the engine or the document iterates both.
 
 * **Ids are derived, not written by hand.** `parameterIdFromPath` states the rule — lower case, drop
@@ -299,13 +300,19 @@ cover it; and the real-time invariant.
   wrong, one table entry moves.
 * **There is no wavetable browser.** A slot's table is whatever the preset's asset reference names,
   or xerum's own `Tables/xerum/Sine.wav` when it names none. A table *chooser* is a UI feature with a
-  dynamic choice list, which hosts dislike; recorded rather than half-built.
+  dynamic choice list, which hosts dislike; recorded rather than half-built. Ticket `52` draws the
+  design's wavetable slot in each oscillator's head — the loaded table's **name**, from the document —
+  and its arrows step the slot's own **frame position** (`Table Position (frames)`), because that is the
+  one per-slot table control the model has and a slot without it gets no arrows rather than arrows that
+  write nothing. The design's arrows choose a different wavetable; that needs the chooser this note
+  records as absent.
 * **Pitch bend is ±2 semitones**, the reference's init state's bend range (ticket `38`'s table), and
   `kParamBendRangeUp/Dn` are not exposed. Stated, not measured.
 * **The editor is minimal on purpose**: the parameter surface plus the import report. The report is
   what ticket `30` needed the interface for. Ticket `44` implemented the *design* of ticket `43` on
-  top of that surface — device pages, the matrix, the pole/zero plane, the report bar and drawer — and
-  that is the section at the end of this file.
+  top of that surface — pages of panels, the matrix, the pole/zero plane, the report bar and drawer —
+  and ticket `52` arranged the panels the way the design's own screen arranges them: one composed page
+  of sections. Those are the sections at the end of this file.
 
 ## JUCE observations worth keeping
 
@@ -341,6 +348,12 @@ Ticket `43` settled the design (variant 3, "Devices") and ticket `31`'s binding 
 parameter. This section records what implementing the design changed, and — the part that matters —
 where the direction and the model do not meet.
 
+> **Superseded in one respect by ticket `52`.** The pages described below — one device per page behind a
+> strip — are now **sections of one composed page**, because the design's own arrangement (three
+> oscillators across the top, the filters with their displays, the macros as a strip) cannot be expressed
+> as one panel per page. The binding rule this section is about did not move; see the ticket `52` section
+> below for what changed.
+
 ```sh
 cmake -S . -B build-44 -DCMAKE_BUILD_TYPE=Release && cmake --build build-44 -j8
 build-44/plugin/tests/xerum-plugin-tests "[interface]"             # 12 cases, 1,746 assertions
@@ -348,14 +361,19 @@ build-44/plugin/tests/xerum-plugin-tests "[interface][headless]"   # the no-edit
 build-44/plugin/tests/xerum-plugin-tests "[interface][ui]"         # the cases that open the interface
 ```
 
-## One device per page, behind a strip that always shows the others
+## One composed page, behind a strip that always shows the other sections
 
-A **device is a panel**, and a panel is a `ParamSpec::group` — the model's own grouping, which is also
-the granularity the reference uses for its tabs. So the pages are *derived* from the parameter table
-and nothing is hand-listed: `Osc A`, `Osc B`, `Osc C`, `Noise`, `Sub Osc`, `Filter 1`, `Filter 2`,
-`Global`, `Amp Envelope`. `ui::DeviceStrip` draws one tab per device, always all of them, with a
-severity dot on any device whose module the import report named — so a half-loaded preset is located
-where it happened and not only collected in the drawer.
+A **panel is a `ParamSpec::group`** — the model's own grouping. Panels are *derived* from the parameter
+table, one per group, and nothing is hand-listed: `Osc A`, `Osc B`, `Osc C`, `Noise`, `Sub Osc`,
+`Filter 1`, `Filter 2`, `Global`, `Amp Envelope`. **Where they sit is a composition rather than a
+derivation**: `ui::designedComposition()` is an ordered list of sections — the three oscillators in a row,
+noise and sub beneath them, the filters beside their response display, the matrix, then the effects and
+macros — each naming the groups it holds and how they arrange, and a group no section names falls through
+to a default section rather than vanishing. So which section a group lands in is data; *whether* it lands
+is still derived and still total. `ui::SectionStrip` draws one tab per section, always all of them,
+**scrolling the single composed page** — which is taller than the window by design — and carrying a
+severity dot on any section whose module the import report named, so a half-loaded preset is located where
+it happened and not only collected in the drawer.
 
 **The plan's balance moved, and it moved because the design did.** `InterfacePlan`'s rule is unchanged
 — a control is a function of the model type, a panel is a group in the table's order, and columns are
@@ -516,7 +534,7 @@ sample 21390 3 -file /tmp/xerum-sample.txt
 
 **And no interface frame is on the audio path.** The sample above was taken with the editor open and
 being laid out (`JUCE v9.0.4: Message Thread` has 11 `ParameterPanel` frames in it), and of every
-`XerumAudioProcessorEditor`/`ParameterPanel`/`ModulationMatrixView`/`PoleZeroPlane`/`DeviceStrip`/
+`XerumAudioProcessorEditor`/`ParameterPanel`/`ModulationMatrixView`/`PoleZeroPlane`/`SectionStrip`/
 `ImportReportView` frame in the file, **0 fall inside the `com.apple.audio.IOThread.client` block** —
 all 11 are on the message thread. That is the acceptance criterion "no interface code on the audio
 path" measured on the running product rather than argued from the source.
@@ -631,11 +649,12 @@ rather than implied.
 * **A boolean** is a pill toggle with a state dot, not a stock checkbox; a choice is a themed picker; a
   matrix boolean is the dot alone, and the **bypass** dot is green while the row is live (the parameter is
   `kParamBypass`, so the cell inverts the dot rather than the parameter).
-* **Panels and pages**: a `surface` panel with the design's 5px radius and 9px uppercase title, a header
-  with the gradient, the wordmark, the preset field, the coverage readout and the import button, and a page
-  header that names the device, tags its model module and says how many controls and columns it has.
-* **`DeviceStrip` is a tab strip**: pills, `fgDim` when inactive and the accent on `accent-bg` when
-  active, with the severity dot on the tab of the device whose module the report named.
+* **Panels and sections**: a `surface` panel with the design's 5px radius and 9px uppercase title, a header
+  with the gradient, the wordmark, the preset field, the coverage readout and the import button, and a
+  9px uppercase title on every section — the matrix's carrying its `8 / 64` tag.
+* **`SectionStrip` is a section tab strip**: pills, `fgDim` when inactive and the accent on `accent-bg` when
+  active, **scrolling the single composed page**, with the severity dot on the tab of the section whose
+  module the report named.
 * **The matrix is a grid**: the header in the design's 7px monospaced table-head colour, stored rows
   striped on the surface and empty slots on the window, the source column in the accent, the amount cell
   colouring its **sign** (for an amount the sign is the polarity) and the bypass a dot.
@@ -656,9 +675,12 @@ type, which panel is its `ParamSpec` group in the table's order, and which colum
 the panel's rows. Two things were added and both are functions of the spec, not hand placement:
 `knobSizeFor` and `rowHeightFor` — a knob row is its own diameter plus its readout and label, so a page's
 height had to become the sum of its rows' heights rather than a row count times one number. `kRowsPerColumn`
-moved from 8 to 5 because eight 68px knob rows do not fit the design's 600px window, and the balance is the
-only thing that decides how tall a page is. The coverage readout, the one-device-per-page structure, the
-headless-construction counters and the lazy editor are all untouched.
+moved from 8 to 5 because eight 68px knob rows do not fit the design's 600px window, and the balance was the
+only thing that decided how tall a page was. (Ticket `52` then replaced that balance with the design's own
+composition — a panel now lays its controls out itself at the width it is given, and `kRowsPerColumn` is
+gone; see that section.) The coverage readout, the one-device-per-page structure (which ticket `52` then
+made one composed page), the headless-construction counters and the lazy editor were all untouched by
+ticket `51`.
 
 ## Acceptance, measured
 
@@ -750,6 +772,153 @@ Also not observed: no knob was dragged in the standalone, no tab clicked, no pre
 standalone's own dialog, and the window was never resized by hand (that needs Assistive access). Those
 paths are covered in-process: `showDevice`, the plane's synthesised drag, `loadPresetFromFile`, and the
 900×600 layout assertion.
+
+# Ticket 52 — the interface is arranged by the design's composition
+
+Ticket `51` gave the interface the design's **elements** — the tokens, the knobs with their arcs, the
+pills, the chrome, the plane — and the dev's reaction was that they look like the design **but the
+placements do not**. That was correct and structural: the design specifies a *composition* (three
+oscillators across the top, noise and sub beneath them, the two filters with their response displays in
+the middle, the matrix under them, the effects and macros side by side at the bottom) and xerum derived a
+**grid** — one panel per group of the parameter table, columns balanced.
+
+## The resolution: the composition is data, the binding stays derived
+
+`ui::designedComposition()` is now an ordered list of `ui::SectionSpec` — `osc-row`, `noise-sub-row`,
+`filter-section`, `mod-panel`, `bottom-row` (its two halves sharing a `band`, which is how "side by side"
+is expressed), and the **default section** — each naming the groups it holds (`Osc` claims `Osc A`…`Osc C`
+by prefix, `Macro` claims the eight) and how they arrange (`Panels`, `Strip`, `Matrix`).
+
+`ui::planInterface` resolves that over the table: panels are still one per group in the table's order,
+every panel lands in exactly one section, and **a group no section names falls through to the default
+section** rather than vanishing — which is why `Global` and `Amp Envelope` are on the page at all, and why
+`InterfacePlan::sectionForGroup` exists as the answer to "where did it land" that the evidence reads.
+
+The binding did not move. Every control is still built from its `ParamSpec` by model type
+(`controlKindFor`), still bound through JUCE's own attachment to the bridge's parameter object, and the
+editor still cannot be constructed eagerly. What moved is the arrangement:
+
+* **`ui::CompositionView`** arranges whole sections on **one page**, in the design's order, with the
+  design's grid (6px between panels, 3px between rows, 10px of side padding) — and that page is taller
+  than the window, so the editor puts it in a viewport and the **strip scrolls it**. `SectionStrip` (the
+  renamed `DeviceStrip`) names the sections and carries each section's severity dot; the model module left
+  the tab because a section now holds several (`Filter` is `VoiceFilter0` **and** `VoiceFilter1`) and the
+  design's tabs are labels.
+* **`ui::ParameterPanel`** lays its own controls out, from their model types: the design's grammar is a row
+  of knobs, then the pickers, then the pills at the bottom, and NOISE/SUB — the design's one compact band —
+  put their knobs and their option buttons on one line (`--gap-inline`). A panel's height is derived at the
+  width it is given (`preferredHeight`), so a narrower window re-flows rather than clips.
+* **A choice whose vocabulary is short is drawn as the design's option row** (`ui::ChoiceButtons`, the
+  `btn-opt` pill bound through `juce::ParameterAttachment`): NOISE's four colours and SUB's six waveforms,
+  which is exactly where the design draws buttons. The filter's **83-value** vocabulary cannot be a row of
+  pills, so the filter panels carry the themed picker — recorded here because it is a deviation from the
+  design's four buttons, and it is the vocabulary's length, not a preference.
+* **The wavetable slot** — a monospaced name field and two 16px arrows — is in each oscillator's head, as
+  the design draws it. See the "no wavetable browser" note above for what the arrows do and why.
+* **The response display is inside the filter section**, beside that filter's knobs (`ui::ParameterPanel`
+  carries it as an inline display): the pole/zero plane is a child of the **Filter 1/2 panel** it draws and
+  edits, rather than a page of its own. The design draws one display in Filter 1 and none in Filter 2;
+  xerum has a drawn response *per voice filter* and the plane is how it is edited, so each filter panel
+  carries its own. Noted as a deviation.
+* **The matrix is a section** (`mod-panel`), headed `MOD MATRIX` with the design's tag: the number of rows
+  on screen over 64 — eight, which is the section's height divided by the row height, so the tag cannot
+  drift from the geometry. The four effects cards are the design's `fx-section`; **xerum's table has no FX
+  group** (the FX rack is not in the bridge), so that section resolves to zero panels and is not drawn.
+  It stays in the composition so the bottom row completes itself the day the table has one — and its
+  absence is a stated fact rather than a silent drop.
+* **The macros are a strip**: eight bare 26px knobs with their labels, no panel chrome —
+  `ParameterPanel::setCompact`, which the `Strip` section kind turns on. The fall-through section is the
+  last band and holds `Global` and `Amp Envelope`.
+
+## What did not move
+
+`controlKindFor`, `knobSizeFor`, `rowHeightFor`, the design's diameters (44/28/26px) and arc, the header
+with the **computed** `N of 776 schema leaves bound` readout, the report bar and drawer, the two drawn
+surfaces, the lazy editor and the counters that prove it. `plugin/tests/interface_test.cpp` asserts the
+composition at both acceptance sizes and, in `the design's sections are in the design's positions`, the
+arrangement itself — three oscillator panels on one line, noise and sub beneath them, the plane a child of
+its filter panel and to the right of every control in it, the matrix's eight visible rows, the macro strip
+on one line, and the fall-through holding exactly `Global` and `Amp Envelope`.
+
+## Acceptance, measured
+
+```sh
+cmake --build build-52 -j8
+./build-52/plugin/tests/xerum-plugin-tests "[interface]"   # 5493 assertions, 19 cases — all passed
+./build-52/plugin/tests/xerum-plugin-tests                 # the full plugin suite: 15351 assertions
+                                                           # in 69 cases — all passed (the fidelity case
+                                                           # needs the VST3 bundle, so it is skipped until
+                                                           # the wrapper is built)
+/tmp/pluginval-104/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 \
+    --validate build-52/plugin/xerum_artefacts/Release/VST3/xerum.vst3    # SUCCESS, including its
+                                                                          # Editor + Editor Automation tests
+```
+
+**The composition, in rectangles, at both sizes the acceptance names** (measured in-process at
+`1082×668` and `900×600`; the composed page is `1054×1258` and `872×1258`, so it is taller than the window
+and the strip scrolls it):
+
+| section | `1082×668` | `900×600` | holds |
+|---|---|---|---|
+| `osc-row` "Oscillators" | 1054×385 | 872×385 | Osc A/B/C, 347 and 286 wide, one line, 13 controls each |
+| `noise-sub-row` "Noise + Sub" | 1054×173 | 872×173 | Noise 524 / Sub Osc 524 (433 each at 900) |
+| `filter-section` "Filter" | 1054×225 | 872×225 | Filter 1 / Filter 2 side by side, plane inside each panel |
+| `mod-panel` "Mod Matrix" | 1054×219 | 872×219 | the 64-row grid, 8 rows shown, 26px header |
+| `macro-section` "Macros" | 394×82 | 394×82 | eight 44px items on one line, centred |
+| `default-section` "Other" | 1054×159 | 872×159 | Global + Amp Envelope — the fall-through |
+
+**Palette shares**, counted on the editor's own render at `1082×668` (exact colours, tolerance ≤8 per
+channel): `surface` 72.5 %, `bg` 15.6 %, `surface2` 11.6 % (the knob bodies and the header gradient),
+`border` 7.7 % (the knob tracks — `surface2` is 8 counts away per channel, so the two overlap at this
+tolerance), `fgMuted` 0.37 %, `accent` 0.25 % (the value arcs, the wordmark, the coverage number),
+`fgDim` 0.19 %, `fg` 0.09 %, `accentDim` 0.06 % (the modulation arc on `voicefilter0.freq`, depth 0.075).
+With the half-loading fixture loaded, `red` is 0.005 % (the strip's high-severity dot) and `orange` is
+absent — correct for a fixture with no medium entry. **Every colour on the page is a token.**
+
+**The fall-through, named**: `Global` and `Amp Envelope`, in `default-section`, because the design's
+composition names no section for them. `fx-section` names `FX`, which matches no group in this table.
+
+**No interface code on the audio path**, the way ticket `44` measured it:
+
+```sh
+sample 10214 8 -file /tmp/xerum52-sample.txt
+```
+
+The `com.apple.audio.IOThread.client` block runs `juce::AudioProcessorPlayer::audioDeviceIOCallback…` →
+`XerumAudioProcessor::processBlock` → `ParameterBridge::currentModelValue` and contains **0** interface
+frames. The message thread is servicing `juce::NSViewComponentPeer::AsyncRepainter::handleAsyncUpdate`
+(this session's samples caught no `paintButton` frame — the window was idle — where ticket `51` caught two
+of them; the drawing itself is measured in-process instead, see below). The zero-allocation render **with
+the interface open** is asserted by `[interface][ui][realtime]`, which passed.
+
+## What could not be seen, and is not claimed
+
+**This session's display is asleep** (`CGDisplayIsAsleep` → 1, `CGDisplayIsActive` → 0), so a window
+capture was impossible: `screencapture -l31215` fails with *"could not create image from window"* and a
+full-screen capture comes back **entirely black** (`rgb(0,0,0)` at 100 %). The evidence above is therefore
+*not* a photograph of the screen: the rectangles come from the editor's own laid-out components and the
+palette from `createComponentSnapshot` — JUCE's own paint path at the window's own size, but not the
+window as the OS composited it. Ticket `51`'s capture was made when the display was awake; this one could
+not be.
+
+**Nobody looked at it.** The standalone *did* launch and *did* create its window — `CGWindowListCopyWindowInfo`
+reports id `31215`, layer 0, onscreen, owner `xerum` pid 10214, **974×602 logical** at (793,394) — and it ran
+the render loop with no interface frame on the audio thread. What no one has done is see whether the
+placements now *read* right: whether three oscillator panels across the top, with the filters' response
+displays beside their knobs and the macros as a strip at the bottom, is the instrument the design drew. The
+dev is the only judge of that, and the design file is the standard.
+
+Also not observed: no knob dragged, no tab clicked, no preset imported through the standalone's own dialog,
+and the window never resized by hand. Those paths are covered in-process: `scrollToSection`, the plane's
+synthesised drag, `loadPresetFromFile`, and the two-size layout assertion.
+
+One environment note for the next session: launching the standalone **on first run of a newly built
+binary** blocks in `XerumAudioProcessor`'s constructor on `TableLibrary::loadTable` →
+`std::filesystem::directory_iterator` over `/Library/Audio/Presets/Xfer Records/Serum 2 Presets` — a macOS
+permission prompt for the reference's content tree, which nothing in this session could answer. Launching
+with `XERUM_CONTENT_ROOT=<repo>/content` resolves xerum's own default table from the first root and the app
+starts normally. That is a first-launch/environment fact and not a ticket `52` regression: the code path is
+ticket `30`'s and unchanged.
 
 # Ticket 48 — the modulation sources that had no generator
 

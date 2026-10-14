@@ -20,13 +20,13 @@
 #include "TestSupport.h"
 
 #include "AllocationCounter.h"
-#include "DeviceStrip.h"
 #include "ImportReportView.h"
 #include "InterfaceLook.h"
 #include "InterfacePlan.h"
 #include "ModulationMatrixView.h"
 #include "ParameterPanels.h"
 #include "PoleZeroPlane.h"
+#include "SectionStrip.h"
 #include "XerumAudioProcessorEditor.h"
 
 #include "modulation.h"
@@ -103,12 +103,12 @@ xerum::model::PresetDocument halfLoadingDocument()
 } // namespace
 
 //==============================================================================
-TEST_CASE ("the layout is built from the parameter table: every parameter once, in its own page",
+TEST_CASE ("the composition is the design's, and every parameter lands in one panel of one section",
            "[interface]")
 {
     XerumAudioProcessor processor;
     const auto& specs = processor.bridge().specs();
-    const auto plan = planInterface (specs, 3);
+    const auto plan = planInterface (specs, designedComposition());
 
     REQUIRE_FALSE (specs.empty());
 
@@ -144,39 +144,39 @@ TEST_CASE ("the layout is built from the parameter table: every parameter once, 
         for (const auto* spec : panel.specs)
             CHECK (spec->modelPath.rfind (panel.module + "/", 0) == 0);
 
-        // Ticket `44`: the balance now places a page's *rows* — and it still places every one of them, in
-        // exactly one column. A row the balance forgot would be a bound control laid out at zero size: a
-        // parameter that is still reachable in a host and no longer reachable on screen.
-        std::vector<int> placedRows;
-
-        for (const auto& column : panel.columns)
-            for (const auto row : column)
-                placedRows.push_back (row);
-
-        std::sort (placedRows.begin(), placedRows.end());
-
-        CHECK (placedRows.size() == static_cast<std::size_t> (panel.rows()));
-
-        for (int row = 0; row < panel.rows(); ++row)
-            CHECK (placedRows[static_cast<std::size_t> (row)] == row);
-
-        // The design's column rule, derived rather than chosen per page.
-        CHECK (panel.columnsCount() == columnsForRows (panel.rows(), 3));
-        CHECK (panel.columnsCount() >= 1);
-        CHECK (panel.columnsCount() <= 3);
-
-        // And balanced: with one row added at a time to the shortest column, no column can be two rows
-        // taller than another.
-        std::size_t shortest = std::numeric_limits<std::size_t>::max();
-        std::size_t tallest = 0;
-
-        for (const auto& column : panel.columns)
+        // Ticket `52`: two model slots whose drawn surfaces belong to a **panel** rather than to a page of
+        // their own — the oscillator head's wavetable and the filter's response display — and both are
+        // derived from the model's own module, not from a list of group names.
+        // The wavetable head is the container slots' and only theirs: NOISE and SUB are `Oscillator3` and
+        // `Oscillator4` in the model's numbering and are not wavetable slots, which is why the derivation
+        // is a range check rather than a prefix test.
+        if (panel.title == "Osc A")
         {
-            shortest = std::min (shortest, column.size());
-            tallest = std::max (tallest, column.size());
+            CHECK (panel.wavetableSlot == 0);
+            CHECK (panel.positionRow >= 0);   // the head's arrows step this row's parameter
         }
 
-        CHECK (tallest - shortest <= 1);
+        if (panel.title == "Osc B")
+            CHECK (panel.wavetableSlot == 1);
+
+        if (panel.title == "Osc C")
+            CHECK (panel.wavetableSlot == 2);
+
+        if (panel.title == "Noise" || panel.title == "Sub Osc")
+        {
+            CHECK (panel.wavetableSlot == -1);
+            CHECK (panel.positionRow < 0);
+        }
+
+        // The drawn response display is the voice filters' and only theirs.
+        if (panel.title == "Filter 1")
+            CHECK (panel.filterSlot == 0);
+
+        if (panel.title == "Filter 2")
+            CHECK (panel.filterSlot == 1);
+
+        if (panel.title == "Global")
+            CHECK (panel.filterSlot == -1);
     }
 
     // The pages cover the whole table between them: the plan's own count of what is on screen.
@@ -187,12 +187,96 @@ TEST_CASE ("the layout is built from the parameter table: every parameter once, 
 
     CHECK (rowsOnPages == static_cast<int> (specs.size()));
 
+    //==========================================================================
+    // Ticket `52`: the composition, which is data — and the invariant that survives it.
+
+    // **The design's sections, in the design's order**, and the fall-through section last. That is
+    // `docs/design/xerum-direction-warm.html`'s content grid: an oscillator row, a noise-and-sub row, a
+    // filter section, the matrix panel, the bottom row, and then the groups the composition does not name.
+    std::vector<std::string> sectionIds;
+
+    for (const auto& section : plan.sections)
+        sectionIds.push_back (section.id);
+
+    CHECK (sectionIds == std::vector<std::string> { "osc-row", "noise-sub-row", "filter-section", "mod-panel",
+                                                    "macro-section", "default-section" });
+
+    // **Every panel is in exactly one section**, and every panel's group has a section to ask about: a
+    // group that landed twice would be drawn twice, and a group that landed nowhere would vanish from the
+    // composition while a host still bound it.
+    std::vector<int> placements (plan.panels.size(), 0);
+
+    for (const auto& section : plan.sections)
+        for (const auto panel : section.panels)
+            ++placements[static_cast<std::size_t> (panel)];
+
+    for (int panel = 0; panel < static_cast<int> (plan.panels.size()); ++panel)
+    {
+        INFO ("panel " << panel << ": " << plan.panels[static_cast<std::size_t> (panel)].title);
+        CHECK (placements[static_cast<std::size_t> (panel)] == 1);
+        CHECK (plan.sectionForGroup (plan.panels[static_cast<std::size_t> (panel)].title) >= 0);
+    }
+
+    // A section holds what the design puts in it — three oscillators in a row, noise and sub together, the
+    // two filters side by side, the eight macros as one strip.
+    const auto sectionOf = [&plan] (const std::string& group)
+    {
+        const auto index = plan.sectionForGroup (group);
+
+        return index < 0 ? std::string() : plan.sections[static_cast<std::size_t> (index)].id;
+    };
+
+    CHECK (sectionOf ("Osc A") == "osc-row");
+    CHECK (sectionOf ("Osc B") == "osc-row");
+    CHECK (sectionOf ("Osc C") == "osc-row");
+    CHECK (sectionOf ("Noise") == "noise-sub-row");
+    CHECK (sectionOf ("Sub Osc") == "noise-sub-row");
+    CHECK (sectionOf ("Filter 1") == "filter-section");
+    CHECK (sectionOf ("Filter 2") == "filter-section");
+    CHECK (sectionOf ("Macro 1") == "macro-section");
+    CHECK (sectionOf ("Macro 8") == "macro-section");
+
+    // **The fall-through, named.** The design's composition has no section for the global section or the
+    // amplitude envelope, so they land in the default one — visible here rather than assumed, which is what
+    // `sectionForGroup` exists for.
+    CHECK (sectionOf ("Global") == "default-section");
+    CHECK (sectionOf ("Amp Envelope") == "default-section");
+
+    // The row a section sits in is data too: the effects cards and the macro strip share the design's
+    // `bottom-row`, which is how "side by side" is expressed rather than a section with two columns.
+    const auto composition = designedComposition();
+    const auto bandOf = [&composition] (const std::string& id)
+    {
+        for (const auto& spec : composition)
+            if (spec.id == id)
+                return spec.band;
+
+        return std::string();
+    };
+
+    CHECK (bandOf ("fx-section") == bandOf ("macro-section"));
+    CHECK (bandOf ("osc-row") != bandOf ("noise-sub-row"));
+
+    // **The FX holder matches nothing in this table**: xerum's bridge exposes no effect parameters, so the
+    // section resolves to no panels and is not drawn. It stays in the composition — the bottom row
+    // completes itself the day the table has one — and its absence is a fact rather than a silent drop.
+    for (const auto& section : plan.sections)
+        CHECK (section.id != "fx-section");
+
     // The model type decides the control, total over the types: a new type in the bridge cannot silently
     // reach the interface without one.
     CHECK (controlKindFor (ParamType::Bool) == ControlKind::Toggle);
     CHECK (controlKindFor (ParamType::Choice) == ControlKind::Choice);
     CHECK (controlKindFor (ParamType::Int) == ControlKind::Slider);
     CHECK (controlKindFor (ParamType::Float) == ControlKind::Slider);
+
+    // And the vocabulary decides how a choice draws: the design's option row where it fits, the picker
+    // where it cannot. NOISE's four colours and SUB's six waveforms are rows; the filter's 83 types and the
+    // matrix's 61 sources are pickers.
+    CHECK (choiceStyleFor (4) == ChoiceStyle::Buttons);
+    CHECK (choiceStyleFor (kMaxChoiceButtons) == ChoiceStyle::Buttons);
+    CHECK (choiceStyleFor (kMaxChoiceButtons + 1) == ChoiceStyle::Menu);
+    CHECK (choiceStyleFor (61) == ChoiceStyle::Menu);
 }
 
 //==============================================================================
@@ -281,7 +365,14 @@ TEST_CASE ("every parameter is reachable through a control labelled with xerum's
                 CHECK (dynamic_cast<juce::ToggleButton*> (&control->widget()) != nullptr);
                 break;
             case ControlKind::Choice:
-                CHECK (dynamic_cast<juce::ComboBox*> (&control->widget()) != nullptr);
+                // Ticket `52`: the design draws a choice as a row of option buttons where the vocabulary is
+                // short enough to be one, and as the picker where it is not. Both are bound the same way
+                // (JUCE's own `ParameterAttachment` over the parameter), so what is asserted here is which
+                // of the two this vocabulary got.
+                if (control->choiceStyle() == ChoiceStyle::Buttons)
+                    CHECK (dynamic_cast<ChoiceButtons*> (&control->widget()) != nullptr);
+                else
+                    CHECK (dynamic_cast<juce::ComboBox*> (&control->widget()) != nullptr);
                 break;
             case ControlKind::Slider:
                 CHECK (dynamic_cast<juce::Slider*> (&control->widget()) != nullptr);
@@ -298,14 +389,39 @@ TEST_CASE ("every parameter is reachable through a control labelled with xerum's
 
         INFO ("choice " << spec.id);
 
-        auto* combo = dynamic_cast<juce::ComboBox*> (&editor->controlFor (spec.id)->widget());
-        REQUIRE (combo != nullptr);
-
         const auto& choices = processor.bridge().choices (spec.choiceSet);
-        CHECK (combo->getNumItems() == choices.size());
+        auto* control = editor->controlFor (spec.id);
+        REQUIRE (control != nullptr);
 
-        for (int i = 0; i < choices.size(); ++i)
-            CHECK (combo->getItemText (i) == choices.labels[i]);
+        if (control->choiceStyle() == ChoiceStyle::Buttons)
+        {
+            // The design's option row: one pill per choice, in the bridge's own order and words, so a
+            // choice the parameter has cannot be missing from the row.
+            auto* buttons = dynamic_cast<ChoiceButtons*> (&control->widget());
+            REQUIRE (buttons != nullptr);
+            CHECK (buttons->choiceCount() == choices.size());
+
+            for (int i = 0; i < choices.size(); ++i)
+                CHECK (buttons->choiceText (i) == choices.labels[i]);
+
+            // And a click on a pill reaches the engine, the way a click on the picker's item does.
+            buttons->mouseUp (juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(),
+                                                buttons->buttonBounds (1).getCentre().toFloat(),
+                                                juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, buttons,
+                                                buttons, juce::Time::getCurrentTime(),
+                                                buttons->buttonBounds (1).getCentre().toFloat(),
+                                                juce::Time::getCurrentTime(), 1, false));
+            CHECK (processor.parameterValue (spec.modelPath) == Catch::Approx (1.0));
+        }
+        else
+        {
+            auto* combo = dynamic_cast<juce::ComboBox*> (&control->widget());
+            REQUIRE (combo != nullptr);
+            CHECK (combo->getNumItems() == choices.size());
+
+            for (int i = 0; i < choices.size(); ++i)
+                CHECK (combo->getItemText (i) == choices.labels[i]);
+        }
     }
 
     // Reachable means reaching the engine, in both directions. A widget that moved but changed nothing
@@ -573,7 +689,8 @@ model::PresetDocument drawnFilterDocument (const int objects)
 } // namespace
 
 //==============================================================================
-TEST_CASE ("the device strip shows every device, and each page is one device's", "[interface][ui]")
+TEST_CASE ("the strip names every section of the composition, and each section holds its own panels",
+           "[interface][ui]")
 {
     const juce::ScopedJuceInitialiser_GUI gui;
 
@@ -582,87 +699,95 @@ TEST_CASE ("the device strip shows every device, and each page is one device's",
     REQUIRE (editor != nullptr);
 
     const auto& plan = editor->plan();
-    const auto& strip = editor->deviceStrip();
+    const auto& strip = editor->sectionStrip();
 
-    // One device per group — the plan's pages, in the table's order — plus the matrix, which is the one
-    // device the table does not derive (the bridge binds no modulation parameters).
-    CHECK (editor->deviceCount() == static_cast<int> (plan.panels.size()) + 1);
-    CHECK (strip.deviceCount() == editor->deviceCount());
+    // One tab per resolved section, in the design's order — and nothing else: since ticket `52` the matrix
+    // is a **section of the composition** rather than a device page beside it.
+    CHECK (editor->sectionCount() == static_cast<int> (plan.sections.size()));
+    CHECK (strip.sectionCount() == editor->sectionCount());
 
-    for (int index = 0; index < static_cast<int> (plan.panels.size()); ++index)
+    for (int index = 0; index < editor->sectionCount(); ++index)
     {
-        INFO ("device " << index << ": " << editor->deviceTitle (index));
+        INFO ("section " << index << ": " << editor->sectionId (index).toStdString());
 
-        CHECK (editor->deviceTitle (index) == juce::String (plan.panels[static_cast<std::size_t> (index)].title));
-        CHECK (editor->deviceModule (index) == juce::String (plan.panels[static_cast<std::size_t> (index)].module));
-        CHECK_FALSE (editor->deviceIsMatrix (index));
+        CHECK (editor->sectionTitle (index)
+               == juce::String (plan.sections[static_cast<std::size_t> (index)].title));
+        CHECK (strip.sectionTitle (index) == editor->sectionTitle (index));
 
-        // The strip shows it, and shows where to click: a tab with a real rectangle in every device's row.
-        CHECK (strip.deviceTitle (index) == editor->deviceTitle (index));
+        // The strip shows where to click: a tab with a real rectangle.
         CHECK (strip.tabBounds (index).getWidth() > 0);
         CHECK (strip.tabBounds (index).getHeight() > 0);
+
+        // Every section is on the one composed page, with a real rectangle, and the sections are stacked in
+        // the composition's order — the design's positions, as geometry rather than as a claim.
+        const auto bounds = editor->composition().sectionBounds (index);
+
+        CHECK (bounds.getWidth() > 0);
+        CHECK (bounds.getHeight() > 0);
+
+        if (index > 0)
+            CHECK (bounds.getY() >= editor->composition().sectionBounds (index - 1).getBottom());
     }
 
-    const auto matrixDevice = editor->deviceCount() - 1;
-    CHECK (editor->deviceIsMatrix (matrixDevice));
-    CHECK (editor->deviceTitle (matrixDevice) == "Matrix");
-    CHECK (editor->deviceModule (matrixDevice) == "ModSlot");
-    CHECK (strip.deviceTitle (matrixDevice) == "Matrix");
+    // The sections are the design's, by id. `osc-row` is three oscillators in a row, `noise-sub-row` is
+    // noise and sub beneath them, `filter-section` is the two filters, `mod-panel` is the matrix — the one
+    // section the table does not derive — and `macro-section` is the bottom row's strip.
+    CHECK (editor->sectionId (0) == "osc-row");
+    CHECK (editor->sectionId (1) == "noise-sub-row");
+    CHECK (editor->sectionId (2) == "filter-section");
+    CHECK (editor->sectionId (3) == "mod-panel");
 
-    // One device at a time: selecting a page shows that device's panel and nothing else's, and selecting
-    // the matrix shows the matrix. A page that showed two devices would not be a device page.
-    for (int index = 0; index < editor->deviceCount(); ++index)
+    CHECK (editor->sectionIsMatrix (3));
+    CHECK_FALSE (editor->sectionIsMatrix (0));
+    CHECK_FALSE (editor->sectionIsMatrix (2));
+    CHECK (editor->sectionId (4) == "macro-section");
+
+    // A section's modules are its panels' — what the strip's severity dot is keyed on — and the matrix's
+    // section is `ModSlot`, the module a report names a row by.
+    CHECK (editor->sectionModules (0)
+           == std::vector<juce::String> { "Oscillator0", "Oscillator1", "Oscillator2" });
+    CHECK (editor->sectionForModule ("VoiceFilter0") == 2);
+    CHECK (editor->sectionForModule ("VoiceFilter1") == 2);
+    CHECK (editor->sectionForModule ("ModSlot") == 3);
+    CHECK (editor->sectionForModule ("NoSuchModule") < 0);
+
+    // A tab click scrolls the one page to its section: the composition is taller than the window, so a tab
+    // is a scroll rather than a page swap — and every section stays on screen all the while.
+    const auto last = editor->sectionCount() - 1;
+    editor->scrollToSection (last);
+    CHECK (editor->currentSection() == last);
+    CHECK (strip.selected() == last);
+    CHECK (editor->compositionScrollY() > 0);
+    CHECK (editor->compositionHeight() > editor->compositionScrollY());
+
+    editor->scrollToSection (0);
+    CHECK (editor->currentSection() == 0);
+    CHECK (strip.selected() == 0);
+
+    // Every group the table has is a panel of the composition, and every panel is one group's — the
+    // coverage claim as structure rather than as a count.
+    for (const auto& panelPlan : plan.panels)
     {
-        editor->showDevice (index);
+        INFO ("panel " << panelPlan.title);
 
-        CHECK (editor->currentDevice() == index);
-        CHECK (strip.selected() == index);
-        CHECK (editor->matrixPageVisible() == editor->deviceIsMatrix (index));
+        auto* panel = editor->panelForGroup (panelPlan.title);
+        REQUIRE (panel != nullptr);
+        CHECK (panel->rows() == panelPlan.rows());
+        CHECK (juce::String (panel->title()) == juce::String (panelPlan.title));
+        CHECK (panel->getWidth() > 0);
+        CHECK (panel->getHeight() > 0);
 
-        for (int other = 0; other < editor->deviceCount(); ++other)
-        {
-            auto* panel = editor->panelForDevice (other);
-
-            if (other == index)
-            {
-                if (panel != nullptr)
-                    CHECK (panel->isVisible());
-            }
-            else if (panel != nullptr)
-            {
-                CHECK_FALSE (panel->isVisible());
-            }
-        }
-
-        // The page shows what it says it shows: the panel's own title is the device's, and the plan's
-        // balance reached it — the panel lays out the columns the plan derived, not a column count of its
-        // own.
-        if (auto* panel = editor->shownPanel())
-        {
-            CHECK (juce::String (panel->title()) == editor->deviceTitle (index));
-            CHECK (panel->isVisible());
-
-            for (const auto& page : plan.panels)
-                if (page.title == panel->title())
-                {
-                    CHECK (panel->rows() == page.rows());
-                    CHECK (panel->columnCount() == page.columnsCount());
-                }
-        }
+        for (const auto* spec : panelPlan.specs)
+            CHECK (panel->controlFor (spec->id) != nullptr);
     }
 
-    // Every control the plan binds is on a page — the coverage claim as navigation rather than as a count:
-    // pick any parameter, and the device page that carries it carries a control bound to it.
+    CHECK (editor->panelForGroup ("No Such Group") == nullptr);
+
+    // Every control the plan binds is reachable by id — the coverage claim as navigation.
     for (const auto& spec : processor.bridge().specs())
     {
-        auto found = false;
-
-        for (int index = 0; index < editor->deviceCount() && ! found; ++index)
-            if (auto* panel = editor->panelForDevice (index))
-                found = panel->controlFor (spec.id) != nullptr;
-
         INFO ("parameter " << spec.id);
-        CHECK (found);
+        CHECK (editor->controlFor (spec.id) != nullptr);
     }
 
     // The coverage readout: the interface says how much of the table it binds, and the count is the
@@ -670,6 +795,11 @@ TEST_CASE ("the device strip shows every device, and each page is one device's",
     CHECK (editor->controlCount() == static_cast<int> (processor.bridge().specs().size()));
     CHECK (editor->schemaLeafCount() == static_cast<int> (xerum::model::Schema::instance().leafCount()));
     CHECK (editor->schemaLeafCount() > editor->controlCount());
+
+    // The matrix is a section of the composition and its cells are bound — the 512 the header's readout adds
+    // to the panels' controls.
+    CHECK (editor->matrixView().isBound());
+    CHECK (editor->boundControlCount() == editor->controlCount() + editor->matrixView().boundCellCount());
 }
 
 //==============================================================================
@@ -756,7 +886,7 @@ TEST_CASE ("the modulation matrix shows all 64 rows with their real columns", "[
 }
 
 //==============================================================================
-TEST_CASE ("the modulation matrix page is fed by the loaded preset", "[interface][ui]")
+TEST_CASE ("the matrix section is fed by the loaded preset", "[interface][ui]")
 {
     const juce::ScopedJuceInitialiser_GUI gui;
 
@@ -770,11 +900,23 @@ TEST_CASE ("the modulation matrix page is fed by the loaded preset", "[interface
     // Nothing loaded yet at construction, so the matrix is 64 empty rows rather than a shorter list.
     REQUIRE (editor->matrixView().rowCount() == 64);
 
-    editor->showDevice (editor->deviceCount() - 1);
-    CHECK (editor->matrixPageVisible());
-    CHECK (editor->shownPanel() == nullptr);
+    // The matrix is a **section of the composition** since ticket `52`, not a page beside it, and it is on
+    // the one page with the rest of the design's arrangement.
+    const auto matrixSection = editor->sectionForModule ("ModSlot");
+    REQUIRE (matrixSection >= 0);
+    CHECK (editor->sectionIsMatrix (matrixSection));
+    CHECK (editor->sectionId (matrixSection) == "mod-panel");
+    CHECK (editor->matrixView().isVisible());
+    CHECK (editor->matrixView().getWidth() > 0);
+    CHECK (editor->matrixView().getHeight() > 0);
 
-    // The page shows the preset's rows: three of the 64 are stored, and the first one's source is named.
+    // The grid itself is all 64 rows — the design's section shows eight of them and scrolls (asserted as
+    // geometry in `the design's sections are in the design's positions`), so the view is taller than the
+    // section that shows it and nothing is hidden from the user.
+    CHECK (editor->matrixView().getHeight() == ui::ModulationMatrixView::preferredHeight());
+    CHECK (editor->matrixView().getHeight() > editor->composition().sectionBounds (matrixSection).getHeight());
+
+    // The section shows the preset's rows: three of the 64 are stored, and the first one's source is named.
     CHECK (editor->matrixView().storedRowCount() == 3);
     CHECK (editor->matrixView().cellText (0, 1) == "Mod Wheel");
     CHECK (editor->matrixView().cellText (0, 3) == "-42.5%");
@@ -884,7 +1026,7 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
     // header's gradient is `surface2` and the interface's own accent is on screen. Ticket `51` renamed
     // every one of these to the design system's role — `background`/`panelFill`/`barFill` no longer exist,
     // and the colours are the design's own.
-    editor->showDevice (0);
+    editor->scrollToSection (0);
     const auto pageImage = editor->createComponentSnapshot (editor->getLocalBounds());
 
     REQUIRE_FALSE (pageImage.isNull());
@@ -896,9 +1038,8 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
     // The matrix: the column titles' bar, 64 rows of cells drawn, and the amount column in the accent
     // colour — the one cell the view colours specially, because an amount is the row's whole point when it
     // has one. Text is anti-aliased, so it is counted with a tolerance rather than by exact colour.
-    const auto matrixDevice = editor->deviceCount() - 1;
-    editor->showDevice (matrixDevice);
-    CHECK (editor->matrixPageVisible());
+    editor->scrollToSection (editor->sectionForModule ("ModSlot"));
+    CHECK (editor->sectionIsMatrix (editor->currentSection()));
 
     const auto matrixImage = editor->matrixView().createComponentSnapshot (
         editor->matrixView().getLocalBounds());
@@ -936,22 +1077,21 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
         CHECK (title > 5);
     }
 
-    // A filter page: the panel and the pole/zero plane. Ticket `51` changed how the plane is drawn — a pole
-    // in `accent`, a zero in `accentDim` (the old zero colour was the report's info blue, which the design
-    // system does not have) — so the measurement is taken on the **plane's own snapshot** rather than on
-    // the page: a plane that painted no sections shows neither colour, which is what the old count of
-    // info-blue pixels was standing in for.
-    auto filterDevice = -1;
+    // The filter section: the panels and the pole/zero plane, which sits **inside** the filter's own panel
+    // beside its knobs since ticket `52` (the design's `filter-viz`) rather than on a page of its own.
+    // Ticket `51` changed how the plane is drawn — a pole in `accent`, a zero in `accentDim` (the old zero
+    // colour was the report's info blue, which the design system does not have) — so the measurement is
+    // taken on the **plane's own snapshot** rather than on the page: a plane that painted no sections shows
+    // neither colour, which is what the old count of info-blue pixels was standing in for.
+    const auto filterSection = editor->sectionForModule ("VoiceFilter0");
 
-    for (int index = 0; index < editor->deviceCount(); ++index)
-        if (editor->deviceModule (index) == "VoiceFilter0")
-            filterDevice = index;
-
-    REQUIRE (filterDevice >= 0);
-    editor->showDevice (filterDevice);
+    REQUIRE (filterSection >= 0);
+    CHECK (editor->sectionId (filterSection) == "filter-section");
+    CHECK (editor->sectionForModule ("VoiceFilter1") == filterSection);
+    editor->scrollToSection (filterSection);
 
     const auto filterImage = editor->createComponentSnapshot (editor->getLocalBounds());
-    CHECK (count (filterImage, ui::look::surface, 8) > 100);   // the panel and the plane's page
+    CHECK (count (filterImage, ui::look::surface, 8) > 100);   // the panels and the plane's own frame
     CHECK (editor->poleZeroPlane (0).sectionCount() == 16);
     CHECK (editor->poleZeroPlane (0).caption().startsWith ("16 of 32"));
 
@@ -987,21 +1127,21 @@ TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own mod
     auto editor = openEditor (processor);
     REQUIRE (editor != nullptr);
 
-    // A control has a real rectangle only on its own page — one device is laid out at a time — so a
-    // measurement of geometry has to open the page the control lives on first.
-    const auto showModule = [&editor] (const juce::String& module)
+    // Ticket `52` changed what "on screen" means for a measurement like this one: the composition is **one
+    // page**, laid out whole, and the strip scrolls it — so every panel, including the ones below the fold,
+    // has its real rectangle at all times. The scroll is kept because the question is still about what the
+    // user is looking at.
+    const auto scrollToModule = [&editor] (const juce::String& module)
     {
-        for (int index = 0; index < editor->deviceCount(); ++index)
-            if (editor->deviceModule (index) == module)
-            {
-                editor->showDevice (index);
-                return true;
-            }
+        const auto section = editor->sectionForModule (module);
 
-        return false;
+        if (section >= 0)
+            editor->scrollToSection (section);
+
+        return section >= 0;
     };
 
-    REQUIRE (showModule ("Oscillator0"));
+    REQUIRE (scrollToModule ("Oscillator0"));
 
     auto* volume = editor->controlFor ("oscillator0.volume");
     REQUIRE (volume != nullptr);
@@ -1024,10 +1164,10 @@ TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own mod
     REQUIRE (noiseLevel->knob() != nullptr);
     CHECK (noiseLevel->knob()->size() == KnobSize::Small);
 
-    REQUIRE (showModule ("Oscillator3"));
+    REQUIRE (scrollToModule ("Oscillator3"));
     CHECK (noiseLevel->knob()->getWidth() == ui::look::knobSmallDiameter);
 
-    REQUIRE (showModule ("Oscillator0"));   // back to the page the knob snapshot is taken on
+    REQUIRE (scrollToModule ("Oscillator0"));   // back to the section the knob snapshot is taken on
 
     // The arc, through the geometry the painter uses: both ends are below the centre — 7 o'clock and 5
     // o'clock — the start is left of the middle and the end is right of it, and the middle of the sweep is
@@ -1093,66 +1233,99 @@ TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own mod
 }
 
 //==============================================================================
-TEST_CASE ("the interface is laid out at the design's baseline window size", "[interface][ui]")
+TEST_CASE ("the composition is laid out at the design's baseline window size and at 900x600",
+           "[interface][ui]")
 {
-    // The acceptance: "the window works at the design's baseline size and resizable, legible at 100 %".
+    // The acceptance: the composition "is legible at the design's baseline (1082×668 logical) and at
+    // 900×600, where 51's assertion requires every control of every page to be non-empty and inside its
+    // panel — extend that assertion to the new composition rather than dropping it".
+    //
+    // Ticket `52` extends it: the page is **one page** now, so the chain is asserted at both sizes — every
+    // control of every panel has a real rectangle inside its panel, every panel inside the panel's section,
+    // every section inside the composed page. A section that clipped, or a control that never got laid out,
+    // would fail here at the size that clipped it.
+    //
     // This session has no eyes and the standalone could not be resized by hand — driving another app's
     // window needs Assistive access this machine does not grant `osascript` — so the measurement is made
-    // where it can be: the editor is set to the design's 900×600, every device page is opened, and every
-    // control on it is required to have a real rectangle *inside its panel*. A page that clipped, or a row
-    // that never got laid out, would leave a control at zero size or hanging outside the panel.
+    // where it can be, on the editor itself.
     const juce::ScopedJuceInitialiser_GUI gui;
 
     XerumAudioProcessor processor;
     auto editor = openEditor (processor);
     REQUIRE (editor != nullptr);
 
-    editor->setSize (900, 600);
-    CHECK (editor->getWidth() == 900);
-    CHECK (editor->getHeight() == 600);
+    const auto compositionBounds = [&editor] { return editor->composition().getLocalBounds(); };
 
-    const auto editorBounds = editor->getLocalBounds();
-
-    for (int index = 0; index < editor->deviceCount(); ++index)
+    for (const auto size : { juce::Point<int> (1082, 668), juce::Point<int> (900, 600) })
     {
-        editor->showDevice (index);
+        editor->setSize (size.x, size.y);
+        CHECK (editor->getWidth() == size.x);
+        CHECK (editor->getHeight() == size.y);
 
-        INFO ("device " << index << ": " << editor->deviceTitle (index));
+        REQUIRE (editor->sectionCount() > 0);
+        CHECK (editor->compositionHeight() > 0);
 
-        if (auto* panel = editor->shownPanel())
+        for (int index = 0; index < editor->sectionCount(); ++index)
         {
-            INFO ("panel " << panel->title());
+            INFO ("size " << size.x << "x" << size.y << ", section " << index << ": "
+                          << editor->sectionId (index).toStdString());
 
-            CHECK (panel->getWidth() > 0);
-            CHECK (panel->getHeight() > 0);
-            CHECK (editorBounds.contains (panel->getBounds()));
+            const auto bounds = editor->composition().sectionBounds (index);
 
-            // Every row of the plan is on the panel, laid out, and inside it.
-            for (int row = 0; row < panel->rows(); ++row)
+            CHECK (bounds.getWidth() > 0);
+            CHECK (bounds.getHeight() > 0);
+            CHECK (compositionBounds().contains (bounds));
+
+            const auto* plan = editor->sectionPlan (index);
+            REQUIRE (plan != nullptr);
+
+            if (editor->sectionIsMatrix (index))
             {
-                auto* control = panel->controlAtRow (row);
-                REQUIRE (control != nullptr);
-
-                INFO ("row " << row << ": " << control->label().toStdString());
-
-                CHECK (control->getWidth() > 0);
-                CHECK (control->getHeight() > 0);
-                CHECK (panel->getLocalBounds().contains (control->getBounds()));
-                CHECK (control->isBound());
+                // The matrix's own grid is bigger than the section that shows it, and scrolls inside it.
+                CHECK (editor->matrixView().getWidth() > 0);
+                CHECK (editor->matrixView().getHeight() > 0);
+                CHECK (editor->matrixView().getHeight() > bounds.getHeight());
+                continue;
             }
-        }
-        else
-        {
-            // The matrix page: its viewport is on screen and the grid is bigger than it, so it scrolls.
-            CHECK (editor->matrixPageVisible());
+
+            REQUIRE_FALSE (plan->panels.empty());
+
+            for (const auto panelIndex : plan->panels)
+            {
+                const auto& panelPlan = editor->plan().panels[static_cast<std::size_t> (panelIndex)];
+                auto* panel = editor->panelForGroup (panelPlan.title);
+
+                REQUIRE (panel != nullptr);
+                INFO ("panel " << panelPlan.title);
+
+                CHECK (panel->getWidth() > 0);
+                CHECK (panel->getHeight() > 0);
+                CHECK (bounds.contains (panel->getBounds()));
+                CHECK (compositionBounds().contains (panel->getBounds()));
+
+                // Every control of the panel is on it, laid out, and inside it.
+                for (int row = 0; row < panel->rows(); ++row)
+                {
+                    auto* control = panel->controlAtRow (row);
+                    REQUIRE (control != nullptr);
+
+                    INFO ("row " << row << ": " << control->label().toStdString());
+
+                    CHECK (control->getWidth() > 0);
+                    CHECK (control->getHeight() > 0);
+                    CHECK (panel->getLocalBounds().contains (control->getBounds()));
+                    CHECK (control->isBound());
+                }
+            }
         }
     }
 
     // And it draws at that size: the palette is present in a snapshot of the baseline window, so this is
-    // "a page was painted" as well as "a page was laid out".
-    editor->showDevice (0);
+    // \"the composition was painted\" as well as \"it was laid out\".
+    editor->setSize (900, 600);
+    editor->scrollToSection (0);
 
-    const auto image = editor->createComponentSnapshot (editorBounds);
+    const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
 
     auto background = 0;
 
@@ -1168,6 +1341,228 @@ TEST_CASE ("the interface is laid out at the design's baseline window size", "[i
         }
 
     CHECK (background > 500);
+}
+
+//==============================================================================
+TEST_CASE ("the design's sections are in the design's positions", "[interface][ui]")
+{
+    // Ticket `52`'s acceptance, as geometry: three oscillators **in a row** across the top, noise and sub
+    // beneath them, the filters in the middle with their response displays **inside** their own panels, the
+    // matrix under them, and the macros as a strip at the bottom. These are the placements the dev said were
+    // missing — the elements were the design's and the arrangement was a panel-per-group grid.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    editor->setSize (1082, 668);
+
+    const auto& composition = editor->composition();
+
+    const auto sectionFor = [&editor] (const juce::String& id)
+    {
+        for (int index = 0; index < editor->sectionCount(); ++index)
+            if (editor->sectionId (index) == id)
+                return index;
+
+        return -1;
+    };
+
+    const auto panelOf = [&editor] (const int panelIndex)
+    {
+        return editor->panelForGroup (editor->plan().panels[static_cast<std::size_t> (panelIndex)].title);
+    };
+
+    // **The oscillator row: three panels in a row.** One line, three of them, left to right, not
+    // overlapping, in the table's own order.
+    const auto oscRow = sectionFor ("osc-row");
+    REQUIRE (oscRow >= 0);
+
+    const auto* oscPlan = editor->sectionPlan (oscRow);
+    REQUIRE (oscPlan != nullptr);
+    REQUIRE (oscPlan->panels.size() == 3);
+
+    auto previous = juce::Rectangle<int>();
+
+    for (const auto panelIndex : oscPlan->panels)
+    {
+        auto* panel = panelOf (panelIndex);
+        REQUIRE (panel != nullptr);
+
+        const auto bounds = panel->getBounds();
+
+        CHECK (bounds.getHeight() > 0);
+
+        if (! previous.isEmpty())
+        {
+            CHECK (bounds.getY() == previous.getY());         // one row
+            CHECK (bounds.getX() >= previous.getRight());     // left to right, not overlapping
+        }
+
+        previous = bounds;
+    }
+
+    // Each oscillator's head carries the design's wavetable slot — a monospaced name field with two arrows —
+    // and it sits **above** the panel's controls.
+    for (const auto panelIndex : oscPlan->panels)
+    {
+        auto* panel = panelOf (panelIndex);
+        REQUIRE (panel != nullptr);
+
+        auto* slot = panel->wavetableSlot();
+        REQUIRE (slot != nullptr);
+
+        INFO ("oscillator head: " << panel->title());
+
+        CHECK (slot->getWidth() > 0);
+        CHECK (slot->getHeight() > 0);
+        CHECK (panel->getLocalBounds().contains (slot->getBounds()));
+        CHECK (slot->getBottom() <= panel->controlAtRow (0)->getY());
+
+        // The arrows are real rectangles inside the head, and they are live: the slot's frame position is a
+        // parameter, so `onStep` is wired and the arrows are drawn.
+        CHECK (slot->isSteppable());
+        CHECK (slot->arrowBounds (-1).getWidth() > 0);
+        CHECK (slot->arrowBounds (1).getRight() <= slot->getWidth());
+        CHECK (slot->arrowBounds (-1).getRight() <= slot->arrowBounds (1).getX());
+    }
+
+    // **Noise and sub beneath them**: one row of two panels, below the oscillator row.
+    const auto noiseRow = sectionFor ("noise-sub-row");
+    REQUIRE (noiseRow >= 0);
+    CHECK (composition.sectionBounds (noiseRow).getY() >= composition.sectionBounds (oscRow).getBottom());
+
+    const auto* noisePlan = editor->sectionPlan (noiseRow);
+    REQUIRE (noisePlan != nullptr);
+    REQUIRE (noisePlan->panels.size() == 2);
+    CHECK (panelOf (noisePlan->panels[0])->getBounds().getY()
+           == panelOf (noisePlan->panels[1])->getBounds().getY());
+
+    // **The filters, with their response displays inside them**, below noise and sub.
+    const auto filterSection = sectionFor ("filter-section");
+    REQUIRE (filterSection >= 0);
+    CHECK (composition.sectionBounds (filterSection).getY() > composition.sectionBounds (noiseRow).getY());
+
+    const auto* filterPlan = editor->sectionPlan (filterSection);
+    REQUIRE (filterPlan != nullptr);
+    REQUIRE (filterPlan->panels.size() == 2);
+
+    for (const auto slot : { 0, 1 })
+    {
+        auto& plane = editor->poleZeroPlane (slot);
+        auto* panel = panelOf (filterPlan->panels[static_cast<std::size_t> (slot)]);
+
+        REQUIRE (panel != nullptr);
+        INFO ("filter " << slot << ": " << panel->title());
+
+        // The display is a **child of the filter's own panel**, beside its knobs — the design's `filter-viz`
+        // — rather than a page of its own, which is what ticket `44` had.
+        CHECK (plane.getParentComponent() == static_cast<const juce::Component*> (panel));
+        CHECK (plane.getWidth() > 0);
+        CHECK (plane.getHeight() > 0);
+        CHECK (panel->getLocalBounds().contains (plane.getBounds()));
+
+        // Beside the knobs, not under them: the display's column is to the right of every control.
+        for (int row = 0; row < panel->rows(); ++row)
+            CHECK (panel->controlAtRow (row)->getRight() <= plane.getX());
+    }
+
+    // **The matrix** below the filters, as tall as the design's "8 / 64": eight rows of the 64, and the
+    // grid scrolls inside the section.
+    const auto matrixSection = sectionFor ("mod-panel");
+    REQUIRE (matrixSection >= 0);
+    CHECK (editor->sectionIsMatrix (matrixSection));
+    CHECK (composition.sectionBounds (matrixSection).getY() > composition.sectionBounds (filterSection).getY());
+
+    const auto matrixBounds = composition.sectionBounds (matrixSection);
+    const auto visibleRows = (matrixBounds.getHeight() - ui::kSectionTitleHeight
+                              - ui::ModulationMatrixView::kHeaderHeight)
+                             / ui::ModulationMatrixView::kRowHeight;
+
+    CHECK (visibleRows == ui::CompositionView::kMatrixVisibleRows);
+    CHECK (editor->matrixView().getHeight() > matrixBounds.getHeight());
+
+    // **The bottom row: the macros as a strip** — eight items on one line, beneath the matrix. The design's
+    // effects cards would sit beside them, and they are absent because the table has no FX group.
+    const auto macroSection = sectionFor ("macro-section");
+    REQUIRE (macroSection >= 0);
+    CHECK (composition.sectionBounds (macroSection).getY() > composition.sectionBounds (matrixSection).getY());
+
+    const auto* macroPlan = editor->sectionPlan (macroSection);
+    REQUIRE (macroPlan != nullptr);
+    REQUIRE (macroPlan->panels.size() == 8);
+
+    for (const auto panelIndex : macroPlan->panels)
+    {
+        auto* panel = panelOf (panelIndex);
+
+        REQUIRE (panel != nullptr);
+        CHECK (panel->isCompact());   // a strip item: a bare knob and its label, no panel chrome
+        CHECK (panel->getBounds().getY() == panelOf (macroPlan->panels[0])->getBounds().getY());
+        CHECK (panel->getBounds().getX() >= panelOf (macroPlan->panels[0])->getBounds().getX());
+    }
+
+    // **The fall-through, visible**: the last section is the one the composition does not name its groups
+    // in, and the two groups in it are the two the design's composition has no place for.
+    const auto defaultSection = sectionFor ("default-section");
+    REQUIRE (defaultSection >= 0);
+    CHECK (defaultSection == editor->sectionCount() - 1);
+
+    const auto* defaultPlan = editor->sectionPlan (defaultSection);
+    REQUIRE (defaultPlan != nullptr);
+
+    std::set<std::string> fellThrough;
+
+    for (const auto panelIndex : defaultPlan->panels)
+        fellThrough.insert (editor->plan().panels[static_cast<std::size_t> (panelIndex)].title);
+
+    CHECK (fellThrough == std::set<std::string> { "Global", "Amp Envelope" });
+    CHECK (composition.sectionBounds (defaultSection).getY()
+           > composition.sectionBounds (macroSection).getY());
+
+    // **The option rows**: the design draws a short vocabulary as a row of buttons, which is exactly where
+    // its own `btn-opt` rows are — NOISE's colours and SUB's waveforms. The filter's 83-value vocabulary
+    // cannot be a row of pills and is the themed picker.
+    auto buttonRows = 0;
+
+    for (const auto& spec : processor.bridge().specs())
+    {
+        if (controlKindFor (spec.type) != ControlKind::Choice)
+            continue;
+
+        if (spec.group != "Noise" && spec.group != "Sub Osc")
+            continue;
+
+        auto* control = editor->controlFor (spec.id);
+        REQUIRE (control != nullptr);
+        CHECK (control->choiceStyle() == ChoiceStyle::Buttons);
+        CHECK (dynamic_cast<ChoiceButtons*> (&control->widget()) != nullptr);
+        ++buttonRows;
+    }
+
+    CHECK (buttonRows == 2);   // one in each of the design's two compact panels
+
+    // And the row is a control rather than a picture: a key reaches the parameter the same way a click
+    // does, so the option row is not a surface only a mouse can use.
+    auto* waveform = editor->controlFor ("oscillator4.subosc4.shape");
+    REQUIRE (waveform != nullptr);
+    REQUIRE (waveform->choiceStyle() == ChoiceStyle::Buttons);
+
+    auto* pills = dynamic_cast<ChoiceButtons*> (&waveform->widget());
+    REQUIRE (pills != nullptr);
+
+    const auto shapeBefore = processor.parameterValue ("Oscillator4/SubOsc4/plainParams/kParamShape");
+    CHECK (pills->keyPressed (juce::KeyPress (juce::KeyPress::rightKey)));
+    CHECK (processor.parameterValue ("Oscillator4/SubOsc4/plainParams/kParamShape") == shapeBefore + 1);
+
+    CHECK (pills->keyPressed (juce::KeyPress (juce::KeyPress::leftKey)));
+    CHECK (processor.parameterValue ("Oscillator4/SubOsc4/plainParams/kParamShape") == shapeBefore);
+
+    auto* filterType = editor->controlFor ("voicefilter0.type");
+    REQUIRE (filterType != nullptr);
+    CHECK (filterType->choiceStyle() == ChoiceStyle::Menu);
+    CHECK (dynamic_cast<juce::ComboBox*> (&filterType->widget()) != nullptr);
 }
 
 //==============================================================================
@@ -1236,44 +1631,45 @@ TEST_CASE ("the import report is a bar plus a drawer, never a modal", "[interfac
         CHECK (row.contains (juce::String (entry.reason)));
     }
 
-    // The strip locates the problem: the device whose module the report named carries the dot, and a
-    // device the report said nothing about does not. That is what makes the strip a map of the import
-    // rather than a second copy of it.
-    const auto& strip = editor->deviceStrip();
-    auto dottedDevices = 0;
+    // The strip locates the problem: the section whose module the report named carries the dot, and a
+    // section the report said nothing about does not. That is what makes the strip a map of the import
+    // rather than a second copy of it — and since a section holds several modules (ticket `52`) it is the
+    // section's own module list that is asked.
+    const auto& strip = editor->sectionStrip();
+    auto dottedSections = 0;
 
-    for (int index = 0; index < editor->deviceCount(); ++index)
+    for (int index = 0; index < editor->sectionCount(); ++index)
     {
-        const juce::String module (editor->deviceModule (index));
         auto expected = false;
         auto expectedWorst = xerum::model::Severity::Info;
 
-        for (const auto& entry : report.entries)
-        {
-            const juce::String path (entry.modulePath);
-            const auto matches = module == "ModSlot" ? path.startsWith ("ModSlot")
-                                                     : (path == module || path.startsWith (module + "/"));
+        for (const auto& module : editor->sectionModules (index))
+            for (const auto& entry : report.entries)
+            {
+                const juce::String path (entry.modulePath);
+                const auto matches = module == "ModSlot" ? path.startsWith ("ModSlot")
+                                                         : (path == module || path.startsWith (module + "/"));
 
-            if (! matches)
-                continue;
+                if (! matches)
+                    continue;
 
-            expected = true;
+                expected = true;
 
-            if (entry.severity > expectedWorst)
-                expectedWorst = entry.severity;
-        }
+                if (entry.severity > expectedWorst)
+                    expectedWorst = entry.severity;
+            }
 
-        INFO ("device " << index << " (" << module << ")");
-        CHECK (strip.hasDeviceSeverity (index) == expected);
+        INFO ("section " << index << " (" << editor->sectionId (index).toStdString() << ")");
+        CHECK (strip.hasSectionSeverity (index) == expected);
 
         if (expected)
         {
-            ++dottedDevices;
-            CHECK (strip.deviceSeverity (index) == expectedWorst);
+            ++dottedSections;
+            CHECK (strip.sectionSeverity (index) == expectedWorst);
         }
     }
 
-    CHECK (dottedDevices >= 1);
+    CHECK (dottedSections >= 1);
 
     // A load failure is on the bar too, in the failure's own colour — the surface says what happened
     // without anyone opening anything.
@@ -1624,15 +2020,11 @@ TEST_CASE ("the pole/zero plane's edits reach the engine, and a drawn response i
     auto editor = openEditor (processor);
     REQUIRE (editor != nullptr);
 
-    // The plane has a real rectangle only on its own page.
-    auto filterDevice = -1;
-
-    for (int index = 0; index < editor->deviceCount(); ++index)
-        if (editor->deviceModule (index) == "VoiceFilter0")
-            filterDevice = index;
-
-    REQUIRE (filterDevice >= 0);
-    editor->showDevice (filterDevice);
+    // The plane lives inside its filter's panel on the composed page (ticket `52`), so it has its rectangle
+    // as soon as the editor is laid out; the scroll puts the section the user is working in on screen.
+    const auto filterSection = editor->sectionForModule ("VoiceFilter0");
+    REQUIRE (filterSection >= 0);
+    editor->scrollToSection (filterSection);
 
     auto& plane = editor->poleZeroPlane (0);
     REQUIRE (plane.sectionCount() == 8);
@@ -1665,3 +2057,4 @@ TEST_CASE ("the pole/zero plane's edits reach the engine, and a drawn response i
     const auto after = render (processor, 12, 512, playNote);
     CHECK (channelDifference (before, after) > 0.01);
 }
+

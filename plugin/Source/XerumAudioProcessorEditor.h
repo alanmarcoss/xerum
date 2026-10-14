@@ -3,23 +3,24 @@
 // The interface's shape is designed here; the **binding is model-driven**, which is ticket `13`'s rule:
 // every control is created from a `ParamSpec` and bound to the bridge's own parameter object, so adding a
 // parameter to the schema adds a control, and the interface cannot be missing one the engine has.
-// `ui::planInterface` places the pages; `ui::ParameterControl` builds and binds one parameter's control;
-// `ui::ImportReportView` shows ticket `23`'s report.
+// `ui::planInterface` places the panels in the design's composition; `ui::ParameterControl` builds and
+// binds one parameter's control; `ui::ImportReportView` shows ticket `23`'s report.
 //
-// ## Ticket `44`: the structure is variant 3, "Devices"
+// ## Ticket `52`: one composed page, arranged the way the design arranges it
 //
-// Ticket `43` settled the design and this is it, implemented:
+// Ticket `43` settled the design, ticket `44` implemented its structure (one device per page behind a
+// strip), and ticket `51` gave it the design's elements — the tokens, the knobs with their arcs, the
+// pills, the chrome. The dev's reaction to `51` was that the elements are the design's but **the
+// placements are not**, and that is right: the design specifies a *composition* — three oscillators
+// across the top, noise and sub beneath them, the two filters with their response displays beside their
+// knobs, the matrix under them, the effects and macros side by side at the bottom — and a panel-per-group
+// grid cannot express it.
 //
-//   1. **one device per page, behind a strip that always shows the others** (`ui::DeviceStrip`). A device
-//      is a plan **panel** — one `ParamSpec::group`, which is the model's own grouping — so the pages are
-//      derived from the table and nothing is hand-listed. The matrix is the one page the table does not
-//      derive, and the reason is stated where it is built;
-//   2. **the two hard surfaces**: the modulation matrix as real columns (`ui::ModulationMatrixView`, 64
-//      rows) and the drawn filter as a pole/zero plane (`ui::PoleZeroPlane`, up to 32 sections);
-//   3. **the report is a bar plus a drawer, never a modal** (`ui::ReportBar` + `ui::ImportReportView`) —
-//      the bar always says what happened, including `Nothing to report` for a clean import;
-//   4. **the visual identity is xerum's own** (`InterfaceLook.h`) — structural familiarity, not the
-//      reference's skin.
+// So the composition became data (`ui::designedComposition`: an ordered list of sections) and the editor
+// builds **one page** from it (`ui::CompositionView`), with the strip naming the sections and scrolling
+// to them. The binding did not move: one control per parameter, from the model type; one panel per group;
+// every group in exactly one section, with the groups the composition does not name landing in the
+// default section rather than vanishing.
 //
 // The coverage readout in the header is part of the work rather than decoration: the bridge binds a
 // fraction of the schema's leaves, and the interface says so on screen instead of implying that what is
@@ -38,12 +39,12 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include "DeviceStrip.h"
 #include "ImportReportView.h"
 #include "InterfacePlan.h"
 #include "ModulationMatrixView.h"
 #include "ParameterPanels.h"
 #include "PoleZeroPlane.h"
+#include "SectionStrip.h"
 
 #include <atomic>
 #include <memory>
@@ -88,27 +89,43 @@ public:
     int schemaLeafCount() const { return schemaLeaves_; }
 
     //==============================================================================
-    // The structure: one device per page, behind a strip that always shows the others.
+    // The composition: the design's sections, on one page.
 
-    /// One per plan panel, plus the matrix page.
-    int deviceCount() const { return static_cast<int> (devices_.size()); }
-    juce::String deviceTitle (int index) const;
-    juce::String deviceModule (int index) const;
-    bool deviceIsMatrix (int index) const;
+    /// One per resolved section of the composition, in the design's order.
+    int sectionCount() const { return composition_.sections().size(); }
+    juce::String sectionTitle (int index) const;
+    juce::String sectionId (int index) const;
 
-    /// The strip itself: what a user clicks, and what says which device is showing.
-    const ui::DeviceStrip& deviceStrip() const { return strip_; }
+    /// The model modules a section holds — what the strip's severity dot is keyed on, and what makes
+    /// "which section is `VoiceFilter0` in" a question with an answer rather than a guess.
+    std::vector<juce::String> sectionModules (int index) const;
 
-    /// Which page is showing, and what a strip click does.
-    int currentDevice() const { return currentDevice_; }
-    void showDevice (int index);
+    /// The section a model module landed in, or -1. The matrix's own module (`ModSlot`) is the matrix's
+    /// section.
+    int sectionForModule (const juce::String& module) const;
 
-    /// True while the matrix is the page. The matrix is the one device the table does not derive.
-    bool matrixPageVisible() const { return matrixViewport_.isVisible(); }
+    /// A section's resolved plan — the panels it holds, in the table's order — or nullptr. The evidence
+    /// reads this to say which group landed where.
+    const ui::SectionPlan* sectionPlan (int index) const;
 
-    /// The panel a device page shows, or nullptr for the matrix page.
-    ui::ParameterPanel* panelForDevice (int index) const;
-    ui::ParameterPanel* shownPanel() const { return panelForDevice (currentDevice_); }
+    /// True while the matrix is that section — the one section the table does not derive.
+    bool sectionIsMatrix (int index) const;
+
+    /// The strip: what a user clicks, and what says which section is showing.
+    const ui::SectionStrip& sectionStrip() const { return strip_; }
+
+    /// Which section the page is scrolled to, and what a strip click does.
+    int currentSection() const { return currentSection_; }
+    void scrollToSection (int index);
+
+    /// The composed page itself and its scroll position, so a test can read where each section and each
+    /// panel actually landed.
+    const ui::CompositionView& composition() const { return composition_; }
+    int compositionScrollY() const { return compositionViewport_.getViewPositionY(); }
+    int compositionHeight() const { return composition_.totalHeight(); }
+
+    /// The panel a group's controls are in, or nullptr. A group is a panel; a section holds several.
+    ui::ParameterPanel* panelForGroup (const std::string& group) const;
 
     //==============================================================================
     // The two surfaces ticket `43` called hard.
@@ -139,27 +156,23 @@ public:
     void resized() override;
 
 private:
-    struct Device
-    {
-        std::string title;   ///< the group, or "Matrix"
-        std::string module;  ///< the model module, e.g. `Oscillator0` — what the strip's dot keys on
-        int panel { -1 };    ///< index into `panels_`, or -1 for the matrix page
-        int plane { -1 };    ///< index into `planes_`, or -1
-    };
-
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
     void importPreset();
-    void updateDeviceSeverity (const model::ImportReport& report);
+    void updateSectionSeverity (const model::ImportReport& report);
     void updateModulationArcs();
-    int naturalHeight() const;
-    int naturalWidth() const;
+    void updateWavetableHeads();
+
+    /// The name the design's wavetable field shows for a slot: the preset's own asset name, `inline` for a
+    /// preset carrying its table in its own data, or empty (`— off —`) for a slot with neither.
+    static juce::String tableNameFor (const model::PresetDocument& document, int slot);
 
     XerumAudioProcessor& processor_;
 
     ui::InterfacePlan plan_;
     juce::OwnedArray<ui::ParameterPanel> panels_;
-    std::vector<Device> devices_;
-    ui::DeviceStrip strip_;
+    ui::CompositionView composition_;
+    juce::Viewport compositionViewport_;
+    ui::SectionStrip strip_;
 
     juce::OwnedArray<ui::PoleZeroPlane> planes_;
 
@@ -170,7 +183,8 @@ private:
     juce::Viewport reportViewport_;
     ui::ReportBar reportBar_;
 
-    juce::Rectangle<int> pageArea_;
+    /// The model modules of each section, keyed the way the strip's dots are.
+    std::vector<std::vector<juce::String>> sectionModules_;
 
     juce::TextButton import_ { "Import .SerumPreset…" };
     juce::Label status_;
@@ -180,7 +194,7 @@ private:
     /// refreshed, so it is the same value the rest of the interface is showing.
     juce::String presetName_;
 
-    int currentDevice_ { 0 };
+    int currentSection_ { 0 };
     int schemaLeaves_ { 0 };
 
     static std::atomic<int> created_;

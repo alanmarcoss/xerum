@@ -1,4 +1,5 @@
-// xerum::plugin — the interface's two building blocks: one parameter's control, and one group's panel.
+// xerum::plugin — the interface's building blocks: one parameter's control, one group's panel, and the
+// composition that arranges the panels.
 //
 // Ticket `31`. Neither class knows a parameter by name. A `ParameterControl` is constructed from a
 // `ParamSpec` and the bridge's own parameter object, picks the widget its model type maps to
@@ -12,25 +13,39 @@
 //
 // ## Ticket `51`: the controls draw
 //
-// A slider is now a **rotary knob** (`ui::Knob`) sized from the plan (`ui::knobSizeFor`), with the track
-// arc, the value arc, the design's second **modulation arc**, a pointer and a keyboard focus ring — the
-// drawing half of a decision `InterfacePlan` already made. A boolean is a **pill toggle** with a state dot
-// rather than a stock checkbox, and a choice is a themed picker.
+// A slider is a **rotary knob** (`ui::Knob`) sized from the plan (`ui::knobSizeFor`), with the track arc,
+// the value arc, the design's second **modulation arc**, a pointer and a keyboard focus ring. A boolean
+// is a **pill toggle** with a state dot rather than a stock checkbox. The remaining stock widget is a
+// themed picker, and it is a subclass-free use of JUCE's own: `SliderParameterAttachment`,
+// `ButtonParameterAttachment` and `ComboBoxParameterAttachment` are what make the binding model-driven,
+// and the tests assert the widget *is* a `juce::Slider`/`ToggleButton`/`ComboBox`. `ui::Knob` derives
+// from `juce::Slider`, `ui::PillToggle` from `juce::ToggleButton`, so every attachment and every
+// dynamic_cast in the harness still holds while the paint routine is xerum's own.
 //
-// The two stock widgets that remain are subclasses, not replacements, and that is deliberate: JUCE's
-// `SliderParameterAttachment`/`ButtonParameterAttachment`/`ComboBoxParameterAttachment` are what make the
-// binding model-driven, and the tests assert the widget *is* a `juce::Slider`/`ToggleButton`/`ComboBox`.
-// `ui::Knob` derives from `juce::Slider`, `ui::PillToggle` from `juce::ToggleButton`, so every attachment
-// and every dynamic_cast in the harness still holds while the paint routine is xerum's own.
+// ## Ticket `52`: the panel arranges itself, the composition arranges the panels
+//
+// `ui::ParameterPanel` now lays its own controls out — a row of knobs, a row of pickers, a row of pills,
+// wrapped to the width it is given — because that is the design's own grammar (`osc-knobs` then
+// `osc-controls`) and it is derived from the model types rather than written down. NOISE and SUB, the
+// design's compact band, put their knobs and their option buttons on one line (`--gap-inline`).
+//
+// Above a panel sits `ui::CompositionView`: the one component that arranges whole sections — three
+// oscillators in a row, noise and sub beneath them, the filters with their response displays beside their
+// knobs, the matrix, the effects and macros side by side — from `ui::SectionPlan` data. A choice whose
+// vocabulary is small is drawn the way the design draws one (`ui::ChoiceButtons`, the `btn-opt` row);
+// a longer one is the picker.
 
 #pragma once
 
 #include "InterfacePlan.h"
 #include "ParameterBridge.h"
+#include "document.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace xerum::plugin::ui
 {
@@ -105,6 +120,97 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PillToggle)
 };
 
+/// A choice whose vocabulary is short enough to be the design's **row of option buttons** (`btn-opt`):
+/// NOISE's four colours and SUB's six waveforms. One pill per choice, the selected one in the accent on
+/// `accent-bg`, and the parameter bound through JUCE's own `ParameterAttachment` — the same mechanism the
+/// picker uses, so a click here is a host gesture and the coverage count still counts one control.
+class ChoiceButtons final : public juce::Component,
+                            private juce::ParameterAttachment
+{
+public:
+    ChoiceButtons (juce::RangedAudioParameter& parameter, const ChoiceList& choices);
+
+    int choiceCount() const;
+    int selectedIndex() const { return selected_; }
+
+    /// The word on a pill — the bridge's own label for the choice, so the row and the parameter cannot
+    /// call a choice two things.
+    juce::String choiceText (int index) const;
+
+    /// Where a pill is, so a click and a test aim at the same rectangle.
+    juce::Rectangle<int> buttonBounds (int index) const;
+
+    /// The width the whole row wants — the panel's row layout uses it, so pills are never clipped.
+    int preferredWidth() const;
+
+    /// The arrows step the selection — the option row is a control like the picker beside it, and a
+    /// keyboard user gets the same choices rather than a row only a mouse can reach.
+    bool keyPressed (const juce::KeyPress& key) override;
+
+    void paint (juce::Graphics& graphics) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent& event) override;
+    void mouseUp (const juce::MouseEvent& event) override;
+    void mouseMove (const juce::MouseEvent& event) override;
+    void mouseExit (const juce::MouseEvent& event) override;
+
+private:
+    /// The choice a normalised parameter value selects — the same linear mapping JUCE's own
+    /// `AudioParameterChoice` uses, so a click here and a click on the picker agree.
+    int indexFor (float normalised) const;
+
+    void parameterChanged (int index);
+
+    const ChoiceList& choices_;
+    int selected_ { 0 };
+    int hovered_ { -1 };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChoiceButtons)
+};
+
+/// The design's wavetable slot: the monospaced name field and the two 16px arrow buttons, in an
+/// oscillator panel's head. What it shows is the loaded table's own name — the reference's asset name, or
+/// `inline` for a preset carrying its table in its own data, or `off` for a slot that is not
+/// synthesising a wavetable.
+///
+/// **What the arrows do, and what they do not.** The design's arrows choose a different wavetable; xerum
+/// has no wavetable chooser — a recorded decision (`plugin/README.md`: a table chooser is a UI feature
+/// with a dynamic choice list), and the loaded table is a preset asset rather than a parameter, so there
+/// is no list for the arrows to step. They step the slot's own **frame position** instead: the one
+/// per-slot table control the model has, the same gesture on the same asset, and `onStep` is wired to
+/// that parameter by the editor. A slot with no frame parameter gets the field and **no arrows**, rather
+/// than arrows that write nothing.
+class WavetableSlot final : public juce::Component
+{
+public:
+    WavetableSlot();
+
+    void setTableName (juce::String name);
+    const juce::String& tableName() const { return name_; }
+
+    /// Draw the arrows at all. False when the slot's table has no frame parameter to step.
+    void setSteppable (bool steppable);
+    bool isSteppable() const { return steppable_; }
+
+    /// One step of the arrows: -1 for ◀, +1 for ▶.
+    std::function<void (int)> onStep;
+
+    juce::Rectangle<int> arrowBounds (int step) const;
+
+    void paint (juce::Graphics& graphics) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent& event) override;
+    void mouseMove (const juce::MouseEvent& event) override;
+    void mouseExit (const juce::MouseEvent& event) override;
+
+private:
+    juce::String name_;
+    bool steppable_ { true };
+    int hovered_ { 0 };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WavetableSlot)
+};
+
 class ParameterControl final : public juce::Component
 {
 public:
@@ -123,8 +229,12 @@ public:
     const ParamSpec& spec() const { return spec_; }
     juce::RangedAudioParameter& parameter() const { return parameter_; }
 
-    /// The widget the attachment binds: the toggle, the combo box or the slider.
+    /// The widget the attachment binds: the toggle, the picker, the button row or the slider.
     juce::Component& widget() const { return *widget_; }
+
+    /// How a choice of this control is drawn — the design's option row for a short vocabulary, the picker
+    /// otherwise. A non-choice answers `Menu`, which is the picker it has.
+    ChoiceStyle choiceStyle() const;
 
     /// The knob, when this control is a slider — otherwise null. The editor sets its modulation arc.
     Knob* knob() { return controlKindFor (spec_.type) == ControlKind::Slider ? &knob_ : nullptr; }
@@ -140,6 +250,10 @@ public:
     /// True once the control draws its own label / readout, which a matrix cell does not.
     bool showsLabel() const { return showLabel_; }
 
+    /// The width this control's cell wants at most — a knob's diameter and its label, a choice's option
+    /// row or its label column. The panel's row layout asks before it packs a row.
+    int preferredWidth() const;
+
     void paint (juce::Graphics& graphics) override;
     void resized() override;
 
@@ -150,6 +264,7 @@ private:
     PillToggle toggle_;
     juce::ComboBox combo_;
     Knob knob_;
+    std::unique_ptr<ChoiceButtons> choiceButtons_;   ///< present only for the design's option row
     juce::Component* widget_ { nullptr };
 
     bool showLabel_ { true };
@@ -163,13 +278,13 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ParameterControl)
 };
 
-/// A page: one spec group's controls, in table order, laid out in the columns the plan balanced its rows
-/// into.
+/// A panel: one spec group's controls, laid out the way the design lays a panel out — a head, optionally
+/// the design's wavetable slot, then rows of controls derived from their kinds.
 ///
-/// Ticket `44` made a panel a *page* — one device behind the strip — so the panel is now the thing the
-/// user sees filling the window, and `setColumns` is how the plan's balance reaches the screen: the
-/// panel places rows, it does not decide which column a row lands in. A panel with no columns set lays
-/// its rows out in one column, which is what a test that only wants the controls does.
+/// The panel lays out **all** of its controls every time it is resized, and it never decides *which* panel
+/// or section it is in: `CompositionView` decides where the panel is and how wide, and this decides how its
+/// own rows fall inside that. `preferredHeight` answers the same question for the composition's layout, so
+/// a height and a rectangle cannot disagree.
 class ParameterPanel final : public juce::Component
 {
 public:
@@ -177,12 +292,21 @@ public:
 
     void addControl (std::unique_ptr<ParameterControl> control);
 
-    /// The plan's row columns: `columns[c]` lists the row indices column `c` holds, in reading order.
-    /// Every row appears exactly once — the plan asserts it rather than this class repairing it.
-    void setColumns (std::vector<std::vector<int>> columns);
+    /// The design's wavetable slot for this panel's head, or null. The panel takes ownership.
+    void setWavetableSlot (std::unique_ptr<WavetableSlot> slot);
+    WavetableSlot* wavetableSlot() const { return wavetable_.get(); }
+
+    /// A drawn surface the panel carries **inside itself**, beside its controls — the design's
+    /// `filter-viz`, which is the filter's response display. Not owned: the editor owns the plane.
+    void setInlineDisplay (juce::Component* display);
+    juce::Component* inlineDisplay() const { return display_; }
+
+    /// A strip item (a macro in the bottom row): no panel chrome, and the title under the control, which
+    /// is how the design draws the macro strip.
+    void setCompact (bool compact);
+    bool isCompact() const { return compact_; }
 
     int rows() const { return controls_.size(); }
-    int columnCount() const { return columns_.empty() ? 1 : static_cast<int> (columns_.size()); }
     const std::string& title() const { return title_; }
 
     /// The control at a row index, or nullptr. The panel's own order is the plan's row order.
@@ -191,15 +315,90 @@ public:
     /// The control bound to `id`, or nullptr. Used by the editor's own coverage check and by the tests.
     ParameterControl* controlFor (std::string_view id) const;
 
+    /// The height this panel needs at this width, from the same row derivation `resized` uses.
+    int preferredHeight (int width) const;
+
     void paint (juce::Graphics& graphics) override;
     void resized() override;
 
 private:
+    /// One row of controls, by index into `controls_`, and how tall it is.
+    struct Row
+    {
+        std::vector<int> controls;
+        int height { 0 };
+    };
+
+    /// The width the inline display takes out of this panel at this width.
+    int displayReserve (int width) const;
+
+    /// The width a control's cell wants inside a row of this panel.
+    int cellWidthFor (const ParameterControl& control, int inner) const;
+
+    /// The panel's controls, grouped into rows the way the design groups them.
+    std::vector<Row> rowsFor (int width) const;
+
     std::string title_;
     juce::OwnedArray<ParameterControl> controls_;
-    std::vector<std::vector<int>> columns_;
+    std::unique_ptr<WavetableSlot> wavetable_;
+    juce::Component* display_ { nullptr };
+    bool compact_ { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ParameterPanel)
+};
+
+/// The composed page: the design's arrangement of whole sections, in the design's order — three
+/// oscillators in a row, noise and sub beneath them, the two filters with their response displays beside
+/// their knobs, the matrix, the effects and macros side by side. Ticket `52`'s answer to "the design
+/// specifies a composition, the interface derived a grid".
+///
+/// It arranges and paints; it binds nothing and owns nothing. The panels, the matrix and the planes belong
+/// to the editor, and this is the one place that knows where they sit — which is why the layout is a
+/// single function that both sets the rectangles and returns the height, rather than a `resized` and a
+/// separate estimate that could disagree.
+class CompositionView final : public juce::Component
+{
+public:
+    CompositionView();
+
+    /// The resolved composition and the panels it holds, indexed as `SectionPlan::panels` indexes them.
+    void setComposition (std::vector<SectionPlan> sections, std::vector<ParameterPanel*> panels);
+
+    /// The matrix, when the composition has a matrix section. Not owned; null is allowed.
+    void setMatrix (juce::Component* matrixViewport);
+
+    /// How many rows of the matrix the matrix section shows — the "8 / 64" the design's heading says.
+    static constexpr int kMatrixVisibleRows = 8;
+
+    /// Arrange the whole page for this width, and return the height it needs. The composition is one page
+    /// taller than the window, so the editor puts it in a viewport and scrolls it; a narrower window gets a
+    /// taller page, from the same derivation, and never a clipped section.
+    int layout (int width);
+
+    /// The resolved composition, in the design's order, and where each section landed in the page's own
+    /// coordinates.
+    const std::vector<SectionPlan>& sections() const { return sections_; }
+    juce::Rectangle<int> sectionBounds (int index) const;
+
+    /// Which section covers a y in the composition's coordinates, or -1.
+    int sectionAt (int y) const;
+
+    int totalHeight() const { return totalHeight_; }
+
+    void paint (juce::Graphics& graphics) override;
+
+private:
+    void paintSectionHeading (juce::Graphics& graphics, const SectionPlan& section,
+                              juce::Rectangle<int> bounds) const;
+
+
+    std::vector<SectionPlan> sections_;
+    std::vector<std::vector<ParameterPanel*>> panels_;   ///< per section
+    std::vector<juce::Rectangle<int>> bounds_;           ///< per section
+    juce::Component* matrix_ { nullptr };
+    int totalHeight_ { 0 };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CompositionView)
 };
 
 } // namespace xerum::plugin::ui
