@@ -5,10 +5,16 @@ add_executable(xerum-model-tests
     container_test.cpp
     legacy_test.cpp
     document_test.cpp
-    write_test.cpp)
+    write_test.cpp
+    warp_coverage_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model
+    # Linked by the warp coverage test alone, and deliberately at the *test* level rather than in the
+    # library: the model layer stays free of the engine (see src/model/CMakeLists.txt), and the coverage
+    # test is the one place where "what the report claims we ship" and "what the engine implements" have
+    # to be compared to each other.
+    xerum_dsp
     Catch2::Catch2WithMain)
 
 # Fixtures are ours, not the reference's: a payload we wrote, compressed in each of the container's

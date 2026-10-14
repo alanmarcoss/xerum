@@ -11,7 +11,10 @@
 
 #pragma once
 
+#include "warp.h"
 #include "wavetable.h"
+
+#include <array>
 
 #include <cstddef>
 
@@ -35,6 +38,22 @@ public:
     void setPhase (double turns);
     double phase() const { return phase_; }
 
+    /// Two warp slots, because the reference gives every wavetable oscillator two — `kParamWarpMenu` and
+    /// `kParamWarpMenu2`, each with its own amount — and **174 of the 626 factory presets use both at
+    /// once** (measured; see `warp_coverage_test.cpp`). One slot would be silently half a preset on those.
+    static constexpr int kWarpSlotCount = 2;
+
+    /// Bind a warp to a slot. `kNoWarp` is the default, and a warp at amount zero is transparent — so an
+    /// oscillator that is not using one reads exactly as it did before this existed.
+    void setWarp (int slot, WarpMode mode, double amount = 0.0);
+    Warp& warp (int slot) { return warps_[wrapSlot (slot)]; }
+    const Warp& warp (int slot) const { return warps_[wrapSlot (slot)]; }
+
+    /// The modulator the source-driven warps (FM, PD, AM, RM) read: the voice supplies another slot's
+    /// output here once routing exists. Until then it is zero, which makes those modes transparent rather
+    /// than wrong — the alternative is inventing a source, which the import contract forbids.
+    void setWarpModulator (int slot, double value) { warpModulators_[wrapSlot (slot)] = value; }
+
     /// Position along the frame axis, in frames and possibly fractional.
     void setFramePosition (double frames);
     double framePosition() const { return framePosition_; }
@@ -46,7 +65,9 @@ public:
     void process (float* out, std::size_t count);
 
     /// Read the current position without advancing — for analysis and tests.
-    float currentSample() const;
+    ///
+    /// Not const: the warp's read path may carry state (the filter-as-warp is a filter).
+    float currentSample();
 
 private:
     const Wavetable* table_ { nullptr };
@@ -55,6 +76,17 @@ private:
     double phase_ { 0.0 };            ///< in turns, 0..1
     double phaseIncrement_ { 0.0 };   ///< turns per sample
     double framePosition_ { 0.0 };
+
+    // The warps sit *in* the read path rather than after it: sync and the phase warps rewrite the position
+    // the table is read from, which no post-processing stage can express.
+    //
+    // The two slots are **serial**, slot 0 first. Phase rewrites therefore compose, and the amplitude
+    // half of each slot shapes what the previous stage produced — each seeing the position *it* actually
+    // read from, which is what `flip` needs.
+    std::array<Warp, kWarpSlotCount> warps_;
+    std::array<double, kWarpSlotCount> warpModulators_ { 0.0, 0.0 };
+
+    static int wrapSlot (int slot) { return slot < 0 ? 0 : (slot >= kWarpSlotCount ? kWarpSlotCount - 1 : slot); }
 };
 
 } // namespace xerum::dsp

@@ -1,6 +1,7 @@
 add_library(xerum_dsp STATIC
     wavetable.cpp
-    oscillator.cpp)
+    oscillator.cpp
+    warp.cpp)
 
 target_include_directories(xerum_dsp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

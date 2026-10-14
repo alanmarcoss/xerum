@@ -54,9 +54,16 @@ const SupportCatalogue& SupportCatalogue::v1()
         c.deferredEngines = { "GranularOsc", "SpectralOsc", "MultiSampleOsc", "SampleOsc" };
 
         // The shipped warp families, matched by mode-name prefix: phase distortion, FM/PM, distortion,
-        // bend, sync/PWM, ring and amplitude modulation, filter-as-warp.
-        c.warpPrefixes = { "kPD_", "kSelfPD", "kFM_", "kFMX_", "kFMP_", "kDist", "kBend", "kSync", "kPWM",
-                           "kRM_", "kAM_", "kFilterL", "kFilterH" };
+        // bend and asymmetry, sync/PWM, flip, quantize, ring and amplitude modulation, filter-as-warp.
+        //
+        // This list and `dsp::warpModeFromName` are two statements of one fact, so a test holds them
+        // together over the reference's whole warp vocabulary (`warp_coverage_test.cpp`). They are not
+        // one statement because the model layer deliberately links no DSP: see its CMakeLists for why.
+        // `kFM` rather than `kFM_`: the through-zero and exponential variants are `kFMX_*` and `kFMP_*`,
+        // and matching only the underscored spelling would report all six of them as unshipped while the
+        // engine happily implements every one. The coverage test exists because exactly this happened.
+        c.warpPrefixes = { "kPD_", "kSelfPD", "kFM", "kDist", "kBend", "kASYM", "kSync", "kPWM",
+                           "kFlip", "kQuantize", "kRM_", "kAM_", "kFilterL", "kFilterH" };
 
         // PROVISIONAL. Ticket 26 owns the real model table; these are the family prefixes behind the
         // ~90% of corpus usage ticket 12 measured.

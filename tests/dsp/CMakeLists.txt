@@ -1,5 +1,6 @@
 add_executable(xerum-dsp-tests
-    wavetable_test.cpp)
+    wavetable_test.cpp
+    warp_test.cpp)
 
 target_link_libraries(xerum-dsp-tests PRIVATE
     xerum_dsp

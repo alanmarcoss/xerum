@@ -8,6 +8,9 @@ namespace xerum::dsp
 void WavetableOscillator::prepare (double sampleRate)
 {
     sampleRate_ = sampleRate > 0.0 ? sampleRate : 48000.0;
+
+    for (auto& warp : warps_)
+        warp.prepare (sampleRate_);
     setFrequency (frequency_);
 }
 
@@ -44,16 +47,28 @@ void WavetableOscillator::setFramePosition (double frames)
     framePosition_ = frames < 0.0 ? 0.0 : (frames > last ? last : frames);
 }
 
-float WavetableOscillator::currentSample() const
+void WavetableOscillator::setWarp (int slot, WarpMode mode, double amount)
+{
+    warps_[wrapSlot (slot)].setMode (mode);
+    warps_[wrapSlot (slot)].setAmount (amount);
+}
+
+float WavetableOscillator::currentSample()
 {
     if (! hasTable())
         return 0.0f;
 
     const auto& table = *table_;
 
+    // The warps rewrite *where* the table is read, before the read: a hard sync at 2x has to make the
+    // oscillator traverse its table twice, which shifting the output afterwards cannot do. Two slots, in
+    // series — the second warp sees the position the first one produced.
+    const auto phaseAfterFirst = warps_[0].phase (phase_, warpModulators_[0]);
+    const auto readPhase = warps_[1].phase (phaseAfterFirst, warpModulators_[1]);
+
     // Within the frame, linearly between the two neighbouring samples. Without this a 2048-point table
     // scanned fast produces the buzz of a nearest-neighbour reader.
-    const auto x = phase_ * static_cast<double> (table.frameSize);
+    const auto x = readPhase * static_cast<double> (table.frameSize);
     const auto i0 = static_cast<std::size_t> (x);
     const auto i1 = (i0 + 1) % table.frameSize;
     const auto fraction = static_cast<float> (x - static_cast<double> (i0));
@@ -61,7 +76,13 @@ float WavetableOscillator::currentSample() const
     const auto a = table.interpolated (framePosition_, i0);
     const auto b = table.interpolated (framePosition_, i1);
 
-    return a + (b - a) * fraction;
+    const auto read = a + (b - a) * fraction;
+
+    // The amplitude-domain half of each warp: distortion, filtering, the modulation families, flip.
+    // Slot 0 first, then slot 1, which is the order the two slots are wired in.
+    const auto afterFirst = warps_[0].sample (phaseAfterFirst, read, warpModulators_[0]);
+
+    return warps_[1].sample (readPhase, afterFirst, warpModulators_[1]);
 }
 
 float WavetableOscillator::next()
