@@ -313,6 +313,14 @@ cover it; and the real-time invariant.
   top of that surface — pages of panels, the matrix, the pole/zero plane, the report bar and drawer —
   and ticket `52` arranged the panels the way the design's own screen arranges them: one composed page
   of sections. Those are the sections at the end of this file.
+* **The composed page needs a window about 1108 logical pixels tall at its default width**, and ticket
+  `53` opens the editor at exactly that size, because the whole instrument on one screen is the point of
+  the design's composition and a scroll bar is not. The page is 1018 tall at 1080 wide (947 at 1400) and
+  every one of those pixels is a control the table has: the oscillator row alone is 344 for three panels
+  of thirteen controls each. On a display shorter than that the window is resized by the user (or by the
+  host) and the strip scrolls the page as ticket `52` had it — legible, not clipped, but not all at once.
+  A smaller instrument screen would need a decision this build has not taken: a section behind the strip,
+  or smaller knobs than the design draws. Ticket `53`'s section below has the arithmetic.
 
 ## JUCE observations worth keeping
 
@@ -352,7 +360,7 @@ where the direction and the model do not meet.
 > strip — are now **sections of one composed page**, because the design's own arrangement (three
 > oscillators across the top, the filters with their displays, the macros as a strip) cannot be expressed
 > as one panel per page. The binding rule this section is about did not move; see the ticket `52` section
-> below for what changed.
+> below for what changed, and ticket `53` for what the composed page costs in window size.
 
 ```sh
 cmake -S . -B build-44 -DCMAKE_BUILD_TYPE=Release && cmake --build build-44 -j8
@@ -371,9 +379,10 @@ noise and sub beneath them, the filters beside their response display, the matri
 macros — each naming the groups it holds and how they arrange, and a group no section names falls through
 to a default section rather than vanishing. So which section a group lands in is data; *whether* it lands
 is still derived and still total. `ui::SectionStrip` draws one tab per section, always all of them,
-**scrolling the single composed page** — which is taller than the window by design — and carrying a
-severity dot on any section whose module the import report named, so a half-loaded preset is located where
-it happened and not only collected in the drawer.
+**scrolling the single composed page** — larger than the window the plugin shipped then, and since ticket
+`53` larger only than a window smaller than the instrument — and carrying a severity dot on any section
+whose module the import report named, so a half-loaded preset is located where it happened and not only
+collected in the drawer.
 
 **The plan's balance moved, and it moved because the design did.** `InterfacePlan`'s rule is unchanged
 — a control is a function of the model type, a panel is a group in the table's order, and columns are
@@ -651,9 +660,11 @@ rather than implied.
   `kParamBypass`, so the cell inverts the dot rather than the parameter).
 * **Panels and sections**: a `surface` panel with the design's 5px radius and 9px uppercase title, a header
   with the gradient, the wordmark, the preset field, the coverage readout and the import button, and a
-  9px uppercase title on every section — the matrix's carrying its `8 / 64` tag.
+  9px uppercase title on every section — the matrix's carrying its `N / 64` tag, the number of rows its own
+  geometry shows.
 * **`SectionStrip` is a section tab strip**: pills, `fgDim` when inactive and the accent on `accent-bg` when
-  active, **scrolling the single composed page**, with the severity dot on the tab of the section whose
+  active, **scrolling the single composed page** when the window is smaller than it — and, since ticket
+  `53`, doing nothing but locating when it is not — with the severity dot on the tab of the section whose
   module the report named.
 * **The matrix is a grid**: the header in the design's 7px monospaced table-head colour, stored rows
   striped on the surface and empty slots on the window, the source column in the accent, the amount cell
@@ -703,9 +714,11 @@ arc is the preset's own modulation`** measures the widget class, the diameter (4
 NOISE), the arc's own geometry through `pointAtProportion` (both ends below the centre, the middle at the
 top), the `accent`/`border`/`surface2` pixels in the knob's own snapshot, and the depth two matrix rows sum
 to (0.075) against a parameter no row addresses (0). **`the interface is laid out at the design's baseline
-window size`** sets the editor to **900×600** and requires every control of every page to be non-empty and
-inside its panel — the measurement of "works at the baseline size" that this session could make, since
-driving another app's window needs Assistive access this machine does not grant `osascript`.
+window size`** — the case tickets `52` and `53` renamed, now `the composed page fits the window it opens
+at, and stays legible at 900x600` — sets the editor to **900×600** and requires every control of every page
+to be non-empty and inside its panel — the measurement of "works at the baseline size" that this session
+could make, since driving another app's window needs Assistive access this machine does not grant
+`osascript`.
 
 The palette assertions in `the interface draws xerum's own identity, and the pages draw` were updated, not
 weakened: the old constants no longer exist, and the filter page's zero markers moved from the report's
@@ -799,11 +812,12 @@ The binding did not move. Every control is still built from its `ParamSpec` by m
 editor still cannot be constructed eagerly. What moved is the arrangement:
 
 * **`ui::CompositionView`** arranges whole sections on **one page**, in the design's order, with the
-  design's grid (6px between panels, 3px between rows, 10px of side padding) — and that page is taller
-  than the window, so the editor puts it in a viewport and the **strip scrolls it**. `SectionStrip` (the
-  renamed `DeviceStrip`) names the sections and carries each section's severity dot; the model module left
-  the tab because a section now holds several (`Filter` is `VoiceFilter0` **and** `VoiceFilter1`) and the
-  design's tabs are labels.
+  design's grid (6px between panels, 3px between rows, 10px of side padding) — and the editor puts that
+  page in a viewport. Ticket `52` had the page taller than every window and the **strip scroll it**;
+  ticket `53` packs the page so that it fits the window it opens at (below), so the strip scrolls it only
+  when the window is smaller than the instrument. `SectionStrip` (the renamed `DeviceStrip`) names the
+  sections and carries each section's severity dot; the model module left the tab because a section now
+  holds several (`Filter` is `VoiceFilter0` **and** `VoiceFilter1`) and the design's tabs are labels.
 * **`ui::ParameterPanel`** lays its own controls out, from their model types: the design's grammar is a row
   of knobs, then the pickers, then the pills at the bottom, and NOISE/SUB — the design's one compact band —
   put their knobs and their option buttons on one line (`--gap-inline`). A panel's height is derived at the
@@ -821,14 +835,17 @@ editor still cannot be constructed eagerly. What moved is the arrangement:
   xerum has a drawn response *per voice filter* and the plane is how it is edited, so each filter panel
   carries its own. Noted as a deviation.
 * **The matrix is a section** (`mod-panel`), headed `MOD MATRIX` with the design's tag: the number of rows
-  on screen over 64 — eight, which is the section's height divided by the row height, so the tag cannot
-  drift from the geometry. The four effects cards are the design's `fx-section`; **xerum's table has no FX
-  group** (the FX rack is not in the bridge), so that section resolves to zero panels and is not drawn.
-  It stays in the composition so the bottom row completes itself the day the table has one — and its
-  absence is a stated fact rather than a silent drop.
+  on screen over 64 — the section's own height divided by the row height, so the tag cannot drift from the
+  geometry (ticket `53` made the section the composition's flexible row, so the number is at least the
+  design's eight and more when the window has slack). The four effects cards are the design's `fx-section`;
+  **xerum's table has no FX group** (the FX rack is not in the bridge), so that section resolves to zero
+  panels and is not drawn. It stays in the composition so the bottom row completes itself the day the table
+  has one — and its absence is a stated fact rather than a silent drop.
 * **The macros are a strip**: eight bare 26px knobs with their labels, no panel chrome —
-  `ParameterPanel::setCompact`, which the `Strip` section kind turns on. The fall-through section is the
-  last band and holds `Global` and `Amp Envelope`.
+  `ParameterPanel::setCompact`, which the `Strip` section kind turns on. The fall-through section —
+  `Global` and `Amp Envelope`, the groups the composition does not name — was its own line under the
+  matrix in ticket `52` and is, since ticket `53`, the **other half of the design's bottom row**, beside
+  the macro strip.
 
 ## What did not move
 
@@ -837,8 +854,8 @@ with the **computed** `N of 776 schema leaves bound` readout, the report bar and
 surfaces, the lazy editor and the counters that prove it. `plugin/tests/interface_test.cpp` asserts the
 composition at both acceptance sizes and, in `the design's sections are in the design's positions`, the
 arrangement itself — three oscillator panels on one line, noise and sub beneath them, the plane a child of
-its filter panel and to the right of every control in it, the matrix's eight visible rows, the macro strip
-on one line, and the fall-through holding exactly `Global` and `Amp Envelope`.
+its filter panel and to the right of every control in it, the matrix's visible rows as its heading reports
+them, the macro strip on one line, and the fall-through holding exactly `Global` and `Amp Envelope`.
 
 ## Acceptance, measured
 
@@ -855,8 +872,8 @@ cmake --build build-52 -j8
 ```
 
 **The composition, in rectangles, at both sizes the acceptance names** (measured in-process at
-`1082×668` and `900×600`; the composed page is `1054×1258` and `872×1258`, so it is taller than the window
-and the strip scrolls it):
+`1082×668` and `900×600`; the composed page is `1054×1258` and `872×1258` — **those are ticket `52`'s
+numbers, before ticket `53` packed the page; the current ones are in the ticket `53` section below**):
 
 | section | `1082×668` | `900×600` | holds |
 |---|---|---|---|
@@ -873,7 +890,11 @@ channel): `surface` 72.5 %, `bg` 15.6 %, `surface2` 11.6 % (the knob bodies and 
 tolerance), `fgMuted` 0.37 %, `accent` 0.25 % (the value arcs, the wordmark, the coverage number),
 `fgDim` 0.19 %, `fg` 0.09 %, `accentDim` 0.06 % (the modulation arc on `voicefilter0.freq`, depth 0.075).
 With the half-loading fixture loaded, `red` is 0.005 % (the strip's high-severity dot) and `orange` is
-absent — correct for a fixture with no medium entry. **Every colour on the page is a token.**
+absent — correct for a fixture with no medium entry. **Every colour on the page is a token**, with one
+exception that ticket `53`'s window capture found and this in-process count could not name: the matrix
+viewport's **own scroll bars** are drawn by JUCE's default look-and-feel in its dark scheme's fill blue
+`#42a2c8` (0.42 % of the window; located in the matrix's rows only). It is not a token and not this
+ticket's to theme; it is recorded here because 52's claim that everything is a token was too strong.
 
 **The fall-through, named**: `Global` and `Amp Envelope`, in `default-section`, because the design's
 composition names no section for them. `fx-section` names `FX`, which matches no group in this table.
@@ -919,6 +940,205 @@ permission prompt for the reference's content tree, which nothing in this sessio
 with `XERUM_CONTENT_ROOT=<repo>/content` resolves xerum's own default table from the first root and the app
 starts normally. That is a first-launch/environment fact and not a ticket `52` regression: the code path is
 ticket `30`'s and unchanged.
+
+# Ticket 53 — the composed page is packed to fit its window
+
+Ticket `52` arranged the interface as the design composes it, and the dev's report was that **the whole
+interface has to be scrolled to be seen**. That is a defect in the composition's *density* rather than in
+its order, and ticket `52`'s own measurement contained the diagnosis: the composed page was `1054×1258`
+against a `1054×578` viewport — **2.2 times taller than its window** — in six full-width bands that each
+paid their own chrome.
+
+## What changed, and where each number comes from
+
+Every compaction below is the **design system's own number** (`ui::look`) or a line the control of that
+kind actually needs; none of them is a new, smaller vocabulary:
+
+| what | was | is | where it comes from |
+|---|---|---|---|
+| a panel's inner padding | 10 all round | `7` across, `5` down | the design's `--pad-panel: 5px 7px`, already named in `look::padPanelX/Y` |
+| a panel's title band | 26 | 15 | the design's 9px `.panel-title` line (11.7 at its 1.3 line-height) plus the panel's own gap |
+| the gap between a panel's rows | 4 | 3 | the design's `--gap-panel` (`look::space::panel`) |
+| a section's heading | 15 | 12 | the design's 8px `.section-title` line |
+| the filter's inline response display | 190 minimum | 150 minimum | still taller than the design's own response display (68 at 900×600); 150 is where a pole/zero marker still has room to be grabbed |
+| the matrix's tag | the constant `8 / 64` | the geometry's row count, `N / 64` | the design's own tag, and the section now takes the window's slack |
+| the default window | 1080×640 | 1080×1108 | derived from the packed page at the default width (below) |
+
+Two of them are not numbers at all, they are things the composition was doing wrong:
+
+* **NOISE and SUB were not in the design's compact band.** `ParameterPanel::rowsFor` asked the panel's
+  *first control* for its knob size to decide whether the panel was a compact band — and `Noise`'s first
+  row is its `Enable` pill, which is not a slider, so the answer was `Default` and the band never
+  happened: each panel put its option row on a line of its own, which is the design's `osc-controls`
+  grammar and not its `noise`/`sub` one. The band is now a fact about the panel's **group** (any control
+  in it draws a `knob-sm`), and the design's one line — `[knob-sm][knob-sm][btn-row]` — is what it draws.
+* **The fall-through section shared nothing.** The design's bottom row pairs the effects cards with the
+  macro strip; xerum's table has no effects group, so the macro strip stood alone and `default-section`
+  took a full line of its own beneath it. Ticket `53` gives the fall-through section that empty half:
+  `defaultSection()`'s band is `bottom`, so the macros and `Global` + `Amp Envelope` are one row. The
+  section's *order* is unchanged — it is still the last entry — which is what keeps it the fall-through.
+
+And one structural change, which is the design's own answer to "the matrix is a 64-row grid in a window
+that can show eight":
+
+* **The matrix is the composition's flexible row.** The design's content box is
+  `grid-template-rows: auto auto auto 1fr auto auto` with `.mod-panel { min-height: 0; flex: 1 }` — the
+  matrix absorbs whatever the other rows do not use. `CompositionView::layout` now measures the sections
+  and gives the matrix the difference between what they need and the window's height, so the page is
+  exactly as tall as the window whenever the sections fit in it, and never shorter than its own eight
+  rows. Nothing is clipped: below its natural height the page is taller than the window and scrolls, which
+  is what the minimum-size window does.
+
+## Where the page is now
+
+Measured in-process by `plugin/tests/interface_test.cpp`, which prints the table it asserts:
+
+```sh
+build-53/plugin/tests/xerum-plugin-tests "[interface]" -s
+```
+
+| window | viewport | page | |
+|---|---|---|---|
+| **1080×1108** (the editor's own default) | 1060×1018 | **1018** | fits, and no scroll bar is drawn |
+| 1082×668 (ticket `52`'s baseline) | 1054×578 | 1018 | scrolls |
+| 900×600 (the window's minimum) | 872×510 | 1144 | scrolls; every control still laid out and inside its panel |
+| 1400×900 | 1372×810 | 947 | scrolls by 137; the oscillator row is one knob row shorter at this width |
+
+| section | at 1060 wide | at 872 wide | holds |
+|---|---|---|---|
+| `osc-row` "Oscillators" | 344 | 344 | Osc A/B/C, 350 / 286 wide, one line, 13 controls each |
+| `noise-sub-row` "Noise + Sub" | 144 | 199 | Noise and Sub Osc, one line of small knobs with their option rows |
+| `filter-section` "Filter" | 172 | 172 | Filter 1 / Filter 2 side by side, the plane inside each panel |
+| `mod-panel` "Mod Matrix" | 216 (8 / 64) | 216 | the 64-row grid, its own scroll bars |
+| `macro-section` "Macros" | 316×130 | 314×201 | eight items on one line, the design's strip |
+| `default-section` "Other" | 738×130 | 552×201 | Global + Amp Envelope — the fall-through, in the bottom row |
+
+The page is **1018** where ticket `52` left it at **1258**: 19 % off, and every remaining pixel is a
+control the table has. The band-by-band account of where it came from: `osc-row` 385→344, `noise-sub-row`
+173→144, `filter-section` 225→172, `mod-panel` 219→216, and the bottom of the page 82+159→130.
+
+## The window, and why it is that size
+
+The default window is now **derived from the layout**: `setSize (kDefaultWidth, composition_.totalHeight()
++ kHeaderHeight + kStripHeight + kReportBarHeight)`, clamped to the resize limits. It is the same call
+`resized` makes, so the window cannot drift from the page, and a table that outgrows the screen opens a
+maximum-size window that scrolls rather than one off the screen.
+
+**This is the part of the ticket that is a report rather than a fix.** The instrument's own size at the
+default width is 1018 logical pixels of page, and the packing above — every lever the design's own
+vocabulary offers — gets it to that and no further. Where the 1018 sits:
+
+* **the oscillator row is 344 of it, and 344 is its floor at three panels across.** Each panel holds
+  thirteen controls (ten sliders, two pickers, one pill) and the ten sliders need 651 px of cell width at
+  a 332 px inner width — three rows, and rows of 44 px knobs with their readouts and labels are 68 px each.
+  Ticket `52`'s own greedy packing already found the best three rows; only *reordering* the knobs (which
+  would break the panel's read-in-the-table's-order) or drawing them below the design's 44 px would make
+  it two;
+* the design's own mock puts **five** knobs and three pills in an oscillator panel and is 138 px tall;
+  xerum's table has thirteen and the design's sizes put a floor under them. The design's whole 900×600
+  window holds about forty-five controls in 566 px of content; this instrument has eighty-four, so it is
+  roughly twice the mock's area, and the mock's own window cannot hold it.
+
+Two decisions would close the rest, and neither is this ticket's to make: **moving a section behind the
+strip** (the matrix's 216 px, or the eight macros' 130 px, are the candidates) or **drawing the oscillators'
+knobs at `knob-sm`**, which the design uses for NOISE, SUB and its Filter 2 sidebar and *not* for its
+oscillators. Both are stated here rather than taken. The minimum window (900×600) is legible — everything
+is laid out, nothing clipped — and scrolls, because at that size the window is smaller than the
+instrument.
+
+## Acceptance, measured
+
+```sh
+cmake --build build-53 -j8
+./build-53/plugin/tests/xerum-plugin-tests "[interface]"   # 5559 assertions, 19 cases — all passed
+./build-53/plugin/tests/xerum-plugin-tests                 # the full plugin suite: 15417 assertions in
+                                                           # 69 cases — all passed
+/tmp/pluginval-104/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 \
+    --validate build-53/plugin/xerum_artefacts/Release/VST3/xerum.vst3     # SUCCESS, including its
+                                                                           # Editor + Editor Automation tests
+```
+
+**The page against its window, in-process** — the fit as two numbers, asserted and printed:
+
+```
+[interface] default window: window 1080x1108, viewport 1060x1018, page 1018
+```
+
+and the chain ticket `51` asserted is kept at the minimum: every control of every panel non-empty and
+inside its panel, every panel inside its section, every section inside the page, at 900×600. The fit is
+asserted on top of it, at the default: `compositionHeight() <= compositionViewportHeight()`, the vertical
+scroll bar not visible, `compositionScrollY() == 0`, and every section's rectangle above the fold.
+`Viewport::isVerticalScrollBarShown` returns the `setScrollBarsShown` *flag*, which is true either way —
+the assertion uses `getVerticalScrollBar().isVisible()`, which is the thing a user sees, and asking the
+other one would have "proved" the old build did not scroll too.
+
+**The window in the running product**, the standalone launched and its own window read out of the window
+server:
+
+```sh
+open build-53/plugin/xerum_artefacts/Release/Standalone/xerum.app
+xcrun swift /tmp/xerum52-allwin.swift <pid>        # CGWindowListCopyWindowInfo
+```
+
+**1082×1136 at (739, 219), layer 0, on screen** — the editor's 1080×1108 plus the 1 px frame and the 28 px
+title bar — entirely on this display (219 + 1136 = 1355 < 1440).
+
+**The palette on screen**: `screencapture -x` of the whole screen, cropped to the window's own rect from
+`CGWindowListCopyWindowInfo` (739, 219, 1082×1136) — the window's own `-l<id>` capture returned a black
+1000×1000 image this session, the failure ticket `52` recorded, so the screen capture *is* the OS's
+composited pixels. Counted against the tokens: `surface` #1a1917 **52.92 %** (logical rows 35–1134),
+`bg` #111110 31.30 % (36–1131), `surface2` 4.60 %, `border` 4.55 %, the macOS title bar 2.13 % (rows 1–27),
+`fg` 0.578 %, **JUCE's default scroll-bar blue #42a2c8 0.416 %** (the matrix's rows only — see the
+correction in the ticket `52` section), `accent` #e89b30 0.377 % (rows 42–1048), `fgDim` 0.358 %,
+`fgMuted` 0.301 %, `border-hi` 0.146 %, `accentDim` 0.067 %, `green` 0.017 % (rows 810–1126: the matrix's
+live-row dots and the report bar's clean dot), **`red` absent** — correct for a clean import. The interface
+is painted from row 35 to row 1134 of a 1136-row window: to its bottom edge.
+
+**No interface code on the audio path**, the way tickets `44`, `51` and `52` measured it:
+
+```sh
+sample <pid> 8 -file /tmp/xerum53-sample4.txt
+```
+
+The `com.apple.audio.IOThread.client` block runs `juce::AudioProcessorPlayer::audioDeviceIOCallback…` →
+`XerumAudioProcessor::processBlock` → `refreshSettingsFromParameters` →
+`ParameterBridge::currentModelValue`, and contains **0** interface frames out of 121. The
+`JUCE v9.0.4: Message Thread` block in the same sample carries `ui::ParameterControl::paint` (×5),
+`ui::ParameterPanel::paint` (×3), `ui::ModulationMatrixView::paint` (×3), `ui::ChoiceButtons::paint` (×2),
+`ui::WavetableSlot::paint`, `ui::PoleZeroPlane::paint`, `ui::Knob::paint`,
+`ui::PillToggle::paintButton` and `ui::SectionTab::paintButton` — the whole packed page drawing — so the
+two threads are separated in the running product and not merely in the source.
+
+## Assertions that became false were replaced with reasons
+
+* `plugin/tests/interface_test.cpp`'s `the composition is laid out at the design's baseline window size
+  and at 900x600` asserted the parent chain at both fixed sizes and said nothing about whether the page
+  fitted either of them — the defect this ticket is about. It is now `the composed page fits the window it
+  opens at, and stays legible at 900x600`: the fit is asserted at the default size and the whole parent
+  chain is kept at the minimum. Nothing that still held was weakened.
+* The strip's click asserted `compositionScrollY() > 0` after `scrollToSection (last)`. At a window the
+  page fits there is nothing to scroll, so the case now asserts both halves: at the default the offset
+  stays at nought and the page fits; at 900×600 the tab scrolls the page. The strip is a map at both sizes.
+* The sections' stacking assertion (`y >= previous.getBottom()`) became "either below the previous band or
+  beside it in the same band", which is what the design's `bottom-row` means.
+* The matrix's row count was asserted to equal the constant `8`. It is now asserted to equal the geometry
+  and to be at least `8`, which is stronger: the heading cannot promise a count the panel does not show.
+* One assertion is **new**, for a defect the compaction would have introduced: the compact band puts a pill
+  on the same line as a `knob-sm` and `ParameterControl::resized` gave a toggle its whole row — 48 px tall
+  beside a 28 px knob, nearly three times the design's own `.toggle`. The pill is now one line tall wherever
+  it sits, and every toggle is asserted to be no taller than `kRowHeight`.
+
+## What could not be seen, and is not claimed
+
+**Nobody looked at it.** Everything above is a count: a rectangle, a height, a colour at a share of the
+window, a symbol in a stack. Nothing here says the packed page *reads* as an instrument — whether thirteen
+controls in a 350-wide oscillator panel is findable, whether the macros beside `Global` and `Amp Envelope`
+is the bottom row the design meant, or whether a window this tall is the right shape for the design's
+directions. The dev is the judge, and `docs/design/xerum-direction-warm.html` is the standard.
+
+Also not observed: no knob dragged, no tab clicked, no preset imported through the standalone's dialog,
+and the window was never resized by hand (that needs Assistive access this machine does not grant
+`osascript`). The resize path is covered in-process at four sizes, including one wider than the default.
 
 # Ticket 48 — the modulation sources that had no generator
 

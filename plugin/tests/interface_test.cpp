@@ -718,15 +718,24 @@ TEST_CASE ("the strip names every section of the composition, and each section h
         CHECK (strip.tabBounds (index).getWidth() > 0);
         CHECK (strip.tabBounds (index).getHeight() > 0);
 
-        // Every section is on the one composed page, with a real rectangle, and the sections are stacked in
-        // the composition's order — the design's positions, as geometry rather than as a claim.
+        // Every section is on the one composed page, with a real rectangle, and they read in the
+        // composition's order: a section either starts a new band below the previous one, or shares the
+        // previous section's band (the design's `bottom-row`, ticket `53`) to its right.
         const auto bounds = editor->composition().sectionBounds (index);
 
         CHECK (bounds.getWidth() > 0);
         CHECK (bounds.getHeight() > 0);
 
         if (index > 0)
-            CHECK (bounds.getY() >= editor->composition().sectionBounds (index - 1).getBottom());
+        {
+            const auto previous = editor->composition().sectionBounds (index - 1);
+            const auto below = bounds.getY() >= previous.getBottom();
+            const auto beside = bounds.getY() == previous.getY() && bounds.getX() >= previous.getRight();
+
+            INFO ("previous: " << previous.toString().toStdString() << ", this: "
+                               << bounds.toString().toStdString());
+            CHECK ((below || beside));
+        }
     }
 
     // The sections are the design's, by id. `osc-row` is three oscillators in a row, `noise-sub-row` is
@@ -751,18 +760,37 @@ TEST_CASE ("the strip names every section of the composition, and each section h
     CHECK (editor->sectionForModule ("ModSlot") == 3);
     CHECK (editor->sectionForModule ("NoSuchModule") < 0);
 
-    // A tab click scrolls the one page to its section: the composition is taller than the window, so a tab
-    // is a scroll rather than a page swap — and every section stays on screen all the while.
-    const auto last = editor->sectionCount() - 1;
-    editor->scrollToSection (last);
-    CHECK (editor->currentSection() == last);
-    CHECK (strip.selected() == last);
-    CHECK (editor->compositionScrollY() > 0);
-    CHECK (editor->compositionHeight() > editor->compositionScrollY());
+    // A tab click locates its section on the one page, and **whether that is a scroll is the window's
+    // business, not the strip's**: at a window the composition fits (ticket `53`, the default) there is
+    // nothing to scroll and the offset stays at nought; at a window smaller than the instrument there is,
+    // and the tab scrolls the page — so the strip is a map at both sizes and never a menu of hidden pages.
+    {
+        const auto last = editor->sectionCount() - 1;
 
-    editor->scrollToSection (0);
-    CHECK (editor->currentSection() == 0);
-    CHECK (strip.selected() == 0);
+        editor->scrollToSection (last);
+        CHECK (editor->currentSection() == last);
+        CHECK (strip.selected() == last);
+        CHECK (editor->compositionScrollY() == 0);                       // the page fits the default window
+        CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
+
+        editor->scrollToSection (0);
+        CHECK (editor->currentSection() == 0);
+        CHECK (strip.selected() == 0);
+    }
+
+    {
+        editor->setSize (900, 600);   // the window's minimum: smaller than the instrument
+
+        const auto last = editor->sectionCount() - 1;
+
+        editor->scrollToSection (last);
+        CHECK (editor->compositionScrollY() > 0);
+        CHECK (editor->compositionHeight() > editor->compositionScrollY());
+        CHECK (editor->compositionHeight() > editor->compositionViewportHeight());
+
+        editor->scrollToSection (0);
+        CHECK (editor->compositionScrollY() == 0);
+    }
 
     // Every group the table has is a panel of the composition, and every panel is one group's — the
     // coverage claim as structure rather than as a count.
@@ -1233,21 +1261,107 @@ TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own mod
 }
 
 //==============================================================================
-TEST_CASE ("the composition is laid out at the design's baseline window size and at 900x600",
+namespace
+{
+/// The evidence table ticket `53`'s acceptance is read from: the composed page's height against the
+/// viewport's, every section's rectangle, and every control's rectangle in the order the plan holds them.
+/// Printed rather than only asserted, the way the fidelity suite prints its measurements, because "it
+/// fits" is a pair of numbers and the reader should be able to check them.
+void printComposition (const char* what, XerumAudioProcessorEditor& editor)
+{
+    std::fprintf (stderr, "\n[interface] %s: window %dx%d, viewport %dx%d, page %d\n", what,
+                  editor.getWidth(), editor.getHeight(), editor.compositionViewportWidth(),
+                  editor.compositionViewportHeight(), editor.compositionHeight());
+
+    for (int index = 0; index < editor.sectionCount(); ++index)
+    {
+        const auto bounds = editor.composition().sectionBounds (index);
+        const auto* plan = editor.sectionPlan (index);
+
+        std::fprintf (stderr, "[interface]   section %-16s %4dx%4d @%4d,%-4d panels=%d\n",
+                      editor.sectionId (index).toRawUTF8(), bounds.getWidth(), bounds.getHeight(),
+                      bounds.getX(), bounds.getY(),
+                      plan == nullptr ? 0 : static_cast<int> (plan->panels.size()));
+
+        if (plan == nullptr)
+            continue;
+
+        if (editor.sectionIsMatrix (index))
+        {
+            std::fprintf (stderr, "[interface]     %d of %d rows shown, %d tall\n",
+                          editor.composition().matrixVisibleRows(), ui::kModulationSlots,
+                          editor.matrixView().getHeight());
+            continue;
+        }
+
+        for (const auto panelIndex : plan->panels)
+        {
+            const auto& panelPlan = editor.plan().panels[static_cast<std::size_t> (panelIndex)];
+            auto* panel = editor.panelForGroup (panelPlan.title);
+
+            if (panel == nullptr)
+                continue;
+
+            const auto panelBounds = panel->getBounds();
+
+            std::fprintf (stderr, "[interface]     panel %-16s %4dx%4d @%4d,%-4d rows=%d\n",
+                          panelPlan.title.c_str(), panelBounds.getWidth(), panelBounds.getHeight(),
+                          panelBounds.getX(), panelBounds.getY(), panel->rows());
+
+            for (int row = 0; row < panel->rows(); ++row)
+            {
+                auto* control = panel->controlAtRow (row);
+                const auto rect = control->getBounds();
+
+                std::fprintf (stderr, "[interface]       %-32s %4dx%4d @%4d,%-4d\n",
+                              control->label().toRawUTF8(), rect.getWidth(), rect.getHeight(),
+                              rect.getX(), rect.getY());
+            }
+        }
+    }
+}
+/// The first factory preset this machine has, or a file that does not exist. The reference's bank is not
+/// part of this repository and the suite has to pass without it, so an absent bank is a **stated skip**
+/// rather than a failure — the rule the fidelity suite follows for the whole corpus.
+juce::File firstFactoryPreset (XerumAudioProcessor& processor)
+{
+    for (const auto& root : processor.contentRoots())
+    {
+        juce::Array<juce::File> found;
+
+        if (juce::File (root).findChildFiles (found, juce::File::findFiles, true, "*.SerumPreset") <= 0)
+            continue;
+
+        std::sort (found.begin(), found.end(), [] (const juce::File& a, const juce::File& b)
+                   { return a.getFullPathName() < b.getFullPathName(); });
+
+        return found.getFirst();
+    }
+
+    return {};
+}
+} // namespace
+
+TEST_CASE ("the composed page fits the window it opens at, and stays legible at 900x600",
            "[interface][ui]")
 {
-    // The acceptance: the composition "is legible at the design's baseline (1082×668 logical) and at
-    // 900×600, where 51's assertion requires every control of every page to be non-empty and inside its
-    // panel — extend that assertion to the new composition rather than dropping it".
+    // Ticket `53`'s acceptance, as two measurements:
     //
-    // Ticket `52` extends it: the page is **one page** now, so the chain is asserted at both sizes — every
-    // control of every panel has a real rectangle inside its panel, every panel inside the panel's section,
-    // every section inside the composed page. A section that clipped, or a control that never got laid out,
-    // would fail here at the size that clipped it.
+    //   1. **the whole instrument is visible at once at the window's default size.** The composed page's
+    //      height against the viewport's — the number that says it fits — with no scroll bar shown, and
+    //      every section's rectangle above the fold;
+    //   2. **and it stays legible at the window's minimum.** Ticket `51`'s assertion is kept and extended
+    //      rather than replaced: at 900×600 every control of every panel is non-empty and inside its
+    //      panel, every panel inside its section, every section inside the composed page — a layout that
+    //      clipped or dropped a control fails here, at the size that clips soonest.
+    //
+    // Ticket `52`'s version of this case asserted the same chain at both fixed sizes and said nothing about
+    // whether the page fitted either of them, which is the defect ticket `53` is about. It is replaced,
+    // not weakened: what it asserted still holds here, at the minimum, and the fit is asserted on top.
     //
     // This session has no eyes and the standalone could not be resized by hand — driving another app's
     // window needs Assistive access this machine does not grant `osascript` — so the measurement is made
-    // where it can be, on the editor itself.
+    // where it can be, on the editor itself, and printed.
     const juce::ScopedJuceInitialiser_GUI gui;
 
     XerumAudioProcessor processor;
@@ -1256,11 +1370,48 @@ TEST_CASE ("the composition is laid out at the design's baseline window size and
 
     const auto compositionBounds = [&editor] { return editor->composition().getLocalBounds(); };
 
+    // The editor's own default size, as the constructor left it: a later block measures the page again
+    // after a preset load, and it has to be the same window.
+    const auto defaultSize = juce::Point<int> (editor->getWidth(), editor->getHeight());
+
+    // **1. The window it opens at.** The editor's own default size is the one this case is about, because a
+    // host that never resizes it is the ordinary case; `resized` is what laid the page out, so the numbers
+    // below are the ones a user sees.
+    {
+        printComposition ("default window", *editor);
+
+        CHECK (editor->getWidth() == 1080);
+        CHECK (editor->compositionHeight() > 0);
+        CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
+        CHECK_FALSE (editor->compositionScrolls());
+        CHECK (editor->compositionScrollY() == 0);
+        CHECK (editor->sectionCount() > 0);
+
+        for (int index = 0; index < editor->sectionCount(); ++index)
+        {
+            const auto bounds = editor->composition().sectionBounds (index);
+
+            INFO ("default window, section " << index << ": " << editor->sectionId (index).toStdString());
+
+            CHECK (bounds.getWidth() > 0);
+            CHECK (bounds.getHeight() > 0);
+            CHECK (compositionBounds().contains (bounds));
+
+            // Above the fold, with nothing to scroll to reach it: the viewport's own window is the page.
+            CHECK (bounds.getBottom() <= editor->compositionViewportHeight());
+        }
+    }
+
+    // **2. The window's minimum.** Everything is laid out and inside its parents at 900×600; the page is
+    // taller than that window, so the strip scrolls it, and that is a fact about the window rather than
+    // about a clipped section.
     for (const auto size : { juce::Point<int> (1082, 668), juce::Point<int> (900, 600) })
     {
         editor->setSize (size.x, size.y);
         CHECK (editor->getWidth() == size.x);
         CHECK (editor->getHeight() == size.y);
+
+        printComposition ("measured size", *editor);
 
         REQUIRE (editor->sectionCount() > 0);
         CHECK (editor->compositionHeight() > 0);
@@ -1285,6 +1436,7 @@ TEST_CASE ("the composition is laid out at the design's baseline window size and
                 CHECK (editor->matrixView().getWidth() > 0);
                 CHECK (editor->matrixView().getHeight() > 0);
                 CHECK (editor->matrixView().getHeight() > bounds.getHeight());
+                CHECK (editor->composition().matrixVisibleRows() >= (int) ui::CompositionView::kMatrixVisibleRows);
                 continue;
             }
 
@@ -1315,6 +1467,12 @@ TEST_CASE ("the composition is laid out at the design's baseline window size and
                     CHECK (control->getHeight() > 0);
                     CHECK (panel->getLocalBounds().contains (control->getBounds()));
                     CHECK (control->isBound());
+
+                    // A pill is one line tall even on a knob row — ticket `53`'s compact band puts a pill on
+                    // the same line as a `knob-sm`, and a pill stretched to that line would be three times
+                    // the design's own toggle.
+                    if (ui::controlKindFor (control->spec().type) == ui::ControlKind::Toggle)
+                        CHECK (control->widget().getHeight() <= ui::kRowHeight);
                 }
             }
         }
@@ -1341,6 +1499,53 @@ TEST_CASE ("the composition is laid out at the design's baseline window size and
         }
 
     CHECK (background > 500);
+
+    // **A real preset, when this machine has the reference's bank.** The page's geometry is a function of
+    // the parameter table and not of what is loaded — that is the binding rule — but the *contents* are the
+    // preset's, so the same window is measured again with a factory preset loaded: the fit has to be the
+    // same number, and the wavetable heads and the modulation arcs have to be the preset's own.
+    {
+        editor->setSize (defaultSize.x, defaultSize.y);
+
+        const auto pageWithoutPreset = editor->compositionHeight();
+        const auto preset = firstFactoryPreset (processor);
+
+        if (! preset.existsAsFile())
+        {
+            std::fprintf (stderr, "[interface] no factory bank on this machine — the preset measurement is "
+                                  "skipped (the suite passes without one)\n");
+        }
+        else
+        {
+            REQUIRE (processor.loadPresetFromFile (preset).wasOk());
+            processor.sendSynchronousChangeMessage();
+
+            std::fprintf (stderr, "[interface] with %s loaded: window %dx%d, page %d (empty: %d)\n",
+                          preset.getFileName().toRawUTF8(), editor->getWidth(), editor->getHeight(),
+                          editor->compositionHeight(), pageWithoutPreset);
+
+            CHECK (editor->compositionHeight() == pageWithoutPreset);
+            CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
+            CHECK_FALSE (editor->compositionScrolls());
+
+            for (const auto& panelPlan : editor->plan().panels)
+            {
+                auto* panel = editor->panelForGroup (panelPlan.title);
+
+                if (auto* slot = panelPlan.wavetableSlot >= 0 && panel != nullptr ? panel->wavetableSlot()
+                                                                                 : nullptr)
+                    std::fprintf (stderr, "[interface]   head %-12s %s\n", panelPlan.title.c_str(),
+                                  slot->tableName().toRawUTF8());
+
+                for (int row = 0; panel != nullptr && row < panel->rows(); ++row)
+                    if (auto* knob = panel->controlAtRow (row)->knob())
+                        if (knob->isModulated())
+                            std::fprintf (stderr, "[interface]   modulated %-32s depth %+.3f on a %dpx knob\n",
+                                          panel->controlAtRow (row)->label().toRawUTF8(),
+                                          knob->modulationDepth(), knob->getWidth());
+            }
+        }
+    }
 }
 
 //==============================================================================
@@ -1348,8 +1553,9 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
 {
     // Ticket `52`'s acceptance, as geometry: three oscillators **in a row** across the top, noise and sub
     // beneath them, the filters in the middle with their response displays **inside** their own panels, the
-    // matrix under them, and the macros as a strip at the bottom. These are the placements the dev said were
-    // missing — the elements were the design's and the arrangement was a panel-per-group grid.
+    // matrix under them, and — ticket `53` — the design's bottom row, the macro strip beside the section
+    // the composition does not name its groups in. These are the placements the dev said were missing: the
+    // elements were the design's and the arrangement was a panel-per-group grid.
     const juce::ScopedJuceInitialiser_GUI gui;
 
     XerumAudioProcessor processor;
@@ -1468,8 +1674,10 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
             CHECK (panel->controlAtRow (row)->getRight() <= plane.getX());
     }
 
-    // **The matrix** below the filters, as tall as the design's "8 / 64": eight rows of the 64, and the
-    // grid scrolls inside the section.
+    // **The matrix** below the filters, as tall as the design's "8 / 64": at least eight rows of the 64, and
+    // the grid scrolls inside the section. Ticket `53` made the number the geometry's rather than a
+    // constant — the section takes the window's slack, so a taller window shows more rows — and the heading
+    // is checked against it, which is what keeps the caption honest.
     const auto matrixSection = sectionFor ("mod-panel");
     REQUIRE (matrixSection >= 0);
     CHECK (editor->sectionIsMatrix (matrixSection));
@@ -1480,11 +1688,14 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
                               - ui::ModulationMatrixView::kHeaderHeight)
                              / ui::ModulationMatrixView::kRowHeight;
 
-    CHECK (visibleRows == ui::CompositionView::kMatrixVisibleRows);
+    CHECK (visibleRows == editor->composition().matrixVisibleRows());
+    CHECK (visibleRows >= ui::CompositionView::kMatrixVisibleRows);
     CHECK (editor->matrixView().getHeight() > matrixBounds.getHeight());
 
-    // **The bottom row: the macros as a strip** — eight items on one line, beneath the matrix. The design's
-    // effects cards would sit beside them, and they are absent because the table has no FX group.
+    // **The bottom row: the macros beside the section the composition does not name its groups in.** The
+    // design pairs its effects cards with the macro strip there, and xerum has no effects group — so the
+    // half of that row the absent FX section would have held is where the fall-through section sits
+    // (ticket `53`), and the two are one row rather than two lines.
     const auto macroSection = sectionFor ("macro-section");
     REQUIRE (macroSection >= 0);
     CHECK (composition.sectionBounds (macroSection).getY() > composition.sectionBounds (matrixSection).getY());
@@ -1504,7 +1715,8 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
     }
 
     // **The fall-through, visible**: the last section is the one the composition does not name its groups
-    // in, and the two groups in it are the two the design's composition has no place for.
+    // in, the two groups in it are the two the design's composition has no place for, and it shares the
+    // design's bottom row with the macro strip rather than taking a line of its own.
     const auto defaultSection = sectionFor ("default-section");
     REQUIRE (defaultSection >= 0);
     CHECK (defaultSection == editor->sectionCount() - 1);
@@ -1518,8 +1730,14 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
         fellThrough.insert (editor->plan().panels[static_cast<std::size_t> (panelIndex)].title);
 
     CHECK (fellThrough == std::set<std::string> { "Global", "Amp Envelope" });
-    CHECK (composition.sectionBounds (defaultSection).getY()
-           > composition.sectionBounds (macroSection).getY());
+
+    const auto macroBounds = composition.sectionBounds (macroSection);
+    const auto defaultBounds = composition.sectionBounds (defaultSection);
+
+    CHECK (defaultBounds.getY() == macroBounds.getY());            // one row
+    CHECK (defaultBounds.getX() >= macroBounds.getRight());        // the strip's half, then the section's
+    CHECK (defaultBounds.getRight() <= composition.getWidth());    // and the row ends with the page
+    CHECK (defaultBounds.getHeight() == macroBounds.getHeight());
 
     // **The option rows**: the design draws a short vocabulary as a row of buttons, which is exactly where
     // its own `btn-opt` rows are — NOISE's colours and SUB's waveforms. The filter's 83-value vocabulary
@@ -2057,4 +2275,3 @@ TEST_CASE ("the pole/zero plane's edits reach the engine, and a drawn response i
     const auto after = render (processor, 12, 512, playNote);
     CHECK (channelDifference (before, after) > 0.01);
 }
-

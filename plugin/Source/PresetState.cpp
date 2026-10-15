@@ -4,77 +4,27 @@
 
 #include "PluginIdentity.h"
 #include "cbor.h"
-#include "cbor_write.h"
 #include "container.h"
 #include "decompress.h"
 #include "legacy.h"
+#include "preset_block.h"
 #include "schema.h"
 
-#include <cstring>
 #include <sstream>
 
 namespace xerum::plugin
 {
 
-namespace
-{
-
-model::Value textValue (std::string text)
-{
-    model::Value value;
-    value.type = model::Value::Type::String;
-    value.text = std::move (text);
-    return value;
-}
-
-model::Value intValue (const std::int64_t number)
-{
-    model::Value value;
-    value.type = model::Value::Type::Int;
-    value.integer = number;
-    return value;
-}
-
-int severityCode (const model::Severity severity)
-{
-    switch (severity)
-    {
-        case model::Severity::Info:   return 0;
-        case model::Severity::Medium: return 1;
-        case model::Severity::High:   return 2;
-    }
-
-    return 0;
-}
-
-model::Severity severityFromCode (const std::int64_t code)
-{
-    if (code == 2)
-        return model::Severity::High;
-
-    if (code == 1)
-        return model::Severity::Medium;
-
-    return model::Severity::Info;
-}
-
-void appendUint32 (std::vector<std::byte>& out, const unsigned int value)
-{
-    for (int i = 0; i < 4; ++i)
-        out.push_back (static_cast<std::byte> ((value >> (8 * i)) & 0xffu));
-}
-
-unsigned int readUint32 (const std::byte* bytes)
-{
-    unsigned int value = 0;
-
-    for (int i = 0; i < 4; ++i)
-        value |= static_cast<unsigned int> (std::to_integer<unsigned char> (bytes[i])) << (8 * i);
-
-    return value;
-}
-
-} // namespace
+// The block's format is one implementation in the model layer (`model::encodePresetBlock` /
+// `decodePresetBlock`), because the factory bank ships documents in the same form and the offline
+// authoring tool has to write them without JUCE. The **identity** stays the plugin's: these asserts are
+// what stop the tool's copy of the magic and the version from drifting away from the product's.
+static_assert (model::kPresetBlockMagic == std::string_view (identity::kStateMagic),
+               "the model layer's preset-block magic must be the plugin identity's state magic");
+static_assert (model::kPresetBlockMagic.size() + 1 == identity::kStateMagicSize,
+               "the state magic is NUL-terminated on disk, and the model layer writes that terminator");
+static_assert (model::kPresetBlockFormat == identity::kStateFormat,
+               "the model layer's preset-block version must be the plugin identity's state format");
 
 LoadedPreset loadPresetPayload (const model::Value& payload, std::string_view schemaVersion)
 {
@@ -184,162 +134,31 @@ std::vector<std::byte> encodeStateBlock (const model::PresetDocument& document,
                                          const model::ImportReport& report,
                                          const int reportEntriesFromModel)
 {
-    model::Value root;
-    root.type = model::Value::Type::Map;
-
-    root.entries.emplace_back ("format", intValue (identity::kStateFormat));
-    root.entries.emplace_back ("schemaVersion", textValue (document.schemaVersion));
-    root.entries.emplace_back ("name", textValue (document.name));
-    root.entries.emplace_back ("modelReportEntries", intValue (reportEntriesFromModel));
-
-    model::Value parameters;
-    parameters.type = model::Value::Type::Map;
-
-    for (const auto& [path, value] : document.parameters)
-        parameters.entries.emplace_back (path, value);
-
-    root.entries.emplace_back ("parameters", std::move (parameters));
-
-    model::Value assets;
-    assets.type = model::Value::Type::Array;
-
-    for (const auto& reference : document.assetReferences)
-        assets.items.push_back (textValue (reference));
-
-    root.entries.emplace_back ("assets", std::move (assets));
-
-    model::Value items;
-    items.type = model::Value::Type::Array;
-
-    for (const auto& entry : report.entries)
-    {
-        model::Value item;
-        item.type = model::Value::Type::Map;
-        item.entries.emplace_back ("severity", intValue (severityCode (entry.severity)));
-        item.entries.emplace_back ("modulePath", textValue (entry.modulePath));
-        item.entries.emplace_back ("item", textValue (entry.item));
-        item.entries.emplace_back ("reason", textValue (entry.reason));
-        items.items.push_back (std::move (item));
-    }
-
-    root.entries.emplace_back ("report", std::move (items));
-
-    // `encodeCbor` sorts map keys and uses definite-length containers, so the same document always
-    // produces the same bytes — which is what makes a byte-identical re-render a meaningful test.
-    auto payload = model::encodeCbor (root);
-
-    std::vector<std::byte> out;
-    out.reserve (identity::kStateMagicSize + 4 + payload.size());
-
-    const auto* magic = reinterpret_cast<const std::byte*> (identity::kStateMagic);
-
-    for (unsigned int i = 0; i < identity::kStateMagicSize; ++i)
-        out.push_back (magic[i]);
-
-    appendUint32 (out, identity::kStateFormat);
-    out.insert (out.end(), payload.begin(), payload.end());
-    return out;
+    // One encoder, in the model layer: the factory bank's files are documents in exactly this block, and
+    // the offline tool that writes them links no JUCE (`src/model/preset_block.h` explains the split).
+    return model::encodePresetBlock (document, report, reportEntriesFromModel, identity::kStateMagic,
+                                     identity::kStateFormat);
 }
 
 LoadedPreset decodeStateBlock (const void* data, const int size)
 {
     LoadedPreset result;
 
-    if (data == nullptr || size < static_cast<int> (identity::kStateMagicSize) + 4)
+    if (data == nullptr || size < 0)
     {
         result.error = "the state block is too small to be a xerum state block";
         return result;
     }
 
     const auto* bytes = static_cast<const std::byte*> (data);
+    const auto decoded = model::decodePresetBlock ({ bytes, static_cast<std::size_t> (size) },
+                                                   identity::kStateMagic, identity::kStateFormat);
 
-    if (std::memcmp (bytes, identity::kStateMagic, identity::kStateMagicSize) != 0)
-    {
-        result.error = "the state block is not xerum's (magic does not match)";
-        return result;
-    }
-
-    const auto version = readUint32 (bytes + identity::kStateMagicSize);
-
-    if (version != identity::kStateFormat)
-    {
-        result.error = "the state block's format version is " + std::to_string (version) + ", this build writes "
-                       + std::to_string (identity::kStateFormat);
-        return result;
-    }
-
-    const std::span<const std::byte> payload { bytes + identity::kStateMagicSize + 4,
-                                               static_cast<std::size_t> (size) - identity::kStateMagicSize - 4 };
-
-    try
-    {
-        const auto decoded = model::decodeCbor (payload);
-
-        if (! decoded.ok)
-        {
-            result.error = "the state block's payload is damaged: " + decoded.error;
-            return result;
-        }
-
-        if (! decoded.value.isMap())
-        {
-            result.error = "the state block is not a map";
-            return result;
-        }
-
-        if (const auto* format = decoded.value.find ("format");
-            format == nullptr || ! format->isNumber() || format->integer != static_cast<std::int64_t> (identity::kStateFormat))
-        {
-            result.error = "the state block has no usable format marker";
-            return result;
-        }
-
-        result.document.schemaVersion = decoded.value.stringOr ("schemaVersion");
-        result.document.name = decoded.value.stringOr ("name");
-
-        if (const auto* split = decoded.value.find ("modelReportEntries"); split != nullptr && split->isNumber())
-            result.reportEntriesFromModel = static_cast<int> (split->integer);
-
-        if (const auto* parameters = decoded.value.find ("parameters"); parameters != nullptr && parameters->isMap())
-            for (const auto& [path, value] : parameters->entries)
-                result.document.parameters.emplace (path, value);
-
-        if (const auto* assets = decoded.value.find ("assets"); assets != nullptr && assets->isArray())
-            for (const auto& asset : assets->items)
-                if (asset.isText())
-                    result.document.assetReferences.push_back (asset.text);
-
-        if (const auto* items = decoded.value.find ("report"); items != nullptr && items->isArray())
-        {
-            for (const auto& item : items->items)
-            {
-                if (! item.isMap())
-                    continue;
-
-                model::ReportEntry entry;
-                entry.severity = severityFromCode (item.find ("severity") != nullptr
-                                                       ? item.find ("severity")->integer
-                                                       : 0);
-                entry.modulePath = item.stringOr ("modulePath");
-                entry.item = item.stringOr ("item");
-                entry.reason = item.stringOr ("reason");
-                result.report.entries.push_back (std::move (entry));
-            }
-        }
-
-        result.ok = true;
-    }
-    catch (const std::exception& e)
-    {
-        result.ok = false;
-        result.error = std::string ("reading the state block threw: ") + e.what();
-    }
-    catch (...)
-    {
-        result.ok = false;
-        result.error = "reading the state block threw an unknown exception";
-    }
-
+    result.ok = decoded.ok;
+    result.error = decoded.error;
+    result.document = std::move (decoded.document);
+    result.report = std::move (decoded.report);
+    result.reportEntriesFromModel = decoded.reportEntriesFromModel;
     return result;
 }
 

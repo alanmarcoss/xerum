@@ -318,6 +318,11 @@ public:
     /// The height this panel needs at this width, from the same row derivation `resized` uses.
     int preferredHeight (int width) const;
 
+    /// The width a **strip item** wants: the design's `macro-item` is as wide as the wider of its knob and
+    /// its label, and a strip of them is their own widths plus the composition's panel gap. A panel that
+    /// shares a full-width row instead of standing in a strip has no preferred width — the row gives it one.
+    int preferredWidth() const;
+
     void paint (juce::Graphics& graphics) override;
     void resized() override;
 
@@ -327,6 +332,7 @@ private:
     {
         std::vector<int> controls;
         int height { 0 };
+        int gap { kKnobCellGap };   ///< the design's `--gap-knob`, or `--gap-inline` in the compact band
     };
 
     /// The width the inline display takes out of this panel at this width.
@@ -349,13 +355,22 @@ private:
 
 /// The composed page: the design's arrangement of whole sections, in the design's order — three
 /// oscillators in a row, noise and sub beneath them, the two filters with their response displays beside
-/// their knobs, the matrix, the effects and macros side by side. Ticket `52`'s answer to "the design
-/// specifies a composition, the interface derived a grid".
+/// their knobs, the matrix, the macros beside the fall-through section in the design's bottom row.
+/// Ticket `52`'s answer to "the design specifies a composition, the interface derived a grid".
 ///
 /// It arranges and paints; it binds nothing and owns nothing. The panels, the matrix and the planes belong
 /// to the editor, and this is the one place that knows where they sit — which is why the layout is a
 /// single function that both sets the rectangles and returns the height, rather than a `resized` and a
 /// separate estimate that could disagree.
+///
+/// ## Ticket `53`: the page is packed to fit, and the matrix takes the slack
+///
+/// The design's own content box is a grid whose fourth row is `1fr` — the matrix, the one section whose
+/// body is a grid of 64 rows that no window shows at once — and it fits a 900×600 window with no scroll at
+/// all. The composition here is packed the same way: the sections' own heights are measured, and the
+/// difference between what they need and what the window has is given to the matrix, which shows as many
+/// of its rows as fit and says the number in its heading. Below its natural height the page is taller than
+/// the window and scrolls; it never shrinks a section to hide it.
 class CompositionView final : public juce::Component
 {
 public:
@@ -367,13 +382,16 @@ public:
     /// The matrix, when the composition has a matrix section. Not owned; null is allowed.
     void setMatrix (juce::Component* matrixViewport);
 
-    /// How many rows of the matrix the matrix section shows — the "8 / 64" the design's heading says.
+    /// How many rows of the matrix the matrix section shows **when the window has no slack to give** — the
+    /// "8 / 64" the design's heading says. At a window with room to spare the section is taller and shows
+    /// more, and `matrixVisibleRows` reports what it actually shows.
     static constexpr int kMatrixVisibleRows = 8;
 
-    /// Arrange the whole page for this width, and return the height it needs. The composition is one page
-    /// taller than the window, so the editor puts it in a viewport and scrolls it; a narrower window gets a
-    /// taller page, from the same derivation, and never a clipped section.
-    int layout (int width);
+    /// Arrange the whole page for this width and this much window height, and return the height it needs.
+    /// The height is what the sections themselves need: when the sections fit inside `windowHeight`, the
+    /// matrix's section grows into the difference and the page is exactly `windowHeight`; when they do not,
+    /// the page is taller than the window and the editor scrolls it — never a clipped section.
+    int layout (int width, int windowHeight);
 
     /// The resolved composition, in the design's order, and where each section landed in the page's own
     /// coordinates.
@@ -382,6 +400,9 @@ public:
 
     /// Which section covers a y in the composition's coordinates, or -1.
     int sectionAt (int y) const;
+
+    /// How many rows of the 64 the matrix section is showing right now — the tag in its heading.
+    int matrixVisibleRows() const;
 
     int totalHeight() const { return totalHeight_; }
 
@@ -396,6 +417,7 @@ private:
     std::vector<std::vector<ParameterPanel*>> panels_;   ///< per section
     std::vector<juce::Rectangle<int>> bounds_;           ///< per section
     juce::Component* matrix_ { nullptr };
+    int matrixRows_ { 0 };
     int totalHeight_ { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CompositionView)

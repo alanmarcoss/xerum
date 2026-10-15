@@ -798,7 +798,16 @@ void ParameterControl::resized()
 
     if (kind == ControlKind::Toggle)
     {
-        toggle_.setBounds (area.removeFromLeft (juce::jmin (area.getWidth(), kToggleMaxWidth)).reduced (0, 2));
+        auto pill = area.removeFromLeft (juce::jmin (area.getWidth(), kToggleMaxWidth));
+
+        // A pill is one line tall wherever it sits. The design's `.toggle` is an 8px label in `2px 6px` of
+        // padding, and the design's **compact band** puts a pill on the same line as a `knob-sm` — so a pill
+        // given its whole row would be nearly three times the design's height beside a 28px knob (ticket
+        // `53`: the noise and sub rows are one line each now, and this is what that line's height would have
+        // done to the pill).
+        pill = pill.withSizeKeepingCentre (pill.getWidth(), juce::jmin (pill.getHeight(), kRowHeight));
+
+        toggle_.setBounds (pill.reduced (0, 2));
         return;
     }
 
@@ -891,7 +900,7 @@ int ParameterPanel::displayReserve (const int width) const
     if (display_ == nullptr)
         return 0;
 
-    const auto available = width - kPanelPadding * 2;
+    const auto available = width - kPanelPaddingX * 2;
 
     return juce::jlimit (0, juce::jmax (0, available / 2),
                          juce::jmax (kInlineDisplayMinWidth, available * 2 / 5));
@@ -910,36 +919,34 @@ int ParameterPanel::cellWidthFor (const ParameterControl& control, const int inn
 std::vector<ParameterPanel::Row> ParameterPanel::rowsFor (const int width) const
 {
     const auto reserve = displayReserve (width);
-    const auto inner = juce::jmax (60, width - kPanelPadding * 2 - reserve
+    const auto inner = juce::jmax (60, width - kPanelPaddingX * 2 - reserve
                                              - (display_ != nullptr ? kInlineGap : 0));
 
-    // How the design groups a panel's controls. `KnobSize::Small` is the design's one compact band —
-    // NOISE and SUB put their knobs and their option buttons on one line (`--gap-inline`) — and every
-    // other panel groups by kind in the design's order: the knobs are the body, then the pickers, then the
-    // pills at the bottom (`osc-knobs` then `osc-controls`).
-    const auto smallBand = controls_.size() > 0
-                           && knobSizeFor (controls_.getFirst()->spec()) == KnobSize::Small;
+    // How the design groups a panel's controls. Its **compact band** — NOISE and SUB, the two panels whose
+    // knobs are `knob-sm` — puts the knobs *and* their option row on one line (`--gap-inline`: "between
+    // inline elements (knobs + buttons in noise/sub)"), so that panel is one group packed with the inline
+    // gap. Every other panel groups by kind in the design's order: the knobs are the body, then the
+    // pickers, then the pills at the bottom (`osc-knobs` then `osc-controls`).
+    //
+    // **The band is a fact about the panel's group, not about its first control.** Asking the first control
+    // for a knob size read `Noise`'s own `Enable` pill, answered `Default`, and quietly opted the panel out
+    // of the design's compact band — which is why the noise row spent a line of its own on its pills.
+    auto compactBand = false;
+
+    for (auto* control : controls_)
+        compactBand = compactBand || knobSizeFor (control->spec()) == KnobSize::Small;
 
     std::vector<std::vector<int>> groups;
 
-    if (smallBand)
+    if (compactBand)
     {
         std::vector<int> band;
-        std::vector<int> pills;
 
         for (int i = 0; i < controls_.size(); ++i)
-        {
-            if (controlKindFor (controls_[i]->spec().type) == ControlKind::Toggle)
-                pills.push_back (i);
-            else
-                band.push_back (i);
-        }
+            band.push_back (i);
 
         if (! band.empty())
             groups.push_back (std::move (band));
-
-        if (! pills.empty())
-            groups.push_back (std::move (pills));
     }
     else
     {
@@ -956,26 +963,29 @@ std::vector<ParameterPanel::Row> ParameterPanel::rowsFor (const int width) const
         }
     }
 
+    const auto gap = compactBand ? kInlineGap : kKnobCellGap;
+
     std::vector<Row> rows;
 
     for (const auto& group : groups)
     {
         Row row;
+        row.gap = gap;
         int used = 0;
 
         for (const auto index : group)
         {
             const auto cell = cellWidthFor (*controls_[index], inner);
-            const auto gap = row.controls.empty() ? 0 : kKnobCellGap;
 
             if (! row.controls.empty() && used + gap + cell > inner)
             {
                 rows.push_back (row);
                 row = Row {};
+                row.gap = gap;
                 used = 0;
             }
 
-            used += (row.controls.empty() ? 0 : kKnobCellGap) + cell;
+            used += (row.controls.empty() ? 0 : gap) + cell;
             row.height = juce::jmax (row.height, rowHeightFor (controls_[index]->spec()));
             row.controls.push_back (index);
         }
@@ -997,7 +1007,7 @@ int ParameterPanel::preferredHeight (const int width) const
     if (content > 0)
         content -= kRowGap;
 
-    const auto chrome = compact_ ? kPanelPadding / 2 + kCompactTitleHeight : kPanelPadding * 2;
+    const auto chrome = compact_ ? kPanelPaddingY / 2 + kCompactTitleHeight : kPanelPaddingY * 2;
     const auto table = (! compact_ && wavetable_ != nullptr) ? kWavetableHeadHeight : 0;
     auto height = (compact_ ? 0 : kPanelHeaderHeight) + table + chrome + content;
 
@@ -1005,6 +1015,20 @@ int ParameterPanel::preferredHeight (const int width) const
         height = juce::jmax (height, chrome + kInlineDisplayMinHeight);
 
     return height;
+}
+
+int ParameterPanel::preferredWidth() const
+{
+    // The design's `macro-item` is as wide as the wider of the knob it draws and the label under it; this
+    // item's label is the panel's own title, because that is the caption the design draws under a macro.
+    const auto title = juce::String (title_).toUpperCase();
+    auto widest = static_cast<int> (juce::GlyphArrangement::getStringWidth (
+        look::bodyFont (look::type::tag, true), title));
+
+    for (const auto* control : controls_)
+        widest = juce::jmax (widest, control->preferredWidth());
+
+    return widest + 4;
 }
 
 void ParameterPanel::paint (juce::Graphics& graphics)
@@ -1031,7 +1055,7 @@ void ParameterPanel::paint (juce::Graphics& graphics)
     graphics.setColour (look::fg);
     graphics.setFont (look::bodyFont (look::type::section, true));
     graphics.drawText (juce::String (title_).toUpperCase(),
-                       kPanelPadding + 3, 0, getWidth() - kPanelPadding * 2 - 6, kPanelHeaderHeight,
+                       kPanelPaddingX + 3, 0, getWidth() - kPanelPaddingX * 2 - 6, kPanelHeaderHeight,
                        juce::Justification::centredLeft, true);
 }
 
@@ -1040,7 +1064,7 @@ void ParameterPanel::resized()
     auto area = getLocalBounds();
 
     if (! compact_)
-        area = area.reduced (kPanelPadding);
+        area = area.reduced (kPanelPaddingX, kPanelPaddingY);
 
     if (! compact_)
         area.removeFromTop (kPanelHeaderHeight);
@@ -1073,7 +1097,7 @@ void ParameterPanel::resized()
                 break;
 
             control->setBounds (line.getX() + x, line.getY(), cell, row.height);
-            x += cell + kKnobCellGap;
+            x += cell + row.gap;
         }
 
         area.removeFromTop (kRowGap);
@@ -1110,6 +1134,23 @@ void CompositionView::setMatrix (juce::Component* matrixViewport)
         addAndMakeVisible (*matrix_);
 }
 
+namespace
+{
+/// One band of the composition: the run of sections that share a `band`, the width each of them got, and
+/// the height each one needs. Measuring and placing are two steps because the matrix takes the slack
+/// between them (ticket `53`), and a single pass that both decided a rectangle and reported a height could
+/// not grow the matrix without moving everything under it.
+struct Band
+{
+    std::size_t begin { 0 };          ///< the first section of the band
+    std::size_t end { 0 };            ///< one past the last
+    std::vector<int> widths;          ///< per section
+    std::vector<int> heights;         ///< per section, heading included
+    int height { 0 };                 ///< the band's own height: its tallest section
+    int matrix { -1 };                ///< index within the band of the matrix section, or -1
+};
+} // namespace
+
 juce::Rectangle<int> CompositionView::sectionBounds (const int index) const
 {
     return index >= 0 && index < static_cast<int> (bounds_.size()) ? bounds_[static_cast<std::size_t> (index)]
@@ -1125,12 +1166,24 @@ int CompositionView::sectionAt (const int y) const
     return -1;
 }
 
-int CompositionView::layout (const int width)
+int CompositionView::matrixVisibleRows() const
 {
+    return matrixRows_;
+}
+
+int CompositionView::layout (const int width, const int windowHeight)
+{
+    // The matrix's own height, before the window has a say: the design's own "8 / 64" panel — the heading,
+    // the column header and the eight rows the design's matrix shows at its 900×600 window.
+    const auto matrixNatural = kSectionTitleHeight + ModulationMatrixView::kHeaderHeight
+                               + kMatrixVisibleRows * ModulationMatrixView::kRowHeight + 2;
+
+    // --- measure ------------------------------------------------------------------------------------
+    //
     // The sections are laid out in **bands**: consecutive entries sharing a `band` sit side by side in one
     // row. That is the design's `bottom-row` — the effects cards beside the macro strip — expressed as
     // data, and the reason a section carries its row rather than its own y.
-    int y = 0;
+    std::vector<Band> bands;
     std::size_t index = 0;
 
     while (index < sections_.size())
@@ -1141,24 +1194,37 @@ int CompositionView::layout (const int width)
             ++end;
 
         const auto count = static_cast<int> (end - index);
+        Band band;
+        band.begin = index;
+        band.end = end;
+        band.widths.assign (static_cast<std::size_t> (count), 0);
+        band.heights.assign (static_cast<std::size_t> (count), 0);
 
-        // A strip is as wide as its own items; the panels sections of the band share what is left — the
-        // design's `flex: 1` beside a natural-width strip.
-        std::vector<int> widths (static_cast<std::size_t> (count), 0);
+        // A strip is as wide as its own items — each item's own preferred width, so the macro strip's width
+        // comes from the label it draws; the panels sections of the band share what is left — the design's
+        // `flex: 1` beside a natural-width strip.
         int fixed = 0;
         int flexibleCount = 0;
 
         for (int i = 0; i < count; ++i)
         {
-            const auto& section = sections_[index + static_cast<std::size_t> (i)];
+            const auto slot = static_cast<std::size_t> (index + static_cast<std::size_t> (i));
+            const auto& section = sections_[slot];
 
             if (section.kind == SectionKind::Strip)
             {
-                const auto items = static_cast<int> (panels_[index + static_cast<std::size_t> (i)].size());
-                widths[static_cast<std::size_t> (i)] = items == 0
-                                                           ? 0
-                                                           : items * kMacroItemWidth + (items - 1) * kPanelGap;
-                fixed += widths[static_cast<std::size_t> (i)];
+                int items = 0;
+
+                for (const auto* panel : panels_[slot])
+                {
+                    if (items > 0)
+                        items += kPanelGap;
+
+                    items += panel->preferredWidth();
+                }
+
+                band.widths[static_cast<std::size_t> (i)] = items;
+                fixed += items;
             }
             else
             {
@@ -1171,36 +1237,32 @@ int CompositionView::layout (const int width)
 
         for (int i = 0; i < count; ++i)
         {
-            const auto& section = sections_[index + static_cast<std::size_t> (i)];
-
-            if (section.kind == SectionKind::Strip)
+            if (sections_[static_cast<std::size_t> (index + static_cast<std::size_t> (i))].kind == SectionKind::Strip)
                 continue;
 
-            widths[static_cast<std::size_t> (i)] = remaining / flexibleCount;
-            remaining -= widths[static_cast<std::size_t> (i)];
+            band.widths[static_cast<std::size_t> (i)] = remaining / flexibleCount;
+            remaining -= band.widths[static_cast<std::size_t> (i)];
             --flexibleCount;
         }
 
-        // The band's height is its tallest section, and a section's height is its heading plus the tallest
-        // panel it holds at the width it was given.
-        int bandHeight = 0;
-        std::vector<int> heights (static_cast<std::size_t> (count), 0);
-
+        // A section's height is its heading plus the tallest panel it holds at the width it was given; the
+        // matrix is its heading plus the grid it shows.
         for (int i = 0; i < count; ++i)
         {
-            const auto& section = sections_[index + static_cast<std::size_t> (i)];
-            const auto& sectionPanels = panels_[index + static_cast<std::size_t> (i)];
+            const auto slot = static_cast<std::size_t> (index + static_cast<std::size_t> (i));
+            const auto& section = sections_[slot];
+            auto& sectionPanels = panels_[slot];
 
             int tallest = 0;
 
             if (section.kind == SectionKind::Matrix)
             {
-                tallest = ModulationMatrixView::kHeaderHeight
-                          + kMatrixVisibleRows * ModulationMatrixView::kRowHeight + 2;
+                band.matrix = i;
+                tallest = matrixNatural - kSectionTitleHeight;
             }
             else if (! sectionPanels.empty())
             {
-                const auto panelWidth = (widths[static_cast<std::size_t> (i)]
+                const auto panelWidth = (band.widths[static_cast<std::size_t> (i)]
                                          - (static_cast<int> (sectionPanels.size()) - 1) * kPanelGap)
                                         / static_cast<int> (sectionPanels.size());
 
@@ -1208,33 +1270,87 @@ int CompositionView::layout (const int width)
                     tallest = juce::jmax (tallest, panel->preferredHeight (panelWidth));
             }
 
-            heights[static_cast<std::size_t> (i)] = tallest == 0 ? 0 : kSectionTitleHeight + tallest;
-            bandHeight = juce::jmax (bandHeight, heights[static_cast<std::size_t> (i)]);
+            band.heights[static_cast<std::size_t> (i)] = tallest == 0 ? 0 : kSectionTitleHeight + tallest;
+            band.height = juce::jmax (band.height, band.heights[static_cast<std::size_t> (i)]);
         }
 
-        // A single strip alone in its band is centred, which is where the design's `macro-section` puts
-        // it (`align-items: center`).
-        auto x = flexibleCount == 0 && fixed > 0 && fixed < width
-                     ? (width - fixed - gaps) / 2
-                     : 0;
+        bands.push_back (std::move (band));
+        index = end;
+    }
+
+    // --- the matrix takes the window's slack --------------------------------------------------------
+    //
+    // The design's content grid is `auto auto auto 1fr auto auto`: the matrix is its **flexible row**, the
+    // one section whose body is a grid of 64 rows that no window can show at once. Ticket `53` gives it the
+    // same job here — what the other sections need is fixed, and the difference between that and the
+    // window is the matrix's — which is what makes the composed page fit its window instead of scrolling in
+    // it. The slack is never taken *from* it: below its natural eight rows the page scrolls, and the
+    // heading says how many rows are actually on screen.
+    {
+        int natural = 0;
+
+        for (const auto& band : bands)
+            natural += band.height + kSectionGap;
+
+        natural -= kSectionGap;
+
+        const auto slack = windowHeight - natural;
+
+        if (slack > 0)
+            for (auto& band : bands)
+                if (band.matrix >= 0)
+                {
+                    band.heights[static_cast<std::size_t> (band.matrix)] += slack;
+                    band.height += slack;
+                }
+    }
+
+    // --- place --------------------------------------------------------------------------------------
+    int y = 0;
+
+    for (const auto& band : bands)
+    {
+        const auto count = static_cast<int> (band.end - band.begin);
+
+        // A single strip alone in its band is centred, which is where the design's `macro-section` puts it
+        // (`align-items: center`) when nothing shares its row. A strip the fall-through section shares the
+        // row with is not alone, and starts at the row's left edge with the section beside it.
+        int fixed = 0;
+        auto flexibles = 0;
+
+        for (int i = 0; i < count; ++i)
+            if (sections_[band.begin + static_cast<std::size_t> (i)].kind == SectionKind::Strip)
+                fixed += band.widths[static_cast<std::size_t> (i)] + kPanelGap;
+            else
+                ++flexibles;
+
+        auto x = flexibles == 0 && fixed > 0 && fixed - kPanelGap < width ? (width - fixed + kPanelGap) / 2 : 0;
 
         for (int i = 0; i < count; ++i)
         {
-            const auto& section = sections_[index + static_cast<std::size_t> (i)];
-            auto& sectionPanels = panels_[index + static_cast<std::size_t> (i)];
+            const auto slot = band.begin + static_cast<std::size_t> (i);
+            const auto& section = sections_[slot];
+            auto& sectionPanels = panels_[slot];
 
-            const auto sectionRect = juce::Rectangle<int> (x, y, widths[static_cast<std::size_t> (i)], bandHeight);
-            bounds_[index + static_cast<std::size_t> (i)] = sectionRect;
+            const auto sectionRect = juce::Rectangle<int> (x, y, band.widths[static_cast<std::size_t> (i)],
+                                                           band.height);
+            bounds_[slot] = sectionRect;
 
             auto content = sectionRect.withTrimmedTop (kSectionTitleHeight);
 
             if (section.kind == SectionKind::Matrix)
             {
+                // The rows the window has room for. The tag in the heading is this number, so the panel says
+                // "8 / 64" when eight fit rather than promising a count it does not show.
+                const auto rows = juce::jmax (0, (content.getHeight() - ModulationMatrixView::kHeaderHeight)
+                                                     / ModulationMatrixView::kRowHeight);
+
+                matrixRows_ = rows;
+
                 if (matrix_ != nullptr)
                     matrix_->setBounds (content.removeFromTop (
                         juce::jmin (content.getHeight(),
-                                    ModulationMatrixView::kHeaderHeight
-                                        + kMatrixVisibleRows * ModulationMatrixView::kRowHeight + 2)));
+                                    ModulationMatrixView::kHeaderHeight + rows * ModulationMatrixView::kRowHeight + 2)));
             }
             else if (! sectionPanels.empty())
             {
@@ -1250,11 +1366,10 @@ int CompositionView::layout (const int width)
                 }
             }
 
-            x += widths[static_cast<std::size_t> (i)] + kPanelGap;
+            x += band.widths[static_cast<std::size_t> (i)] + kPanelGap;
         }
 
-        y += bandHeight + kSectionGap;
-        index = end;
+        y += band.height + kSectionGap;
     }
 
     totalHeight_ = juce::jmax (0, y - kSectionGap);
@@ -1276,9 +1391,11 @@ void CompositionView::paintSectionHeading (juce::Graphics& graphics, const Secti
         return;
 
     // The design's tag on the matrix's panel title: how many of the rows are on screen. The number is the
-    // geometry's own — the section is as tall as this many rows — rather than a written-down "8 / 64".
+    // geometry's own — the section's height decided it in `layout` — rather than a written-down "8 / 64",
+    // so a window with room to spare is described as showing more rows, and the caption never promises a
+    // count the panel does not show.
     const auto font = look::monoFont (look::type::tag, true);
-    const auto label = juce::String (kMatrixVisibleRows) + " / " + juce::String (kModulationSlots);
+    const auto label = juce::String (matrixRows_) + " / " + juce::String (kModulationSlots);
     const auto width = static_cast<int> (juce::GlyphArrangement::getStringWidth (font, label)) + 12;
     const auto tag = juce::Rectangle<int> (heading.getX()
                                                + static_cast<int> (juce::GlyphArrangement::getStringWidth (

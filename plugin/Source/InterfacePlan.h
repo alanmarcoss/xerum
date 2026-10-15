@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include "InterfaceLook.h"
 #include "ParameterBridge.h"
 
 #include <string>
@@ -110,40 +111,64 @@ KnobSize knobSizeFor (const ParamSpec& spec);
 
 //==============================================================================
 // The design's numbers, in one place.
+//
+// Ticket `53`. Every constant here is the design system's own — `look`'s spacing grid and panel padding —
+// or the line the control of that kind actually needs. The first version of this file wrote its own
+// numbers (a 10px panel padding, a 26px title band, a 4px row gap, a 15px section title) and the composed
+// page came out 2.2 times taller than its window: panel chrome is paid once per panel and once per row,
+// and the design's own grid is about half of what we were spending. **The look is unchanged** — the
+// tokens, the knob, the pills and the chrome are ticket `51`'s; what changed is that the layout spends the
+// design's spacing instead of its own.
 
 /// A row's height, from the design system and from what the row's control actually is: a toggle or a
 /// choice is one compact line, and a knob is its own diameter plus its readout and its label. This is a
 /// function of the spec for the same reason `knobSizeFor` is — the plan's derivation decides everything.
 int rowHeightFor (const ParamSpec& spec);
 
-constexpr int kRowHeight = 26;              ///< a toggle or a choice row
+/// A toggle, a picker or an option row. The design's own row is ~17px (an 8px label in `2px 6px` of
+/// padding); a `juce::ComboBox` needs the rest to draw its text box, so this is the line the tallest
+/// control of that kind needs rather than the smallest the design draws.
+constexpr int kRowHeight = 22;
+
 constexpr int kKnobRowHeight = 68;          ///< a 44px knob, its readout and its label
 constexpr int kSmallKnobRowHeight = 52;     ///< a 28px knob, its readout and its label
 constexpr int kMacroRowHeight = 50;         ///< a 26px macro knob, its readout and its label
-constexpr int kRowGap = 4;                  ///< between the rows inside a panel (`--gap-panel` is 3; a knob row needs 4)
-constexpr int kPanelHeaderHeight = 26;      ///< a panel's own title bar
-constexpr int kPanelPadding = 10;
+
+/// The design's `--gap-panel`: the gap inside a panel, between its title, its controls and its toggles.
+constexpr int kRowGap = look::space::panel;
+
+/// The panel's own title band: the design's 9px `.panel-title` line (11.7 at its 1.3 line-height) and the
+/// panel's own gap under it. The design pays this once per panel, and so does this.
+constexpr int kPanelHeaderHeight = 12 + kRowGap;
+
+/// The design's `--pad-panel: 5px 7px`, which this file used to spend as a flat 10 all round.
+constexpr int kPanelPaddingX = look::padPanelX;
+constexpr int kPanelPaddingY = look::padPanelY;
+
 constexpr int kRowLabelWidth = 156;         ///< the label column of a choice row
 
 /// The composition's own numbers, from the design system's grid: `--gap-row` 6 between the panels of one
 /// row, `--gap-section` 3 between the rows of the composition, `--pad-content` 10 at the sides.
-constexpr int kPanelGap = 6;                ///< between the panels of one section
-constexpr int kKnobCellGap = 4;             ///< between the cells of one row (`--gap-knob`)
-constexpr int kInlineGap = 6;               ///< between inline elements (`--gap-inline`)
-constexpr int kSectionGap = 3;              ///< between the sections of the composition
-constexpr int kSectionTitleHeight = 15;     ///< a section's own heading line
+constexpr int kPanelGap = look::space::row;             ///< between the panels of one section
+constexpr int kKnobCellGap = look::space::knob;         ///< between the cells of one row (`--gap-knob`)
+constexpr int kInlineGap = look::space::inlineGap;      ///< between inline elements (`--gap-inline`)
+constexpr int kSectionGap = look::space::section;       ///< between the sections of the composition
+
+/// A section's own heading line: the design's 8px `.section-title` drawn in our 9px face, with the design's
+/// `padding: 0 2px` and no gap of its own — the composition's row gap separates it from the section below.
+constexpr int kSectionTitleHeight = 12;
+
 constexpr int kContentPadding = 10;         ///< the composition's side padding
 
 /// The oscillator head: the design's wavetable slot — a monospaced name field and two 16px arrows.
 constexpr int kWavetableHeadHeight = 22;
 
-/// A macro item in the bottom row: a 26px knob and its label, in the design's `macro-item`.
-constexpr int kMacroItemWidth = 44;
-
 /// The width and minimum height a panel gives the drawn response it carries inside itself — the design's
-/// `filter-viz`, beside the filter's knobs (`flex: 1` against the knobs' own width).
+/// `filter-viz`, beside the filter's knobs (`flex: 1` against the knobs' own width). The design draws its
+/// response 68 tall at a 900×600 window, so this is above the design's own display rather than below it;
+/// 150 is where a pole/zero plane still leaves a marker room to be grabbed and dragged (ticket `45`).
 constexpr int kInlineDisplayMinWidth = 190;
-constexpr int kInlineDisplayMinHeight = 190;
+constexpr int kInlineDisplayMinHeight = 150;
 
 //==============================================================================
 // The composition.

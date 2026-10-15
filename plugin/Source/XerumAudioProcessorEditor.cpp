@@ -194,7 +194,20 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
     setResizable (true, true);
     setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
+
+    // Ticket `53`: the window opens at the size the composed page **actually needs** at the default width,
+    // so that "the whole instrument, at once, with nothing to scroll" is a property of the window rather
+    // than of a scroll position. The number is the layout's own — the same total `resized` computes, not a
+    // second estimate that could drift from it — and it is clamped to the resize limits, so a table that
+    // outgrows the screen opens a maximum-size window that scrolls rather than one off the screen.
+    //
+    // The first `setSize` is what lays the page out at all (`resized` is what calls `layout`), and it also
+    // keeps the old behaviour for a composition that is *shorter* than the default window: the page then
+    // fills the window, and the window stays the default.
     setSize (kDefaultWidth, kDefaultHeight);
+    setSize (kDefaultWidth, juce::jlimit (kMinHeight, kMaxHeight,
+                                          composition_.totalHeight() + kHeaderHeight + kStripHeight
+                                              + kReportBarHeight));
 
     processor_.addChangeListener (this);
     scrollToSection (0);
@@ -592,24 +605,28 @@ void XerumAudioProcessorEditor::resized()
 
     area = area.reduced (kMargin, 0);
 
-    // The composed page. It is one page — the design's whole instrument — and it is taller than the
-    // window, so it lives in a viewport and the strip scrolls it. Its width is the viewport's **visible**
-    // width, which the vertical scrollbar's own presence changes, so the layout runs to a fixed point
-    // rather than assuming one.
+    // The composed page. It is one page — the design's whole instrument — and ticket `53` packs it so that
+    // it fits this window at the default size. The layout is given the viewport's **visible** size, and
+    // both of those numbers depend on whether the scroll bars are showing, so it runs to a fixed point
+    // rather than assuming either.
     compositionViewport_.setBounds (area);
 
     auto composeWidth = compositionViewport_.getMaximumVisibleWidth();
+    auto composeHeight = compositionViewport_.getMaximumVisibleHeight();
 
-    for (int pass = 0; pass < 3; ++pass)
+    for (int pass = 0; pass < 4; ++pass)
     {
-        composition_.layout (composeWidth);
+        composition_.layout (composeWidth, composeHeight);
 
-        const auto visible = compositionViewport_.getMaximumVisibleWidth();
+        const auto visibleWidth = compositionViewport_.getMaximumVisibleWidth();
+        const auto visibleHeight = compositionViewport_.getMaximumVisibleHeight();
 
-        if (visible == composeWidth || visible <= 0)
+        if (visibleWidth <= 0 || visibleHeight <= 0
+            || (visibleWidth == composeWidth && visibleHeight == composeHeight))
             break;
 
-        composeWidth = visible;
+        composeWidth = visibleWidth;
+        composeHeight = visibleHeight;
     }
 
     // The drawer: the lower part of the page, over whatever the page is showing and above the bar. It is a

@@ -89,9 +89,14 @@ bool claims (const SectionSpec& section, const std::string& group)
 /// The section a group no section names falls through to. Its panels keep their own names, and it is a
 /// section like any other — which is what makes "a group the composition does not name still lands"
 /// a fact about the plan rather than a promise.
+///
+/// Ticket `53` gives it the design's **bottom row** as its band. The design pairs its effects cards with
+/// the macro strip there and xerum's table has no effects group, so the half of that row the absent FX
+/// section would have held is exactly where the fall-through groups belong: the row completes itself
+/// without anyone writing down which groups go in it.
 SectionSpec defaultSection()
 {
-    return { "default-section", "Other", SectionKind::Panels, {}, "default" };
+    return { "default-section", "Other", SectionKind::Panels, {}, "bottom" };
 }
 } // namespace
 
@@ -130,9 +135,12 @@ int rowHeightFor (const ParamSpec& spec)
 std::vector<SectionSpec> designedComposition()
 {
     // `docs/design/xerum-direction-warm.html`, read as data. The bands are the design's own rows, in its
-    // own order — three oscillators, noise and sub, the two filters, the matrix, the effects and macros
-    // side by side — and the last entry is the fall-through, which is where `Global` and `Amp Envelope`
-    // land today because the design's composition names no section for them.
+    // own order — three oscillators, noise and sub, the two filters, the matrix, then the bottom row of
+    // macros beside the fall-through — and the last entry is the fall-through itself, which is where
+    // `Global` and `Amp Envelope` land today because the design's composition names no section for them.
+    //
+    // Ticket `53` changed exactly one thing here: the fall-through section's **band** (see
+    // `defaultSection`). The order of the entries, and every section's identity, is `52`'s.
     return {
         { "osc-row", "Oscillators", SectionKind::Panels, { "Osc" }, "osc" },
         { "noise-sub-row", "Noise + Sub", SectionKind::Panels, { "Noise", "Sub Osc" }, "noiseSub" },

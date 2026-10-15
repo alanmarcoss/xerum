@@ -124,6 +124,22 @@ public:
     int compositionScrollY() const { return compositionViewport_.getViewPositionY(); }
     int compositionHeight() const { return composition_.totalHeight(); }
 
+    /// The window the composed page is seen through. Ticket `53`'s acceptance is the page's height against
+    /// this one, so the number the claim is made of is readable rather than inferred from the window's.
+    int compositionViewportWidth() const { return compositionViewport_.getMaximumVisibleWidth(); }
+    int compositionViewportHeight() const { return compositionViewport_.getMaximumVisibleHeight(); }
+
+    /// True when the page is taller than the window it is in, which is the only thing that makes the page
+    /// scroll. Ticket `53`: at the default window this is false — the whole instrument is on screen.
+    ///
+    /// The question is whether the bar is **visible**, not whether the viewport permits one:
+    /// `Viewport::isVerticalScrollBarShown` returns the `setScrollBarsShown` flag, which is true here
+    /// whether or not a bar is on screen — asking it would have "proved" no scrolling in the old build too.
+    bool compositionScrolls() const
+    {
+        return const_cast<juce::Viewport&> (compositionViewport_).getVerticalScrollBar().isVisible();
+    }
+
     /// The panel a group's controls are in, or nullptr. A group is a panel; a section holds several.
     ui::ParameterPanel* panelForGroup (const std::string& group) const;
 

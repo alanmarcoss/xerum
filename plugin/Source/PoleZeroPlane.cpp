@@ -204,13 +204,13 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
     auto title = bounds.removeFromTop (kPanelHeaderHeight);
     graphics.setColour (look::fg);
     graphics.setFont (look::bodyFont (look::type::section, true));
-    graphics.drawText ("POLE / ZERO PLANE", title.reduced (kPanelPadding + 2, 0),
+    graphics.drawText ("POLE / ZERO PLANE", title.reduced (kPanelPaddingX + 2, 0),
                        juce::Justification::centredLeft, true);
 
     graphics.setColour (look::accent);
     graphics.setFont (look::monoFont (look::type::tag));
     graphics.drawText (type_.isEmpty() ? juce::String ("filter type not set") : type_,
-                       title.reduced (kPanelPadding + 2, 0), juce::Justification::centredRight, true);
+                       title.reduced (kPanelPaddingX + 2, 0), juce::Justification::centredRight, true);
 
     const auto area = planeAreaFor (getLocalBounds());
     const auto axis = area.getCentreY();
@@ -292,7 +292,7 @@ void PoleZeroPlane::paint (juce::Graphics& graphics)
         }
     }
 
-    auto footer = bounds.removeFromBottom (kPlaneCaptionHeight).reduced (kPanelPadding, 0);
+    auto footer = bounds.removeFromBottom (kPlaneCaptionHeight).reduced (kPanelPaddingX, 0);
     graphics.setColour (look::fg);
     graphics.setFont (look::bodyFont (11.5f));
     graphics.drawText (caption(), footer.removeFromTop (16), juce::Justification::centredLeft, true);
