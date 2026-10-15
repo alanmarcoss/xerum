@@ -107,4 +107,43 @@ std::vector<std::byte> encodePresetFile (const FactoryPreset& preset);
 /// This is what the self-containment check walks: each of them must be a file in this repository.
 std::vector<std::string> tablesOf (const FactoryPreset& preset);
 
+//=======================================================================================
+// The manifest, as the browser reads it (ticket 55)
+
+/// One preset, exactly as `<content root>/Factory/manifest.json` records it. The browser is built over
+/// **this** and not over the directory listing: the manifest is the bank's contract, it names each
+/// preset's category and the order a player moves through the categories in, and a browser that read
+/// filenames instead would show whatever happened to be on disk — including a preset the loader rejects
+/// and a stray file that is not a preset at all.
+struct BankManifestPreset
+{
+    std::string name;           ///< what a browser shows
+    std::string category;       ///< one of `categories()`
+    std::string path;           ///< relative to the content root: `Factory/<Category>/<Name>.xerumpreset`
+    std::string description;    ///< what the preset is made of — the detail line a browser can show
+    std::string sha256;         ///< the file's bytes, so a browser can tell the bank on disk from the one
+    std::size_t bytes { 0 };    ///< how many bytes the file must be
+};
+
+/// The bank's manifest in memory. `ok == false` is the honest answer for a bank that is absent or
+/// unreadable — an empty catalogue with a reason, never a bank assembled out of whatever else is about.
+struct BankManifest
+{
+    bool ok { false };
+    std::string error;                    ///< why, when there is no usable manifest
+    std::string origin;                   ///< the manifest's own provenance, shown as such
+    std::string licence;
+    std::vector<std::string> categories;  ///< in the manifest's order — the order a player moves through
+    std::vector<BankManifestPreset> presets;
+};
+
+/// Read the manifest's JSON. Deliberately tolerant of a manifest that is *newer* than this build (unknown
+/// members are ignored) and intolerant of one that is *not a manifest at all*: a missing `presets` list,
+/// a preset without a name or a path, or a category outside `categories` is an error with a reason rather
+/// than a half-built catalogue.
+BankManifest readBankManifest (std::string_view json);
+
+/// The path one manifest entry names, below a content root: `<root>/<entry.path>`.
+std::string manifestPathUnder (std::string_view root, const BankManifestPreset& preset);
+
 } // namespace xerum::presets

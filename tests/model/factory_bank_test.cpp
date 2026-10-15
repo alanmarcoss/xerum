@@ -333,3 +333,77 @@ TEST_CASE ("the manifest describes the bank, and nothing else", "[model][bank]")
         CHECK (static_cast<std::size_t> (size->number) == encodePresetFile (preset).size());
     }
 }
+
+TEST_CASE ("the manifest reader the browser is built over agrees with the file, and refuses a bad one",
+           "[model][bank]")
+{
+    using namespace xerum::presets;
+
+    const auto path = contentRoot() / kBankDirectory / kBankManifestName;
+    const auto text = readText (path);
+    REQUIRE_FALSE (text.empty());
+
+    // The reader ticket `55`'s browser and the plugin's catalogue actually use, held to the same file the
+    // bank's own test reads: one reader, in the bank's own module, so the browser cannot hold a different
+    // opinion of the bank than the bank does.
+    const auto manifest = readBankManifest (text);
+
+    INFO (manifest.error);
+    REQUIRE (manifest.ok);
+
+    REQUIRE (manifest.presets.size() == bank().size());
+    REQUIRE (manifest.categories.size() == categories().size());
+    CHECK_FALSE (manifest.origin.empty());
+    CHECK_FALSE (manifest.licence.empty());
+
+    for (std::size_t i = 0; i < categories().size(); ++i)
+        CHECK (manifest.categories[i] == std::string (categories()[i]));
+
+    for (std::size_t i = 0; i < manifest.presets.size(); ++i)
+    {
+        const auto& entry = manifest.presets[i];
+        const auto& preset = bank()[i];
+
+        INFO ("entry " << i << ": " << entry.name);
+
+        CHECK (entry.name == preset.name);
+        CHECK (entry.category == preset.category);
+        CHECK (entry.path == presetFilePath (preset));
+        CHECK (entry.description == preset.description);
+        CHECK (entry.sha256.size() == 64);
+        CHECK (entry.bytes == encodePresetFile (preset).size());
+    }
+
+    // The path a browser opens is the manifest's own spelling joined under a content root — not a second
+    // spelling of it, so a preset cannot be listed under one name and looked for under another.
+    CHECK (manifestPathUnder ("/root", manifest.presets.front())
+           == "/root/" + manifest.presets.front().path);
+
+    // **And a manifest that is not one is refused, not half-read.** Each of these is a failure a tolerant
+    // reader would hide: a missing list, a preset with no path, and a category the manifest does not
+    // declare — the last being the one that would put a row behind a pill the browser does not draw.
+    {
+        const auto refused = [] (const std::string& json, const std::string& what)
+        {
+            const auto result = readBankManifest (json);
+
+            INFO ("refused \"" << what << "\" with: " << result.error);
+            CHECK_FALSE (result.ok);
+            CHECK_FALSE (result.error.empty());
+            CHECK (result.presets.empty());
+
+            return result.error;
+        };
+
+        CHECK (refused ("not json at all", "not JSON").find ("JSON") != std::string::npos);
+        CHECK (refused (R"({"presets": []})", "no categories").find ("categories") != std::string::npos);
+        CHECK (refused (R"({"categories": ["Bass"], "presets": [{"name": "x", "category": "Bass"}]})",
+                        "no path")
+                   .find ("path")
+               != std::string::npos);
+        CHECK (refused (R"({"categories": ["Bass"], "presets": [{"name": "x", "path": "p", "category": "Lead"}]})",
+                        "an undeclared category")
+                   .find ("Lead")
+               != std::string::npos);
+    }
+}

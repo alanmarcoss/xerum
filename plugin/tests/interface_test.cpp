@@ -26,9 +26,11 @@
 #include "ModulationMatrixView.h"
 #include "ParameterPanels.h"
 #include "PoleZeroPlane.h"
+#include "PresetBrowser.h"
 #include "SectionStrip.h"
 #include "XerumAudioProcessorEditor.h"
 
+#include "factory_bank.h"
 #include "modulation.h"
 #include "write.h"
 
@@ -38,6 +40,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -2434,4 +2437,918 @@ TEST_CASE ("the pole/zero plane's edits reach the engine, and a drawn response i
 
     const auto after = render (processor, 12, 512, playNote);
     CHECK (channelDifference (before, after) > 0.01);
+}
+
+//==============================================================================
+// Ticket `55`: moving through the bank — and, at every step, **what changed when the thing was removed**.
+//
+// The failure this case is built to catch is a browser that is *decorative*: a list that highlights a row
+// without loading anything, a search that filters a copy of the names and not the thing that plays, a
+// "previous" that walks a cursor nothing reads. Every assertion below is therefore a **difference** — the
+// loaded document before and after, the audio the engine produces before and after, the render of the
+// window with the browser open against the same window with it shut — because each of those fails if the
+// browser is a picture and passes if it is a mechanism, and no assertion that merely *describes* the panel
+// (104 rows, eight categories, a highlighted row) can tell the two apart.
+
+namespace
+{
+
+/// The manifest, read here with **JUCE's** parser rather than with the reader the browser itself uses.
+/// The point of the check is that the browser's list is measured against the file, not against the
+/// browser's own opinion of the file: two readers that disagreed would otherwise agree with each other.
+struct ManifestRow
+{
+    juce::String name;
+    juce::String category;
+    juce::String path;
+};
+
+std::vector<ManifestRow> readManifestRows (const juce::File& root, std::vector<juce::String>& categories)
+{
+    std::vector<ManifestRow> rows;
+
+    const auto manifest = root.getChildFile (juce::String (std::string (xerum::presets::kBankDirectory)))
+                              .getChildFile (juce::String (std::string (xerum::presets::kBankManifestName)));
+
+    if (! manifest.existsAsFile())
+        return rows;
+
+    const auto parsed = juce::JSON::parse (manifest.loadFileAsString());
+    const auto* object = parsed.getDynamicObject();
+
+    if (object == nullptr)
+        return rows;
+
+    if (const auto* list = object->getProperty ("categories").getArray())
+        for (const auto& category : *list)
+            categories.push_back (category.toString());
+
+    if (const auto* list = object->getProperty ("presets").getArray())
+        for (const auto& entry : *list)
+            if (const auto* preset = entry.getDynamicObject())
+                rows.push_back ({ preset->getProperty ("name").toString(),
+                                  preset->getProperty ("category").toString(),
+                                  preset->getProperty ("path").toString() });
+
+    return rows;
+}
+
+/// What was **loaded**, as one string: every parameter of the document, and **not** its name. Leaving the
+/// name out is the point — two presets that differ only in name are two presets that play the same, and
+/// the digest is what would notice. So "the browser loaded a different preset" becomes a claim about the
+/// document rather than about which row happened to be highlighted.
+juce::String documentDigest (const model::PresetDocument& document)
+{
+    juce::StringArray parts;
+    parts.add (juce::String (document.parameters.size()));
+
+    for (const auto& [path, value] : document.parameters)
+    {
+        double number = 0.0;
+
+        parts.add (juce::String (path) + "="
+                   + (value.isText() ? juce::String (value.text)
+                                     : juce::String (value.numberAsDouble (number) ? number : 0.0)));
+    }
+
+    // A stable fold of the parts. Not a cryptographic hash and not pretending to be one: it is a summary
+    // of the document's *contents*, which is all this needs to be.
+    std::uint64_t fold = 1469598103934665603ull;
+
+    for (const auto& part : parts)
+        for (const auto character : part)
+        {
+            fold ^= static_cast<std::uint64_t> (static_cast<juce::uint32> (character));
+            fold *= 1099511628211ull;
+        }
+
+    return juce::String::toHexString (static_cast<juce::int64> (fold)) + "/" + juce::String (parts.size());
+}
+
+/// The design system's colours, and how much of a rendered window is exactly one of them. Printed rather
+/// than asserted where antialiasing makes an exact match meaningless; asserted where it does not (that the
+/// window's own background is its most common colour, and that nothing outside the palette reappears as a
+/// *field* of colour).
+struct RenderReport
+{
+    juce::File png;
+    int width { 0 };
+    int height { 0 };
+    int palettePixels { 0 };
+    int totalPixels { 0 };
+    std::map<juce::uint32, int> ranked;
+};
+
+RenderReport captureRender (XerumAudioProcessorEditor& editor, const juce::String& name)
+{
+    RenderReport report;
+
+    const auto image = editor.createComponentSnapshot (editor.getLocalBounds());
+    report.width = image.getWidth();
+    report.height = image.getHeight();
+    report.totalPixels = report.width * report.height;
+
+    auto directory = juce::File (juce::String (XERUM_BUILD_DIR)).getChildFile ("browser-evidence");
+    directory.createDirectory();
+    report.png = directory.getChildFile (name + ".png");
+
+    juce::PNGImageFormat png;
+
+    if (auto stream = std::unique_ptr<juce::FileOutputStream> (report.png.createOutputStream()))
+        png.writeImageToStream (image, *stream);
+
+    const auto palette = ui::look::palette();
+
+    for (int y = 0; y < image.getHeight(); ++y)
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto pixel = image.getPixelAt (x, y);
+            ++report.ranked[pixel.getARGB() & 0x00ffffffu];
+
+            if (std::find (palette.begin(), palette.end(), pixel) != palette.end())
+                ++report.palettePixels;
+        }
+
+    return report;
+}
+
+void printRender (const char* what, const RenderReport& report)
+{
+    std::vector<std::pair<juce::uint32, int>> ranked (report.ranked.begin(), report.ranked.end());
+    std::sort (ranked.begin(), ranked.end(),
+               [] (const auto& a, const auto& b) { return a.second > b.second; });
+
+    std::fprintf (stderr, "\n[browser] %s: %dx%d -> %s\n", what, report.width, report.height,
+                  report.png.getFullPathName().toRawUTF8());
+    std::fprintf (stderr, "[browser]   %d distinct colours; exactly-a-palette-token %d px (%.2f %%)\n",
+                  static_cast<int> (ranked.size()), report.palettePixels,
+                  100.0 * report.palettePixels / juce::jmax (1, report.totalPixels));
+
+    for (std::size_t i = 0; i < ranked.size() && i < 8; ++i)
+    {
+        const auto key = ranked[i].first;
+        const auto token = [&key]
+        {
+            for (const auto colour : ui::look::palette())
+                if ((colour.getARGB() & 0x00ffffffu) == key)
+                    return " (a palette token)";
+
+            return "";
+        }();
+
+        std::fprintf (stderr, "[browser]   rgb(%3u,%3u,%3u) %6.2f %% of the window%s\n", (key >> 16) & 0xffu,
+                      (key >> 8) & 0xffu, key & 0xffu, 100.0 * ranked[i].second / report.totalPixels, token);
+    }
+}
+
+/// A real click, through the component's own mouse handling — the same construction the pole/zero case
+/// uses, so the gesture is the one a mouse makes rather than a call to the callback behind it.
+void clickComponent (juce::Component& component, const juce::Point<int> at)
+{
+    const juce::MouseEvent event (juce::Desktop::getInstance().getMainMouseSource(), at.toFloat(),
+                                  juce::ModifierKeys(), 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &component, &component,
+                                  juce::Time::getCurrentTime(), at.toFloat(),
+                                  juce::Time::getCurrentTime(), 1, false);
+    component.mouseDown (event);
+}
+
+/// The bank this machine resolves, or a null file. Every case below needs it.
+juce::File bankRoot (XerumAudioProcessor& processor)
+{
+    for (const auto& root : processor.contentRoots())
+    {
+        const auto candidate = juce::File (root);
+
+        if (candidate.getChildFile (juce::String (std::string (xerum::presets::kBankDirectory)))
+                .getChildFile (juce::String (std::string (xerum::presets::kBankManifestName)))
+                .existsAsFile())
+            return candidate;
+    }
+
+    return {};
+}
+
+void printBrowser (XerumAudioProcessorEditor& editor)
+{
+    const auto& browser = editor.browser();
+    const auto& catalog = editor.bankCatalog();
+
+    const auto filter = browser.categoryIndex() < 0
+                            ? std::string ("All")
+                            : catalog.categories[static_cast<std::size_t> (browser.categoryIndex())];
+
+    std::fprintf (stderr,
+                  "\n[browser] window %dx%d; the browser covers %dx%d at %d,%d; %d presets, %d "
+                  "categories; filter %s, %d visible of %d, cursor %d, query \"%s\"\n",
+                  editor.getWidth(), editor.getHeight(), browser.getWidth(),
+                  browser.getHeight(), browser.getX(), browser.getY(), catalog.size(),
+                  static_cast<int> (catalog.categories.size()), filter.c_str(), browser.visibleCount(),
+                  catalog.size(), browser.selectedIndex(), browser.search().toRawUTF8());
+
+    const auto rect = [] (const juce::Rectangle<int>& r)
+    {
+        return juce::String (r.getWidth()) + "x" + juce::String (r.getHeight()) + " @" + juce::String (r.getX())
+               + "," + juce::String (r.getY());
+    };
+
+    std::fprintf (stderr, "[browser]   heading  %s\n", rect (browser.headingBounds()).toRawUTF8());
+    std::fprintf (stderr, "[browser]   search   %s\n", rect (browser.searchBounds()).toRawUTF8());
+
+    for (int index = -1; index < static_cast<int> (catalog.categories.size()); ++index)
+        std::fprintf (stderr, "[browser]   pill %-12s %s%s\n",
+                      index < 0 ? "All" : catalog.categories[static_cast<std::size_t> (index)].c_str(),
+                      rect (browser.categoryBounds (index)).toRawUTF8(),
+                      index == browser.categoryIndex() ? "   <- selected" : "");
+
+    std::fprintf (stderr, "[browser]   list     %s, %d rows of %dpx, first visible row %d\n",
+                  rect (browser.listBounds()).toRawUTF8(), browser.rowsVisible(), browser.rowHeight(),
+                  browser.firstVisibleRow());
+
+    for (int row = 0; row < browser.visibleCount() && row < 3; ++row)
+        std::fprintf (stderr, "[browser]     row %d  %-22s  %s\n", row,
+                      rect (browser.rowBounds (row)).toRawUTF8(),
+                      catalog.presets[static_cast<std::size_t> (browser.visibleRows()[
+                          static_cast<std::size_t> (row)])].name.c_str());
+
+    if (browser.selectedIndex() >= 0 && browser.selectedIndex() < catalog.size())
+        std::fprintf (stderr, "[browser]   cursor is bank slot %d \"%s\" of %s (%s)\n",
+                      browser.selectedIndex(),
+                      catalog.presets[static_cast<std::size_t> (browser.selectedIndex())].name.c_str(),
+                      filter.c_str(),
+                      catalog.presets[static_cast<std::size_t> (browser.selectedIndex())].path.c_str());
+
+    std::fprintf (stderr, "[browser]   footer   %s\n", rect (browser.footerBounds()).toRawUTF8());
+}
+
+} // namespace
+
+//==============================================================================
+TEST_CASE ("the browser offers the manifest's bank and nothing else, and every entry it offers loads",
+           "[interface][ui][browser]")
+{
+    // Ticket `55`'s first half, as measurements against the **file** and the **loader**:
+    //
+    //   1. the list is the manifest's list — same order, same names, same categories — read here by a
+    //      second parser, so the browser cannot be wrong about the bank in a way that agrees with itself;
+    //   2. every entry it can offer is a `.xerumpreset` under `Factory/`, and so the import path's
+    //      `.SerumPreset` cannot appear in it: the two doors do not open onto the same list;
+    //   3. stepping the whole bank loads the whole bank — 104 loads, every one through
+    //      `loadPresetFromFile`, every one a document that names the manifest's own preset, and **no two
+    //      the same document** (a hundred presets that load to one sound is the failure the bank's own
+    //      test exists to catch, and this is where a browser could reintroduce it by loading the wrong
+    //      file);
+    //   4. and the render changes — the audition, as far as arithmetic can reach it.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    const auto& catalog = editor->bankCatalog();
+
+    INFO ("bank: " << catalog.error);
+    REQUIRE (catalog.ok);
+    REQUIRE (catalog.size() > 0);
+
+    const auto root = bankRoot (processor);
+    REQUIRE (root != juce::File());
+
+    std::vector<juce::String> categories;
+    const auto rows = readManifestRows (root, categories);
+
+    INFO ("manifest: " << rows.size() << " presets, " << categories.size() << " categories");
+    REQUIRE_FALSE (rows.empty());
+
+    // ---- 1. the list is the manifest's list ---------------------------------------------------------
+    CHECK (catalog.size() == static_cast<int> (rows.size()));
+    CHECK (static_cast<int> (catalog.categories.size()) == static_cast<int> (categories.size()));
+
+    for (std::size_t index = 0; index < categories.size(); ++index)
+        CHECK (catalog.categories[index] == categories[index].toStdString());
+
+    for (std::size_t index = 0; index < rows.size() && index < static_cast<std::size_t> (catalog.size()); ++index)
+    {
+        const auto& entry = catalog.presets[index];
+
+        INFO ("preset " << index << ": " << entry.name);
+        CHECK (juce::String (entry.name) == rows[index].name);
+        CHECK (juce::String (entry.category) == rows[index].category);
+        CHECK (juce::String (entry.path) == rows[index].path);
+    }
+
+    // **The import path cannot appear in the browser**, as a property of the list rather than of the code
+    // that built it: every entry is the factory bank's own extension below the bank's own directory.
+    for (const auto& entry : catalog.presets)
+    {
+        INFO ("path: " << entry.path);
+
+        CHECK (juce::String (entry.path).startsWith (juce::String (std::string (xerum::presets::kBankDirectory))
+                                                      + "/"));
+        CHECK (juce::String (entry.path).endsWith (juce::String (std::string (xerum::presets::kPresetExtension))));
+        CHECK_FALSE (juce::String (entry.path).endsWith (".SerumPreset"));
+
+        // And the file is really there: a manifest entry with no bytes behind it is a browser row that
+        // cannot load, which is worse than a browser with no row.
+        CHECK (catalog.fileFor (static_cast<int> (&entry - catalog.presets.data())).existsAsFile());
+    }
+
+    // ---- the two doors ------------------------------------------------------------------------------
+    //
+    // xerum has exactly one way in for a user's **own** preset, and it is not this one. Spelled three
+    // ways, all read from the same window: the import button names the **reference's** extension; the
+    // browser's list contains none of it (asserted above, over the whole list, as a property of every
+    // entry); and — the one a user actually sees — the header field says where a factory preset is filed
+    // and says nothing at all for a preset that arrived through the other door. The last is measured by
+    // loading a `.SerumPreset` and reading the field back.
+    {
+        CHECK (editor->importButton().getButtonText().contains (".SerumPreset"));
+
+        REQUIRE (editor->loadBankPreset (3));
+        CHECK (editor->presetField().factoryCategory() == juce::String (catalog.presets[3].category));
+        CHECK (editor->bankIndex() == 3);
+
+        const auto imported = writeFixture (halfLoadingDocument());
+        REQUIRE (processor.loadPresetFromFile (imported).wasOk());
+        processor.sendSynchronousChangeMessage();
+
+        std::fprintf (stderr, "\n[browser] after importing %s: the field reads \"%s\", bank slot %d\n",
+                      imported.getFileName().toRawUTF8(), editor->presetField().displayText().toRawUTF8(),
+                      editor->bankIndex());
+
+        CHECK (editor->bankIndex() == -1);
+        CHECK (editor->presetField().factoryCategory().isEmpty());
+        CHECK (editor->presetField().displayText() == juce::String ("interface fixture"));
+        CHECK_FALSE (editor->presetField().displayText().contains ("\xc2\xb7"));
+        CHECK (editor->browser().selectedIndex() == -1);
+    }
+
+    // ---- 2. the browser's own list, before any filter ------------------------------------------------
+    CHECK (editor->browser().visibleCount() == catalog.size());
+    CHECK (editor->browser().categoryIndex() == -1);
+
+    for (int row = 0; row < editor->browser().visibleCount(); ++row)
+        CHECK (editor->browser().visibleRows()[static_cast<std::size_t> (row)] == row);
+
+    // ---- 3. stepping the whole bank loads the whole bank --------------------------------------------
+    //
+    // Every load goes through the product's own loader, and every loaded document is captured: the set of
+    // distinct documents is the measurement that says the browser moved the *engine* and not a cursor.
+    {
+        std::set<juce::String> digests;
+        std::set<juce::String> names;
+        auto failures = 0;
+
+        for (int index = 0; index < catalog.size(); ++index)
+        {
+            INFO ("bank slot " << index << ": " << catalog.presets[static_cast<std::size_t> (index)].path);
+
+            if (! editor->loadBankPreset (index))
+            {
+                ++failures;
+                continue;
+            }
+
+            const auto document = processor.document();
+            digests.insert (documentDigest (document));
+            names.insert (juce::String (document.name));
+
+            // The document names the preset the manifest named — the loader read the file it was handed.
+            CHECK (juce::String (document.name)
+                   == juce::String (catalog.presets[static_cast<std::size_t> (index)].name));
+
+            // And the interface agrees about which slot that was: the header says the category, and the
+            // browser's cursor is on the row.
+            CHECK (editor->bankIndex() == index);
+            CHECK (editor->presetField().factoryCategory()
+                   == juce::String (catalog.presets[static_cast<std::size_t> (index)].category));
+        }
+
+        CHECK (failures == 0);
+        std::fprintf (stderr, "\n[browser] %d of %d bank slots loaded; %zu distinct documents, %zu distinct names\n",
+                      catalog.size() - failures, catalog.size(), digests.size(), names.size());
+        CHECK (static_cast<int> (digests.size()) == catalog.size());
+    }
+
+    // ---- 4. and the render changes ------------------------------------------------------------------
+    //
+    // Nobody here can hear a preset, and nothing in a binary can say whether one sounds good. What can be
+    // said is that **the sound is not the same sound**: two different bank presets render differently
+    // through the engine the interface loaded them into.
+    {
+        REQUIRE (editor->loadBankPreset (0));
+        const auto first = render (processor, 16, 512, noteThenRelease (60, 12));
+
+        REQUIRE (editor->loadBankPreset (catalog.size() / 2));
+        const auto second = render (processor, 16, 512, noteThenRelease (60, 12));
+
+        const auto difference = channelDifference (first, second);
+        std::fprintf (stderr, "[browser] slot 0 against slot %d: channel difference %.4f\n", catalog.size() / 2,
+                      difference);
+
+        CHECK (difference > 0.01);
+    }
+}
+
+//==============================================================================
+TEST_CASE ("the bank browses by category, by step and by search, and the keyboard does all of it",
+           "[interface][ui][browser]")
+{
+    // Ticket `55`'s second half. Each assertion below is a **difference**: what moved when the gesture
+    // happened, measured on the loaded document rather than on the panel. A browser that highlights rows
+    // and loads nothing passes every description of itself and fails every one of these.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    const auto& catalog = editor->bankCatalog();
+    REQUIRE (catalog.ok);
+
+    // The manifest, read once here by this test's own parser and shared by the blocks below: what "the
+    // second category" and "the query" are is taken from the bank rather than written down in this file,
+    // so the case keeps meaning something when the bank changes.
+    std::vector<juce::String> categories;
+    const auto rows = readManifestRows (bankRoot (processor), categories);
+    REQUIRE_FALSE (rows.empty());
+    REQUIRE (static_cast<int> (rows.size()) == catalog.size());
+
+    /// A query that matches exactly one preset, **found in the bank** rather than written here: the
+    /// longest name no other name contains.
+    const auto uniqueName = [&rows]
+    {
+        juce::String best;
+
+        for (const auto& row : rows)
+        {
+            auto matches = 0;
+
+            for (const auto& other : rows)
+                if (other.name.contains (row.name))
+                    ++matches;
+
+            if (matches == 1 && row.name.length() > best.length())
+                best = row.name;
+        }
+
+        return best;
+    }();
+
+    INFO ("bank: " << rows.size() << " presets, " << categories.size() << " categories, unique query \""
+                   << uniqueName << "\"");
+    REQUIRE (uniqueName.isNotEmpty());
+
+    auto& browser = editor->browser();
+    const auto slotName = [&catalog] (const int index)
+    { return juce::String (catalog.presets[static_cast<std::size_t> (index)].name); };
+    const auto loaded = [&processor] { return juce::String (processor.document().name); };
+
+    // The window the host opens: the page fits, and the browser does not change that.
+    CHECK (editor->getWidth() == 1080);
+    CHECK_FALSE (editor->compositionScrolls());
+
+    const auto pageClosed = editor->compositionHeight();
+
+    editor->setBrowserOpen (true);
+    REQUIRE (editor->browserOpen());
+    REQUIRE (browser.getWidth() > 0);
+
+    // **Counterfactual: the fit.** The browser is a surface over the page, so the page is exactly as tall
+    // with it open as with it shut — at both sizes, and measured **at each size** rather than across them:
+    // the minimum window is the one ticket `53` records as scrolling, and that is a fact about the window
+    // and the page, not about the browser.
+    {
+        const auto pageAtDefaultOpen = editor->compositionHeight();
+        editor->setBrowserOpen (false);
+        const auto pageAtDefaultShut = editor->compositionHeight();
+        editor->setBrowserOpen (true);
+
+        CHECK (pageAtDefaultOpen == pageAtDefaultShut);
+        CHECK (pageAtDefaultOpen == pageClosed);
+        CHECK_FALSE (editor->compositionScrolls());
+
+        const auto size = juce::Point<int> (editor->getWidth(), editor->getHeight());
+
+        editor->setSize (900, 600);
+        const auto pageAtMinimumOpen = editor->compositionHeight();
+        editor->setBrowserOpen (false);
+        const auto pageAtMinimumShut = editor->compositionHeight();
+        editor->setBrowserOpen (true);
+
+        editor->setSize (size.x, size.y);
+
+        std::fprintf (stderr,
+                      "\n[browser] the composed page: %d at 1080x1108 and %d at 900x600, each measured with "
+                      "the browser open and with it shut\n",
+                      pageAtDefaultOpen, pageAtMinimumOpen);
+
+        CHECK (pageAtMinimumOpen == pageAtMinimumShut);
+        CHECK (editor->compositionHeight() == pageClosed);
+
+        // The header: the bank's arrows are **inside** the preset field's own width, so the wordmark, the
+        // coverage readout and the two right-hand controls kept ticket `53`'s rectangles.
+        const auto& header = editor->headerLayout();
+
+        std::fprintf (stderr,
+                      "\n[browser] header at %dx%d: wordmark %d, preset %dx%d, coverage %d, import %d, "
+                      "status %d\n",
+                      editor->getWidth(), editor->getHeight(), header.wordmark.getWidth(),
+                      header.preset.getWidth(), header.preset.getHeight(), header.coverage.getWidth(),
+                      header.import.getWidth(), header.status.getWidth());
+
+        CHECK (header.preset.getWidth() == 240);
+        CHECK (header.preset.getHeight() == 22);
+        CHECK (header.coverage.getWidth() == 278);   // 1060 - 84 - 6 - 240 - (168 + 8 + 260 + 24)
+        CHECK (header.import.getWidth() == 168);
+        CHECK (header.status.getWidth() == 260);
+
+        // The arrows are within the field, and the name does not run under them.
+        const auto& field = editor->presetField();
+
+        CHECK (field.getLocalBounds().contains (field.arrowBounds (-1)));
+        CHECK (field.getLocalBounds().contains (field.arrowBounds (1)));
+        CHECK (field.textBounds().getRight() <= field.arrowBounds (-1).getX());
+    }
+
+    // ---- the field's own arrows, through a real click ------------------------------------------------
+    //
+    // The header's ▶ is what a mouse uses; `[` and `]` are what the keyboard uses. Both are the same
+    // gesture, so a click must move the bank exactly as a key does.
+    {
+        REQUIRE (editor->loadBankPreset (10));
+        REQUIRE (editor->bankIndex() == 10);
+
+        const auto before = loaded();
+        clickComponent (editor->presetField(), editor->presetField().arrowBounds (1).getCentre());
+
+        CHECK (editor->bankIndex() == 11);
+        CHECK (loaded() == slotName (11));
+        CHECK (loaded() != before);
+        CHECK (editor->presetField().displayText()
+               == juce::String (catalog.presets[11].category) + " \xc2\xb7 " + slotName (11));
+
+        clickComponent (editor->presetField(), editor->presetField().arrowBounds (-1).getCentre());
+        CHECK (editor->bankIndex() == 10);
+    }
+
+    // ---- previous and next, and the ends of the bank --------------------------------------------------
+    //
+    // "Hold one key and hear them change" is the whole point, and the ends of the bank are where a
+    // cursor-only implementation gives up. The bank is a **ring**: forward from the last sound lands on
+    // the first and backward from the first lands on the last, so stepping never stops the audition.
+    {
+        REQUIRE (editor->loadBankPreset (0));
+
+        CHECK (editor->keyPressed (juce::KeyPress ('[')));        // backwards off the front ...
+        CHECK (editor->bankIndex() == catalog.size() - 1);        // ... lands on the last preset
+        CHECK (loaded() == slotName (catalog.size() - 1));
+
+        CHECK (editor->keyPressed (juce::KeyPress (']')));        // ... and forwards off the end
+        CHECK (editor->bankIndex() == 0);
+        CHECK (loaded() == slotName (0));
+
+        // And one step back from the last is the one *before* it — a step, not a wrap. The two are
+        // different gestures and the count says which happened.
+        REQUIRE (editor->loadBankPreset (catalog.size() - 1));
+        editor->stepPreset (1);
+        CHECK (editor->bankIndex() == 0);
+
+        REQUIRE (editor->loadBankPreset (catalog.size() - 1));
+        editor->stepPreset (-1);
+        CHECK (editor->bankIndex() == catalog.size() - 2);
+    }
+
+    // ---- the browser's own keys ---------------------------------------------------------------------
+    {
+        REQUIRE (editor->loadBankPreset (5));
+        const auto before = loaded();
+
+        CHECK (browser.keyPressed (juce::KeyPress (juce::KeyPress::downKey)));
+        CHECK (loaded() == slotName (6));
+        CHECK (loaded() != before);
+
+        CHECK (browser.keyPressed (juce::KeyPress (juce::KeyPress::upKey)));
+        CHECK (loaded() == slotName (5));
+
+        // `[` and `]` are handed on rather than treated as search text, so the gesture works with the
+        // browser open and focused — which is where a keyboard user is while browsing.
+        CHECK_FALSE (browser.keyPressed (juce::KeyPress (']')));
+        CHECK (editor->keyPressed (juce::KeyPress (']')));
+        CHECK (loaded() == slotName (6));
+        CHECK (browser.search().isEmpty());
+    }
+
+    // ---- categories, the first cut ------------------------------------------------------------------
+    {
+        // The manifest's own order, and the manifest's own count: the second category, whatever it is.
+        REQUIRE (categories.size() > 2);
+
+        const auto wanted = categories[2];
+
+        auto expected = 0;
+        auto firstSlot = -1;
+        auto lastSlot = -1;
+
+        for (int index = 0; index < catalog.size(); ++index)
+            if (juce::String (catalog.presets[static_cast<std::size_t> (index)].category) == wanted)
+            {
+                ++expected;
+
+                if (firstSlot < 0)
+                    firstSlot = index;
+
+                lastSlot = index;
+            }
+
+        REQUIRE (expected > 0);
+
+        // Two steps right from `All` is the second category.
+        browser.setCategoryIndex (-1, false);
+        CHECK (browser.categoryIndex() == -1);
+        CHECK (browser.visibleCount() == catalog.size());
+
+        CHECK (browser.keyPressed (juce::KeyPress (juce::KeyPress::rightKey)));
+        CHECK (browser.categoryIndex() == 0);
+        CHECK (browser.keyPressed (juce::KeyPress (juce::KeyPress::rightKey)));
+
+        CHECK (browser.categoryIndex() == 1);
+        CHECK (juce::String (catalog.categories[1].c_str()) == categories[1]);
+
+        browser.setCategoryIndex (2);
+        CHECK (juce::String (catalog.categories[2].c_str()) == wanted);
+        CHECK (browser.visibleCount() == expected);
+
+        // The rows are the manifest's own subsequence, and the count is the one this test counted from
+        // the file rather than the one the browser reported.
+        for (int row = 0; row < browser.visibleCount(); ++row)
+        {
+            const auto slot = browser.visibleRows()[static_cast<std::size_t> (row)];
+            CHECK (juce::String (catalog.presets[static_cast<std::size_t> (slot)].category) == wanted);
+        }
+
+        CHECK (browser.visibleRows().front() == firstSlot);
+        CHECK (browser.visibleRows().back() == lastSlot);
+
+        // And a selection inside a category is a load: the filter changes what is offered, not what the
+        // gesture means.
+        CHECK (editor->bankIndex() == firstSlot);
+        CHECK (loaded() == slotName (firstSlot));
+
+        // Down to the end of the category and one more: it wraps **within the category**, because the
+        // category is the cut and stepping must not leave it.
+        for (int step = 1; step < expected; ++step)
+            browser.keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+
+        CHECK (editor->bankIndex() == lastSlot);
+        CHECK (loaded() == slotName (lastSlot));
+
+        browser.keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+        CHECK (editor->bankIndex() == firstSlot);
+
+        // Left from `All` is the last category — the ring again, at the level of the cut.
+        browser.setCategoryIndex (-1);
+        CHECK (browser.keyPressed (juce::KeyPress (juce::KeyPress::leftKey)));
+        CHECK (browser.categoryIndex() == static_cast<int> (catalog.categories.size()) - 1);
+    }
+
+    // ---- search -------------------------------------------------------------------------------------
+    {
+        // A query taken **from the bank** rather than written down: the first word of a name, and the
+        // expectation counted from the manifest by this test.
+        const auto query = rows[7].name.upToFirstOccurrenceOf (" ", false, false).toLowerCase();
+        REQUIRE (query.isNotEmpty());
+
+        auto expected = 0;
+
+        for (const auto& row : rows)
+            if (row.name.toLowerCase().contains (query))
+                ++expected;
+
+        REQUIRE (expected > 0);
+
+        browser.setCategoryIndex (-1);
+        browser.setSearch (query);
+        CHECK (browser.visibleCount() == expected);
+
+        for (const auto slot : browser.visibleRows())
+            CHECK (juce::String (catalog.presets[static_cast<std::size_t> (slot)].name).toLowerCase().contains (query));
+
+        std::fprintf (stderr, "[browser] query \"%s\": %d of %d rows, cursor on \"%s\"\n",
+                      query.toRawUTF8(), browser.visibleCount(), catalog.size(),
+                      editor->bankIndex() >= 0 ? loaded().toRawUTF8() : "-");
+
+        // **Typing** is the same path as `setSearch`: the character keys go through `keyPressed`.
+        browser.setSearch ({});
+        for (const auto character : query.toUpperCase())
+        {
+            const juce::KeyPress key (static_cast<int> (character), juce::ModifierKeys(), character);
+            CHECK (browser.keyPressed (key));
+        }
+
+        CHECK (browser.search() == query.toUpperCase());
+        CHECK (browser.visibleCount() == expected);
+    }
+
+    // ---- a query that matches one thing loads that thing --------------------------------------------
+    {
+        // The unique query was derived above from the bank itself, so the expectation is the manifest's
+        // and not a number written here.
+        const auto& name = uniqueName;
+
+        browser.setSearch (name);
+        CHECK (browser.visibleCount() == 1);
+        CHECK (browser.selectedIndex() == catalog.indexOfName (name));
+        CHECK (loaded() == name);
+        CHECK (editor->bankIndex() == catalog.indexOfName (name));
+
+        // And the engine really moved: the document loaded is the queried preset's, not the one that was
+        // playing when the query was typed.
+        CHECK (editor->presetField().displayText()
+               == juce::String (catalog.presets[static_cast<std::size_t> (editor->bankIndex())].category)
+                      + " \xc2\xb7 " + name);
+    }
+
+    // ---- a query that matches nothing shows nothing -------------------------------------------------
+    //
+    // The counterfactual the failure mode demands: a filter that fails open (everything shown) is worse
+    // than no filter, because it silently offers the wrong hundred presets under a query.
+    {
+        const auto before = documentDigest (processor.document());
+
+        browser.setSearch ("zz-no-such-preset-zz");
+
+        CHECK (browser.visibleCount() == 0);
+        CHECK (browser.visibleRows().empty());
+        CHECK (browser.rowBounds (0).isEmpty());
+
+        // Nothing was loaded, and the row that was selected is still selected: a query that matches
+        // nothing must not silently move the sound.
+        CHECK (documentDigest (processor.document()) == before);
+        CHECK (browser.selectedIndex() == editor->bankIndex());
+    }
+
+    // ---- Escape closes ------------------------------------------------------------------------------
+    {
+        browser.setSearch ({});
+        CHECK (editor->browserOpen());
+
+        CHECK (browser.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey)));
+        CHECK_FALSE (editor->browserOpen());
+    }
+
+    // ---- the two surfaces over the page do not fight -------------------------------------------------
+    //
+    // The browser is the topmost child of the editor, so a report drawer opened *under* it would look like
+    // nothing had happened — the one defect an overlay introduces that no rectangle check would notice.
+    // Asking for either surface is asking for it to be the one on screen.
+    {
+        editor->setBrowserOpen (true);
+        CHECK (editor->browserOpen());
+
+        editor->setReportDrawerOpen (true);
+        CHECK (editor->reportDrawerOpen());
+        CHECK_FALSE (editor->browserOpen());
+
+        editor->setBrowserOpen (true);
+        CHECK (editor->browserOpen());
+        CHECK_FALSE (editor->reportDrawerOpen());
+
+        editor->setBrowserOpen (false);
+    }
+
+    // ---- the render, at the steps -------------------------------------------------------------------
+    //
+    // The window as it is drawn, at four moments: the browser at rest, the browser stepped to the end of
+    // the bank, a search narrowed to one row, and a search narrowed to none. Written out as PNGs and
+    // summarised, because this session has no eyes and the drawing is the part of the acceptance that
+    // cannot be asserted in numbers alone.
+    {
+        editor->setSize (1080, 1108);
+        editor->setBrowserOpen (true);
+        browser.setCategoryIndex (-1);
+        browser.setSearch ({});
+        REQUIRE (editor->loadBankPreset (0));
+
+        // **The whole bank, by key, to the end and back** — the audition the ticket is about, driven the
+        // way a keyboard user drives it, with every single step checked: a step that highlighted a row
+        // without loading would pass a description of the panel and fail right here, at the row it did it
+        // on.
+        for (int index = 1; index < catalog.size(); ++index)
+        {
+            INFO ("stepping forward to slot " << index);
+            editor->keyPressed (juce::KeyPress (']'));
+            CHECK (loaded() == slotName (index));
+        }
+
+        for (int index = catalog.size() - 2; index >= 0; --index)
+        {
+            INFO ("stepping back to slot " << index);
+            editor->keyPressed (juce::KeyPress ('['));
+            CHECK (loaded() == slotName (index));
+        }
+
+        CHECK (editor->bankIndex() == 0);
+        std::fprintf (stderr, "\n[browser] drove the bank from slot 0 to slot %d and back by key: %d steps, "
+                              "each one a load\n", catalog.size() - 1, 2 * (catalog.size() - 1));
+
+        printBrowser (*editor);
+        printRender ("the browser, on the first preset of the bank", captureRender (*editor, "browser-first"));
+
+        // The same window with the browser **shut**. Everything outside the browser's rectangle must be
+        // pixel-identical: the browser is a surface over the page, and if it were painting anywhere else —
+        // or if opening it moved anything — these two renders would differ.
+        const auto open = editor->createComponentSnapshot (editor->getLocalBounds());
+        const auto browserBounds = browser.getBounds();
+
+        // **And the drawing went where the rectangles say it went.** This session has no eyes, so "the
+        // panel is drawn" is a measurement: a point inside each rectangle — chosen where no glyph is —
+        // must carry exactly the fill that part of the panel is made of. The browser's own coordinates are
+        // offset by its position in the window, which is itself one of the numbers being checked: if the
+        // panel were drawn somewhere other than `browserBounds`, these samples would land on the page.
+        {
+            const auto accentRow = ui::look::surface.overlaidWith (ui::look::accentBg);
+            const auto at = [&open, &browserBounds] (const juce::Rectangle<int>& r, const int dx)
+            {
+                return open.getPixelAt (browserBounds.getX() + r.getX() + dx,
+                                        browserBounds.getY() + r.getCentreY());
+            };
+            // JUCE's own `PixelARGB::blend` rounds where `Colour::overlaidWith` truncates, so a composited
+            // fill is allowed to be one unit off per channel; a plain fill is not allowed to be off at all.
+            const auto near = [] (const juce::Colour a, const juce::Colour b, const int tolerance)
+            {
+                return std::abs (static_cast<int> (a.getRed()) - static_cast<int> (b.getRed())) <= tolerance
+                    && std::abs (static_cast<int> (a.getGreen()) - static_cast<int> (b.getGreen())) <= tolerance
+                    && std::abs (static_cast<int> (a.getBlue()) - static_cast<int> (b.getBlue())) <= tolerance;
+            };
+
+            const auto cursorRow = browser.rowBounds (browser.rowOfIndex (browser.selectedIndex()));
+            const auto plainRow = browser.rowBounds (browser.rowOfIndex (browser.selectedIndex()) + 1);
+
+            REQUIRE_FALSE (cursorRow.isEmpty());
+            REQUIRE_FALSE (plainRow.isEmpty());
+
+            const auto search = at (browser.searchBounds(), 4);
+            const auto cursor = at (cursorRow, 2);
+            // The **selected** pill, whatever it is: `-1` is `All`, which is where a fresh panel is.
+            const auto pill = at (browser.categoryBounds (browser.categoryIndex()), 4);
+            const auto plain = at (plainRow, 2);
+
+            std::fprintf (stderr,
+                          "[browser] the render at the rectangles: search field %s, a plain row %s, the "
+                          "cursor's row %s, the selected pill %s (accent over the panel is %s)\n",
+                          search.toDisplayString (false).toRawUTF8(), plain.toDisplayString (false).toRawUTF8(),
+                          cursor.toDisplayString (false).toRawUTF8(), pill.toDisplayString (false).toRawUTF8(),
+                          accentRow.toDisplayString (false).toRawUTF8());
+
+            CHECK (near (search, ui::look::bg, 0));         // the field's own fill, exactly
+            CHECK (near (plain, ui::look::surface, 0));     // the panel's fill, one row down
+            CHECK (near (cursor, accentRow, 1));            // the cursor's row: the accent over the panel
+            CHECK (near (pill, accentRow, 1));              // the selected pill: the same tint
+            CHECK (cursor != plain);                        // and the row *is* told from the plain one
+        }
+
+        editor->setBrowserOpen (false);
+        const auto shut = editor->createComponentSnapshot (editor->getLocalBounds());
+
+        auto outside = 0;
+        auto differing = 0;
+
+        for (int y = 0; y < open.getHeight() && y < shut.getHeight(); ++y)
+            for (int x = 0; x < open.getWidth() && x < shut.getWidth(); ++x)
+                if (! browserBounds.contains (x, y))
+                {
+                    ++outside;
+
+                    if (open.getPixelAt (x, y) != shut.getPixelAt (x, y))
+                        ++differing;
+                }
+
+        std::fprintf (stderr, "[browser] browser-open against browser-shut: %d of %d pixels outside the "
+                              "browser's own rectangle differ\n", differing, outside);
+
+        CHECK (differing == 0);
+
+        editor->setBrowserOpen (true);
+
+        // Stepped to the end of the bank.
+        REQUIRE (editor->loadBankPreset (catalog.size() - 1));
+        printBrowser (*editor);
+        printRender ("the browser, on the last preset of the bank", captureRender (*editor, "browser-last"));
+
+        // A search narrowed to one row.
+        browser.setSearch (uniqueName);
+        CHECK (browser.visibleCount() == 1);
+        printBrowser (*editor);
+        printRender ("the browser, searched to a single match", captureRender (*editor, "browser-one"));
+
+        // And to none.
+        browser.setSearch ("zz-no-such-preset-zz");
+        CHECK (browser.visibleCount() == 0);
+        printBrowser (*editor);
+        printRender ("the browser, searched to nothing", captureRender (*editor, "browser-none"));
+    }
 }

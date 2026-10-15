@@ -26,6 +26,7 @@
 #include "factory_bank.h"
 
 #include "filter.h"
+#include "json.h"
 #include "modulation.h"
 #include "noise_osc.h"
 #include "preset_block.h"
@@ -35,6 +36,7 @@
 #include "warp.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <set>
 #include <string>
 #include <utility>
@@ -1631,6 +1633,112 @@ std::vector<std::string> tablesOf (const FactoryPreset& preset)
             tables.insert (value.text);
 
     return { tables.begin(), tables.end() };
+}
+
+//=======================================================================================
+// The manifest (ticket 55)
+
+BankManifest readBankManifest (const std::string_view json)
+{
+    BankManifest out;
+
+    const auto parsed = model::decodeJson (json);
+
+    if (! parsed.ok)
+    {
+        out.error = "the bank manifest is not readable JSON: " + parsed.error;
+        return out;
+    }
+
+    const auto* categories = parsed.value.find ("categories");
+
+    if (categories == nullptr || categories->type != model::JsonValue::Type::Array)
+    {
+        out.error = "the bank manifest names no categories";
+        return out;
+    }
+
+    for (const auto& category : categories->items)
+    {
+        if (! category.isString() || category.text.empty())
+        {
+            out.error = "the bank manifest has a category that is not a name";
+            return out;
+        }
+
+        out.categories.push_back (category.text);
+    }
+
+    if (out.categories.empty())
+    {
+        out.error = "the bank manifest names no categories";
+        return out;
+    }
+
+    // The provenance, shown as such rather than invented: a browser says where its bank came from.
+    out.origin = parsed.value.stringOr ("origin");
+    out.licence = parsed.value.stringOr ("licence");
+
+    const auto* presets = parsed.value.find ("presets");
+
+    if (presets == nullptr || presets->type != model::JsonValue::Type::Array)
+    {
+        out.error = "the bank manifest has no presets list";
+        return out;
+    }
+
+    // Built into a local list and handed over only once the whole manifest has been accepted: a reader
+    // that fails hands back an **error and nothing else**, never a half-built catalogue that a caller
+    // could browse by mistake.
+    std::vector<BankManifestPreset> parsedPresets;
+
+    for (const auto& entry : presets->items)
+    {
+        BankManifestPreset preset;
+        preset.name = entry.stringOr ("name");
+        preset.category = entry.stringOr ("category");
+        preset.path = entry.stringOr ("path");
+        preset.description = entry.stringOr ("description");
+        preset.sha256 = entry.stringOr ("sha256");
+
+        if (const auto* bytes = entry.find ("bytes"); bytes != nullptr && bytes->isNumber())
+            preset.bytes = static_cast<std::size_t> (bytes->number);
+
+        // A preset the browser cannot name, locate, or file under a category it knows is a preset the
+        // browser must not offer: an entry it cannot show is worse than an entry it does not have.
+        if (preset.name.empty() || preset.path.empty())
+        {
+            out.error = "the bank manifest has a preset with no name or no path";
+            return out;
+        }
+
+        if (std::find (out.categories.begin(), out.categories.end(), preset.category) == out.categories.end())
+        {
+            out.error = "the bank manifest files " + preset.name + " under \"" + preset.category
+                        + "\", which is not one of its categories";
+            return out;
+        }
+
+        parsedPresets.push_back (std::move (preset));
+    }
+
+    if (parsedPresets.empty())
+    {
+        out.error = "the bank manifest lists no presets";
+        return out;
+    }
+
+    out.presets = std::move (parsedPresets);
+    out.ok = true;
+    return out;
+}
+
+std::string manifestPathUnder (const std::string_view root, const BankManifestPreset& preset)
+{
+    if (root.empty())
+        return preset.path;
+
+    return (std::filesystem::path (root) / preset.path).lexically_normal().string();
 }
 
 } // namespace xerum::presets

@@ -1234,3 +1234,198 @@ shape, a matrix envelope moving a filter while the amplitude envelope shapes the
 up, the audio-rate sources, and a preset whose `kFM_OSC` warp renders differently from the same preset
 unwarped *and identically to it when the oscillator it names is silent*. That last pair is the assertion
 ticket 25's unit tests could not make.
+
+# Ticket 55 — moving through a hundred presets
+
+Ticket `54` authored 104 presets into `content/Factory/`. This ticket is the other half, and the dev's
+sentence was the brief: **a bank nobody can move through is a folder.** The four things the ticket names,
+and what each of them became:
+
+| the ask | what it is now |
+|---|---|
+| **categories as the first cut**, not a flat list of 104 | the manifest's own eight categories, in the manifest's own order (`category`: "in the order a player moves through them"), drawn as the composition strip's pills with the number of presets behind each; `All` is the ninth |
+| **previous/next for auditioning in place** | ◀ ▶ inside the header's preset field, and `[` / `]` from anywhere in the window. **A step loads**, so what you are hearing changes as you move, and either one repeats while held — which is how a hundred sounds actually get auditioned |
+| **search by name** | typing reaches the field; it says how many rows match and says `no match` when none does |
+| **the keyboard doing all of it** | ↑ ↓ step what the filter shows, ← → move between categories, letters search, Home/End go to the ends, Return or Escape closes, and `p` opens or closes the panel from anywhere |
+
+## Over the manifest, never over the filenames
+
+The browser's list is built from `<content root>/Factory/manifest.json` — the bank's own contract — and
+not from a directory listing. A listing would offer whatever happened to be on disk, including a file the
+loader rejects, and the ticket's rule is the opposite: **a preset the browser offers is one that loads.**
+
+The reader is `xerum::presets::readBankManifest` (in the bank's own module, `src/presets/factory_bank.cpp`,
+next to the directory, extension and manifest name it reads), so the browser and the bank cannot disagree
+about the shape of the bank. It is deliberately intolerant in one direction and tolerant in the other:
+unknown members are ignored, but a manifest with no `presets` list, a preset with no name or no path, or a
+preset filed under a category the manifest does not declare is **an error and an empty catalogue** — never
+a half-built one a caller could browse by mistake. `tests/model/factory_bank_test.cpp` holds it to the
+real file and to four damaged ones.
+
+## Two doors, and they must not look alike
+
+xerum has exactly one way in for a user's **own** preset: the `Import .SerumPreset…` button, which opens
+a file dialog on the reference's format and leaves what it could not honour in the report bar. The browser
+is the other thing entirely, and the ticket's requirement is that a user can tell. Four things carry it,
+each of them asserted rather than described:
+
+1. **the words.** The panel is titled `FACTORY`, its footer reads *"Factory bank — xerum's own presets.
+   Your Serum presets arrive through Import .SerumPreset…"*, and every name the panel offers is spelled
+   on the header field as `Category · Name`. A preset that arrived any other way has **no category in the
+   manifest**, so it has no prefix — the same field, told apart by whether it says where the preset is
+   filed;
+2. **the list.** Every entry the browser can offer is a `.xerumpreset` under `Factory/` — asserted over
+   the whole list, as a property of every entry, so it would fail for a row added anywhere;
+3. **the surface.** Import is an explicit file action that leaves a report in the bar at the bottom; the
+   browser is a panel over the page and leaves nothing behind;
+4. **the door.** The browser has **no file dialog at all**. Nothing in it can reach a file that did not
+   come from the manifest.
+
+The test that measures all four loads a `.SerumPreset` fixture through the import path and reads the
+header field back: it must carry no category and point at no row.
+
+## One code path: `loadPresetFromFile` now reads both of xerum's own formats
+
+The ticket asks that a preset selected in the browser load "through the product's own loader
+(`loadPresetFromFile`) … no second code path", and at the start of this ticket **that was not true**:
+`PresetState::loadPresetFile` read only the reference's container (`model::readContainer`), and a
+`.xerumpreset` is xerum's own block — `model::encodePresetBlock`, the bytes `getStateInformation`
+writes. The bank's own test loaded its files through `setStateInformation` for exactly that reason.
+
+So the ticket changed the loader rather than adding a second call beside it. `loadPresetFile` now tries
+`model::decodePresetBlock` **first** — a fixed-string comparison against the block header, so a
+reference container pays one `memcmp` — and falls through to the container reader. The two formats are
+told apart by the file's own magic, not by which call site opened it, and a file that carries xerum's
+magic and does not decode is reported *as a damaged xerum preset* rather than as "not a Serum container"
+(true, and not the thing to tell someone whose bank file is corrupt). One door, both formats.
+
+The consequence for the ticket: **the browser's loader is the same call the import button makes**, and
+the bank is read by the format the product already round-trips. `loadPresetFile`'s header now says both.
+
+## The composition is at capacity, so the browser is an overlay
+
+Ticket `53` packed the page into a window whose height is *derived from the page*, and its test measures
+the page against the viewport. A dropdown, a list or an overlay added to the composition would cost that
+fit, so the browser is not in the composition at all: it is a **sibling** of the composed page, placed
+over the strip and the page and hidden until it is asked for. `resized` positions it and the page is laid
+out below it, so opening the browser changes no section's height and no panel's bounds — and the test
+measures the page at both window sizes **with the browser open and with it shut** and requires the same
+number each time.
+
+The header's two arrows are the design's own wavetable-slot arrows at the design's own 16px, and they are
+laid out **inside the width the header already gave the preset field** — the same construction the design
+uses for its wavetable slot, whose field carries its own arrows. Nothing else on the header moved:
+
+| | 1080×1108 (the window it opens at) | 900×600 (the minimum) |
+|---|---|---|
+| header inner width | 1060 | 880 |
+| wordmark 84 + gap 6 + preset field 240 | 330 | 330 |
+| left for the coverage readout and the right-hand controls | 730 | 550 |
+| **coverage readout** | **278** | **98** |
+| import 168 + gap 8 + status 260 | 436 | 436 |
+| preset field, and each arrow inside it | 240×22, 16×16 | 240×22, 16×16 |
+| the composed page, browser open **and** shut | **1018** | **1144** |
+
+(The page at 900×600 is taller than that window — that is ticket `53`'s own finding about the *minimum*
+window, and the browser is measured against it rather than against a number it cannot reach.)
+
+If the space had genuinely not been there, this would have said so with the arithmetic instead of
+overflowing; it was there, because the design already puts arrows inside a field.
+
+## The panel, as rectangles
+
+Measured by `plugin/tests/interface_test.cpp` at 1080×1108 and printed, the way ticket `53` prints its
+composition. The panel covers `1080×1048` at `0,38` — the strip and the page, with the header above it
+(so the field and the arrows that step the bank stay usable while browsing) and the report bar below it
+(so what a load reported stays on screen):
+
+```
+heading  1060x16  @10,10          FACTORY, with "104 presets · 8 categories" as the design's tag
+search   1060x22  @10,30          the design's own field, caret in the accent
+pill All         29x20 @10,56     <- selected
+pill Bass        35x20 @43,56     ... and the manifest's other seven, in its order, each with its count
+list     1060x924 @10,80          46 rows of 20px
+row 0    1060x20  @10,80          Molten Sub                    (the cursor's row carries accent-bg)
+footer   1060x30  @10,1008        the selected preset's description, and the two-doors sentence
+```
+
+## Acceptance, measured
+
+```sh
+ctest --test-dir build-55 -j8                                  # every suite
+build-55/plugin/tests/xerum-plugin-tests "[browser]" -s        # the two cases this ticket adds
+```
+
+The ticket's warning was that a browser can pass every assertion that merely *describes* it. So every
+assertion this ticket adds is a **difference** — what changed when the gesture happened — and each of
+them fails for a browser that is a picture of a browser:
+
+| the claim | the measurement |
+|---|---|
+| stepping the bank loads the bank | all **104** slots loaded through `loadPresetFromFile`, each load's document naming the manifest's own preset, and **104 distinct documents** by parameter digest (the name is deliberately *not* in the digest) plus 104 distinct names |
+| and the sound changes | the bank's slot 0 against its slot 52, rendered through the engine the browser loaded them into: **channel difference 1.8818** (floor 0.01) |
+| a search that matches nothing shows nothing | `visibleCount() == 0`, `visibleRows()` empty, no row rectangle, **and the loaded document's digest is unchanged** — a filter that fails open is worse than no filter |
+| a search that matches one thing loads it | the unique query is *derived from the bank* (the longest name no other name contains), and the loaded document is that preset's, not the one that was playing when it was typed |
+| the categories are the manifest's, not the browser's opinion | the expected count per category is counted from the manifest **by a second parser** (JUCE's JSON) and compared with the rows; the rows are the manifest's own subsequence, and stepping wraps **within** the category |
+| the two doors | the list holds no `.SerumPreset`; the import button's text names it; and after importing a `.SerumPreset` fixture the header field carries **no category** and the browser points at no row |
+| the fit | the composed page is **1018** at 1080×1108 and **1144** at 900×600, each measured **with the browser open and with it shut** — the same number both times, at both sizes, with the header's rectangles above unchanged |
+| the browser changes nothing outside itself | the window rendered with the browser open against the same window with it shut: **0 of 64800 pixels outside the browser's own rectangle differ** |
+| the palette | **94.28 %** of the rendered window is exactly a `ui::look` token; the largest non-token colour is `rgb(47,38,26)` at 1.79 % — `accentBg`'s 10 % alpha composited over `surface`, which is what the design's `--accent-bg` *is* (`rgba(232,155,48,0.10)`) |
+| **the panel drew where its rectangles say** | a point inside each rectangle, chosen where no glyph is, carries exactly that part's fill: the search field is `ui::look::bg` (`111110`), a row that is not the cursor's is the panel's `surface` (`1A1917`), and the cursor's row **and** the selected pill are both the accent composited over the panel (`2F261A`, against `Colour::overlaidWith`'s `2F2619` — one unit of JUCE's own blend rounding). This is the closest a session with no eyes gets to looking at it |
+| the VST3, as a host sees it | `pluginval --strictness-level 10 --validate build-55/plugin/xerum_artefacts/Release/VST3/xerum.vst3` → **SUCCESS**, with its `Editor`, `Open editor whilst processing` and `Editor Automation` tests run (they construct, show, resize and destroy this editor, which is what the browser is a child of) |
+| the standalone, launched | its window read from the window server: **1082×1136 at (739, 219)**, layer 0, owner `xerum` — the editor's own 1080×1108 plus the 1 px frame and the 28 px title bar, which is ticket `53`'s measurement reproduced by this build. Measured at 12:32 on the build that first carried the browser, field and editor wiring; the re-launch after the last three cleanups did **not** put a window up (see below) |
+
+The renders at the four steps (the first preset, the last, a search narrowed to one, a search narrowed to
+none) are written as PNGs to `<build>/browser-evidence/` by that case — 1080×1108, the window the host
+opens — and copied to `.scratch/xerum/evidence/browser/` with the ticket, so the drawing can be looked at
+rather than only asserted. **That is the half of the acceptance this session could not check itself**: a
+person has to look at them.
+
+## Assertions that became false were replaced with reasons
+
+**None of ticket `53`'s assertions changed at all** — its fit case, its colour-id tree walk and its render
+measurement pass unmodified, and the diff of `plugin/tests/interface_test.cpp` against the previous ticket is
+four added includes and one appended block, with **no deletions**. That is the strongest form of the
+requirement: nothing was replaced because nothing that ticket asserted became false. Two things did move, and
+both are in the editor's *drawing* code rather than in what is asserted about it:
+
+* **the header's preset field is no longer painted by the editor's `paint`.** It is a component
+  (`ui::PresetField`), because it is now clickable and carries the two arrows. Its rectangle is the one the
+  header laid out before — the arrows are inside that width — and both the drawing and the layout now read a
+  single `HeaderLayout`, so what the evidence prints is what was drawn;
+* **the header's rectangles became numbers a case can read** (`coverage` 278 at the default window, by the
+  arithmetic above) rather than ones inferred from the drawing code.
+
+## What could not be seen, and is not claimed
+
+* **The last standalone re-launch never put a window up.** The 12:32 measurement above (1082×1136 at
+  739,219) is real, taken with the browser, the field and the editor wiring already in the build; the
+  re-launch after the final three cleanups (two unused `BankCatalog` fields removed, `kRowHeight` made
+  private, and the browser/drawer exclusion) sat with **no window for over a minute** and was killed.
+  `sample` puts its main thread in the processor's **constructor** —
+  `applyDocument → resolveContent → TableLibrary::loadTable → directory_iterator → open$NOCANCEL` — with
+  **no frame of this ticket's code anywhere in the stack**, so it is the init document's content
+  resolution blocking on a directory open, not the browser. `[INFERENCE]`: the source content root is
+  under `~/Desktop`, which macOS guards with a consent prompt, and a rebuilt ad-hoc-signed binary is
+  re-asked; a prompt nobody can answer is consistent with a blocked `open()` and with the crash reports
+  `xerum-host` left in the same window. What is **not** in doubt: `ctest` (356/356, 166.63 s) and
+  `pluginval` level 10 (SUCCESS) both ran on that same final build, and neither reaches that code path.
+* **A pixel capture of the running standalone's window.** The window is there and its geometry was read
+  from the window server, but **none of the three ways to take its picture works on this machine**: both
+  `screencapture -l<id>` and `screencapture -R<rect>` report *"could not create image"*, and
+  `CGWindowListCreateImage` (resolved by `dlsym`, since the macOS 27 SDK marks it obsoleted) returns a
+  correctly-sized image that is **100 % one colour** — Screen Recording permission is not granted to this
+  session's tools. `osascript` cannot drive the window either: *"osascript does not have permission to
+  send keystrokes"*, so the browser could not be opened **in the running product** by a script. The four
+  renders above are therefore from the product's own paint path (`createComponentSnapshot`) on the same
+  editor, at the same size the standalone's window measures, and that difference is stated rather than
+  papered over. The capture tool is `.scratch/xerum/tools/window-capture.swift` (local, not committed).
+* **Whether browsing is *pleasant*.** Nothing here can say. What is asserted is that a step changes what
+  is loaded, that the keyboard reaches every gesture without a mouse, that a search narrows to the row it
+  should, and that nothing the design fixed moved. Whether the panel is the right size to browse
+  comfortably is the dev's call.
+* **Whether the presets sound good.** Ticket `54`'s suite renders them and refuses two that render the
+  same; no assertion in this ticket or that one says a preset is worth playing.
+* **Whether the panel's own drawing looks right.** The session has no eyes: the PNGs above were produced
+  from JUCE's paint path and are printed with their palette shares and their rectangles, and that is the
+  whole of what can be said here.

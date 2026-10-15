@@ -26,6 +26,19 @@
 // fraction of the schema's leaves, and the interface says so on screen instead of implying that what is
 // shown is all there is.
 //
+// ## Ticket `55`: the bank, and the two doors it must not blur
+//
+// Ticket `54` authored a factory bank of 104 presets; ticket `55` is the other half, so the header's
+// preset field is a **component** (`ui::PresetField`) carrying the bank's two stepper arrows inside its
+// own width, and `ui::PresetBrowser` is a panel over the strip and the page — a sibling of the composed
+// page, so opening it moves nothing and the fit ticket `53` measured is untouched. A step **loads**,
+// through `XerumAudioProcessor::loadPresetFromFile` — the same call the import button makes, which is why
+// ticket `55` also taught that loader to read xerum's own block as well as the reference's container.
+//
+// The distinction the ticket requires be visible is the field's own text: a factory preset is spelled
+// `Category · Name`, because the category comes from the **manifest** that files it, and a preset that
+// arrived any other way carries no category at all. `plugin/Source/PresetBrowser.h` is the whole of it.
+//
 // ## The editor must not exist until a host opens it
 //
 // The headless harness is how the reference is driven and how this plugin is validated, so nothing here
@@ -44,6 +57,7 @@
 #include "ModulationMatrixView.h"
 #include "ParameterPanels.h"
 #include "PoleZeroPlane.h"
+#include "PresetBrowser.h"
 #include "SectionStrip.h"
 
 #include <atomic>
@@ -58,7 +72,8 @@ namespace xerum::plugin
 class XerumAudioProcessor;
 
 class XerumAudioProcessorEditor final : public juce::AudioProcessorEditor,
-                                        private juce::ChangeListener
+                                        private juce::ChangeListener,
+                                        private juce::KeyListener
 {
 public:
     explicit XerumAudioProcessorEditor (XerumAudioProcessor& processor);
@@ -168,15 +183,77 @@ public:
 
     const juce::TextButton& importButton() const { return import_; }
 
+    //==============================================================================
+    // Ticket `55`: moving through the bank.
+    //
+    // The bank is read once, at construction, from the manifest the first content root carries; the
+    // header's preset field is the way in, `[` and `]` step it from anywhere, and a preset chosen here is
+    // loaded through `XerumAudioProcessor::loadPresetFromFile` — the same call the import button makes,
+    // so there is no second code path.
+
+    /// The header's preset field: the loaded preset's name, and the two arrows that step the bank.
+    const ui::PresetField& presetField() const { return presetField_; }
+    ui::PresetField& presetField() { return presetField_; }
+
+    /// The browser: an overlay over the strip and the page, hidden until it is asked for.
+    const ui::PresetBrowser& browser() const { return browser_; }
+    ui::PresetBrowser& browser() { return browser_; }
+
+    /// The bank as the manifest describes it. `ok == false` is a machine with no bank.
+    const ui::BankCatalog& bankCatalog() const { return catalog_; }
+
+    /// The bank slot the loaded preset came from, or -1 when what is loaded is not one of the bank's.
+    int bankIndex() const { return bankIndex_; }
+
+    bool browserOpen() const { return browser_.isVisible(); }
+    void setBrowserOpen (bool open);
+
+    /// Step one preset through the **whole bank**, in the manifest's order, wrapping at both ends. One
+    /// implementation, shared by the header's arrows and by `[` / `]`.
+    bool stepPreset (int step);
+
+    /// Load a bank slot through the product's own loader and read the result back into the interface.
+    /// The browser offers a preset only from the manifest, so this is the whole of "a preset chosen in the
+    /// browser is exactly a preset loaded any other way".
+    bool loadBankPreset (int index);
+
+    /// The header's rectangles, as they were laid out — the numbers the fit is made of, so the evidence
+    /// reads them rather than guessing them from the drawing code.
+    struct HeaderLayout
+    {
+        juce::Rectangle<int> wordmark;
+        juce::Rectangle<int> preset;
+        juce::Rectangle<int> coverage;
+        juce::Rectangle<int> import;
+        juce::Rectangle<int> status;
+    };
+    const HeaderLayout& headerLayout() const { return headerLayout_; }
+
     void paint (juce::Graphics& graphics) override;
     void resized() override;
 
+    /// Ticket `55`'s gesture. `[` and `]` step the bank, `p` opens the browser — from anywhere in the
+    /// window. Public because `juce::Component::keyPressed` is public and this is the same function: a
+    /// host that adds the editor bare calls it, and so do the tests. The editor is also a `KeyListener`
+    /// on its own top-level component (see below), because JUCE delivers a key by walking up the parent
+    /// chain from whatever has focus and the top-level is where that walk arrives.
+    bool keyPressed (const juce::KeyPress& key) override;
+    bool keyPressed (const juce::KeyPress& key, juce::Component* origin) override;
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
+
+    void parentHierarchyChanged() override;
+    bool handleGlobalKey (const juce::KeyPress& key);
+
     void importPreset();
     void updateSectionSeverity (const model::ImportReport& report);
     void updateModulationArcs();
     void updateWavetableHeads();
+
+    /// Read the loaded document back into the header and the browser: the name, the category the bank
+    /// files it under (or none, for a preset that is not one of the bank's), and the browser's cursor.
+    void updateBankCursor();
 
     /// The name the design's wavetable field shows for a slot: the preset's own asset name, `inline` for a
     /// preset carrying its table in its own data, or empty (`— off —`) for a slot with neither.
@@ -205,6 +282,23 @@ private:
     ui::ImportReportView reportView_;
     juce::Viewport reportViewport_;
     ui::ReportBar reportBar_;
+
+    /// Ticket `55`: the header's preset field, and the browser over the strip and the page. The browser is
+    /// **added last**, so it is the topmost child — a surface over the page rather than a window, which is
+    /// what keeps it out of the layout: `resized` places it over the page area and it changes no panel's
+    /// bounds, so the fit ticket `53` measured is untouched whether it is open or shut.
+    ui::PresetField presetField_;
+    ui::PresetBrowser browser_;
+
+    /// The bank, as the manifest describes it, and which slot the loaded preset came from.
+    ui::BankCatalog catalog_;
+    int bankIndex_ { -1 };
+
+    HeaderLayout headerLayout_;
+
+    /// The component the editor listens to keys on — its own top-level, so the gesture works wherever the
+    /// focus is. A safe pointer, because it is a component this editor does not own.
+    juce::Component::SafePointer<juce::Component> keyListenerHost_;
 
     /// The model modules of each section, keyed the way the strip's dots are.
     std::vector<std::vector<juce::String>> sectionModules_;

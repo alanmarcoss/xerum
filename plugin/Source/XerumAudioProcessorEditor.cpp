@@ -196,6 +196,31 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
     status_.setColour (juce::Label::textColourId, ui::look::fgMuted);
     addAndMakeVisible (status_);
 
+    //==============================================================================
+    // Ticket `55`: the bank, the field that is the way into it, and the browser itself.
+    //
+    // The bank is read **once**, here, from the manifest the first content root carries — the same roots
+    // the wavetables resolve through, in the same order. Reading it at construction rather than per paint
+    // is what makes "the browser lists what the manifest lists" a fact about a moment rather than about a
+    // filesystem that might change under a repaint.
+    catalog_ = ui::readBankCatalog (processor_.contentRoots());
+
+    presetField_.onStep = [this] (const int step) { stepPreset (step); };
+    presetField_.onOpen = [this] { setBrowserOpen (! browser_.isVisible()); };
+    addAndMakeVisible (presetField_);
+
+    browser_.setCatalog (catalog_);
+
+    // A selection in the browser **is** a load, through the product's own loader: the same
+    // `loadPresetFromFile` the import button calls and the host's preset mechanism ends in. There is no
+    // second code path, and the browser therefore cannot offer a preset the loader would reject — its
+    // list is the manifest's, and the manifest is the bank the loader was tested against.
+    browser_.onLoad = [this] (const int index) { loadBankPreset (index); };
+    browser_.onClose = [this] { setBrowserOpen (false); };
+
+    // Added last, so it is the topmost child: a surface over the page, not a window over the application.
+    addChildComponent (browser_);
+
     setResizable (true, true);
     setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
 
@@ -220,7 +245,11 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
 XerumAudioProcessorEditor::~XerumAudioProcessorEditor()
 {
-    // Detach before anything is torn down: a component must not outlive the look-and-feel it points at.
+    // The key listener lives on a component this editor does not own, so it is removed before anything
+    // else is torn down. Then the look-and-feel: a component must not outlive the one it points at.
+    if (keyListenerHost_ != nullptr)
+        keyListenerHost_->removeKeyListener (this);
+
     setLookAndFeel (nullptr);
 
     processor_.removeChangeListener (this);
@@ -339,6 +368,12 @@ void XerumAudioProcessorEditor::scrollToSection (const int index)
 
 void XerumAudioProcessorEditor::setReportDrawerOpen (const bool open)
 {
+    // The browser and the drawer are both surfaces over the page, and the browser is the topmost child, so
+    // a drawer opened *under* it would look like nothing happened. The two are therefore mutually
+    // exclusive: asking for one puts the other away, which is what the user asked for by clicking there.
+    if (open && browser_.isVisible())
+        setBrowserOpen (false);
+
     reportBar_.setDrawerOpen (open);
     reportViewport_.setVisible (open);
     resized();
@@ -430,6 +465,11 @@ void XerumAudioProcessorEditor::refreshReport()
 
     // The strip's dots: where the import went wrong, on the section it went wrong in.
     updateSectionSeverity (report);
+
+    // Ticket `55`: the header's preset field and the browser's cursor, from the loaded document rather
+    // than from whatever was clicked — so a state restore, a host preset change and a browser selection
+    // all land on the same reading.
+    updateBankCursor();
 }
 
 void XerumAudioProcessorEditor::updateModulationArcs()
@@ -508,6 +548,128 @@ void XerumAudioProcessorEditor::updateSectionSeverity (const model::ImportReport
     }
 }
 
+void XerumAudioProcessorEditor::updateBankCursor()
+{
+    // Which slot the loaded document came from is a question the **catalogue** answers, by name — never a
+    // remembered index. A preset that arrived through the import path, or through the host's own preset
+    // mechanism, is not one of the bank's, and the interface says so by carrying no category.
+    bankIndex_ = catalog_.indexOfName (presetName_);
+
+    presetField_.setName (presetName_);
+    presetField_.setFactoryCategory (
+        bankIndex_ >= 0
+            ? juce::String (catalog_.presets[static_cast<std::size_t> (bankIndex_)].category)
+            : juce::String());
+
+    browser_.setSelectedIndex (bankIndex_, false);
+}
+
+bool XerumAudioProcessorEditor::loadBankPreset (const int index)
+{
+    if (index < 0 || index >= catalog_.size())
+        return false;
+
+    const auto file = catalog_.fileFor (index);
+
+    // **The product's own loader.** Not a second decode, not a shortcut into the document: the same call
+    // the import button makes, so a preset chosen in the browser is exactly a preset loaded any other way,
+    // and a preset the loader rejects is one the browser stops offering by loading it and failing.
+    const auto result = processor_.loadPresetFromFile (file);
+
+    if (! result.wasOk())
+    {
+        status_.setText ("could not load " + file.getFileName(), juce::dontSendNotification);
+        return false;
+    }
+
+    // Read back rather than echo: `refreshReport` takes the name and the report from the document the
+    // loader produced, and the browser's cursor from the catalogue. The status line is the one thing that
+    // knows this arrived by a step rather than by an import.
+    refreshReport();
+    status_.setText ("factory: " + file.getFileName(), juce::dontSendNotification);
+
+    return true;
+}
+
+bool XerumAudioProcessorEditor::stepPreset (const int step)
+{
+    // One implementation of the ring, in the browser, so the header's arrows and `[` / `]` cannot drift
+    // apart — and so a step from "nothing loaded" is defined once: forward starts at the first preset,
+    // backward at the last.
+    return browser_.stepPreset (step);
+}
+
+void XerumAudioProcessorEditor::setBrowserOpen (const bool open)
+{
+    // Opening a surface over the page puts the other one away: the two are the same kind of thing — a
+    // panel the user asked for — and the browser is the topmost child, so a drawer left open under it
+    // would be invisible. Asking for either is asking for it to be the one on screen.
+    if (open && reportBar_.drawerOpen())
+        setReportDrawerOpen (false);
+
+    browser_.setVisible (open);
+
+    // Focus follows the surface: with the browser open, the keyboard is the browser's (typing searches,
+    // ↑ and ↓ audition); shutting it hands the focus back to nothing in particular, which is what JUCE
+    // does with the focus of a component that has just been hidden.
+    if (open)
+        browser_.grabKeyboardFocus();
+
+    repaint();
+}
+
+bool XerumAudioProcessorEditor::handleGlobalKey (const juce::KeyPress& key)
+{
+    // A host's own shortcuts are not ours to swallow.
+    const auto modifiers = key.getModifiers();
+
+    if (modifiers.isCommandDown() || modifiers.isCtrlDown() || modifiers.isAltDown())
+        return false;
+
+    const auto code = key.getKeyCode();
+
+    // `[` / `]`: the previous/next gesture, from anywhere in the window — including while the browser is
+    // open and focused, which is why the browser hands these two keys on rather than treating them as
+    // search text. Holding either one repeats, which is how a hundred sounds get auditioned in place.
+    if (code == '[' || code == ']')
+        return stepPreset (code == '[' ? -1 : 1);
+
+    if (code == 'p')
+    {
+        setBrowserOpen (! browser_.isVisible());
+        return true;
+    }
+
+    return false;
+}
+
+bool XerumAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    return handleGlobalKey (key);
+}
+
+bool XerumAudioProcessorEditor::keyPressed (const juce::KeyPress& key, juce::Component*)
+{
+    return handleGlobalKey (key);
+}
+
+void XerumAudioProcessorEditor::parentHierarchyChanged()
+{
+    // JUCE delivers a key by walking from the focused component **up** the parent chain, asking each
+    // component's own key listeners and then the component itself, and stopping at the first `true`. So
+    // the listener goes on the top-level component: that is where the walk arrives when no control
+    // consumed the key, and it is what makes `[` and `]` work with the focus anywhere at all. The two
+    // `keyPressed` overrides stay for the case where the editor *is* the top-level — a host that adds it
+    // bare, and every test.
+    if (keyListenerHost_ != nullptr)
+        keyListenerHost_->removeKeyListener (this);
+
+    keyListenerHost_ = getTopLevelComponent();
+
+    if (keyListenerHost_ != nullptr)
+        keyListenerHost_->addKeyListener (this);
+}
+
 void XerumAudioProcessorEditor::importPreset()
 {
     // The decision ticket `31` names. xerum's own presets arrive through the host's preset mechanism —
@@ -560,27 +722,18 @@ void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
     // The wordmark: the design's logo mark — the accent, bold, letter-spaced.
     graphics.setColour (ui::look::accent);
     graphics.setFont (ui::look::bodyFont (ui::look::type::logo, true).withExtraKerningFactor (0.16f));
-    graphics.drawText (juce::String (identity::kName).toUpperCase(), header.removeFromLeft (kWordmarkWidth),
+    graphics.drawText (juce::String (identity::kName).toUpperCase(), headerLayout_.wordmark,
                        juce::Justification::centredLeft, false);
 
-    // The preset field: a monospaced name in a `bg` box, so what is loaded is always on screen.
-    header.removeFromLeft (6);
-
-    auto field = header.removeFromLeft (juce::jmin (240, header.getWidth() / 3)).reduced (0, 8);
-    graphics.setColour (ui::look::bg);
-    graphics.fillRoundedRectangle (field.toFloat(), static_cast<float> (ui::look::radiusPanel));
-    graphics.setColour (ui::look::border);
-    graphics.drawRoundedRectangle (field.toFloat().reduced (0.5f), static_cast<float> (ui::look::radiusPanel), 1.0f);
-    graphics.setColour (ui::look::fgDim);
-    graphics.setFont (ui::look::monoFont (10.0f));
-    graphics.drawText (presetName_.isEmpty() ? juce::String ("init") : presetName_,
-                       field.reduced (8, 0), juce::Justification::centredLeft, true);
+    // **The preset field is a component of its own** (ticket `55`), so it is drawn by `ui::PresetField`:
+    // the same `bg` box the design's header carries, with the design's two 16px arrows inside it and the
+    // field itself as the way into the browser. Its rectangle is the header's own — the arrows are laid
+    // out **within** the width the field already had, so nothing else on the header moved.
 
     // **The honest measure of the gap**, on screen: how many of the schema's leaves this build binds. The
     // count is the bridge's own length, so it cannot drift from what is actually on the composition.
     {
-        const auto reserved = kStatusWidth + kImportWidth + 24;
-        auto coverage = header.removeFromLeft (juce::jmax (0, header.getWidth() - reserved));
+        auto coverage = headerLayout_.coverage;
         const auto counts = juce::String (boundControlCount()) + " of " + juce::String (schemaLeaves_);
         const auto font = ui::look::monoFont (10.0f);
         const auto countsWidth = juce::GlyphArrangement::getStringWidth (font, counts);
@@ -600,11 +753,41 @@ void XerumAudioProcessorEditor::resized()
     auto area = getLocalBounds();
 
     auto header = area.removeFromTop (kHeaderHeight).reduced (kMargin, 8);
-    header.removeFromLeft (kWordmarkWidth + 6 + juce::jmin (240, header.getWidth() / 3));
 
-    import_.setBounds (header.removeFromRight (juce::jmin (kImportWidth, juce::jmax (120, header.getWidth() / 3))));
-    header.removeFromRight (8);
-    status_.setBounds (header.removeFromRight (juce::jmin (kStatusWidth, juce::jmax (0, header.getWidth()))));
+    // The header, laid out once and read by the drawing too, so the rectangles the evidence reports are
+    // the rectangles that were drawn. Ticket `55` put the bank's two stepper arrows **inside the preset
+    // field's own width**, which is why every other rectangle here is exactly ticket `53`'s.
+    {
+        constexpr int kReserved = kStatusWidth + kImportWidth + 24;
+
+        headerLayout_.wordmark = header.removeFromLeft (kWordmarkWidth);
+        header.removeFromLeft (6);
+        headerLayout_.preset = header.removeFromLeft (juce::jmin (240, header.getWidth() / 3));
+
+        // What the header has left after the wordmark and the field: the coverage readout takes its middle,
+        // and the two right-hand controls come out of the same full width they came out of before.
+        const auto remaining = header;
+
+        headerLayout_.coverage = remaining.withWidth (juce::jmax (0, remaining.getWidth() - kReserved));
+
+        auto right = remaining;
+        headerLayout_.import =
+            right.removeFromRight (juce::jmin (kImportWidth, juce::jmax (120, right.getWidth() / 3)));
+        right.removeFromRight (8);
+        headerLayout_.status =
+            right.removeFromRight (juce::jmin (kStatusWidth, juce::jmax (0, right.getWidth())));
+
+        presetField_.setBounds (headerLayout_.preset);
+        import_.setBounds (headerLayout_.import);
+        status_.setBounds (headerLayout_.status);
+    }
+
+    // Ticket `55`: the browser covers the strip and the page — not the header, so the field and the arrows
+    // that step the bank stay where they are and stay usable, and not the report bar, so what a load
+    // reported stays on screen while browsing. It is a **sibling** of the page rather than a part of it:
+    // it is placed here and the composed page is laid out below, so opening it changes no section's height
+    // and no panel's bounds. Ticket `53`'s fit is the page's, and the browser does not enter it.
+    browser_.setBounds (area.withTrimmedBottom (kReportBarHeight));
 
     strip_.setBounds (area.removeFromTop (kStripHeight));
 

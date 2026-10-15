@@ -47,7 +47,13 @@ struct LoadedPreset
     int reportEntriesFromModel { 0 };
 };
 
-/// Read a `.SerumPreset` (or any container) into a document plus its report.
+/// Read **a preset file** into a document plus its report.
+///
+/// Both of xerum's own two formats arrive here, told apart by their bytes rather than by their extension:
+/// a `.xerumpreset` is xerum's own block (the factory bank, ticket `54`), and a `.SerumPreset` is the
+/// reference's container (ticket `32`'s read-only import). Ticket `55` made that a requirement rather
+/// than a convenience — a preset chosen in the browser is loaded through the same call as one imported,
+/// so there is one door and it recognises both.
 ///
 /// Never throws. The import contract's first clause is "MUST not fail, whatever the file contains", so a
 /// damaged file is an error string and an empty document — and the caller surfaces it, because a preset

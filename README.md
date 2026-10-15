@@ -245,6 +245,24 @@ takes. If the bank is absent, the product simply has no factory presets; nothing
 The rules the bank is held to, and how they are enforced, are in
 [docs/content-policy.md](docs/content-policy.md).
 
+**Moving through it.** The header carries a preset field — the design's own field, at its own size — and
+clicking it opens the bank as a panel over the page:
+
+* **the categories are the first cut**: `All` plus the manifest's own eight, in the order the manifest
+  puts them in, each with the number of presets behind it;
+* **◀ and ▶ step the bank**, and so do the keyboard's `[` and `]` from anywhere in the window. Either
+  one repeats when held, which is how a hundred sounds get auditioned: **a step loads**, so what you are
+  hearing changes as you move;
+* inside the panel, **↑ and ↓** step what the current filter is showing, **← and →** move between
+  categories, **typing** searches by name (the field says how many match, and says `no match` when none
+  does), and **Return** or **Escape** closes it. `p` opens or closes the panel from anywhere.
+
+The field shows `Category · Name` for a factory preset and just the name for anything else, which is the
+one visible sign of a real distinction: **the factory bank and your own Serum presets arrive through two
+different doors.** This panel lists the bank — read from the manifest, so every row is a preset the
+loader accepts — and it has no file dialog at all. Your own presets come in through
+**Import .SerumPreset…**, below.
+
 ## Getting a preset in
 
 Open the plugin's interface — the standalone window, or the plugin editor in your host — and press
@@ -261,7 +279,9 @@ report is on screen the whole time, as a bar that opens a drawer:
   and reason, with counts per severity, and the device strip marks the pages whose modules the report
   named so a half-loaded preset is located where it happened.
 
-Presets stay where you keep them; xerum does not manage a preset library. Your host's own preset
+Your own presets stay where you keep them: the panel above browses **xerum's own bank**, read from its
+manifest, and xerum manages no library of yours — this button is the only way a file of your own comes
+in, and it is the only surface that names the reference's extension. Your host's own preset
 mechanism stores **xerum's state block**, which round-trips byte-identically, including the parameters
 of a reference preset that the schema does not describe (`plugin/tests/state_test.cpp`, ticket `30`).
 Exporting a `.SerumPreset` is not offered: it needs structure the model deliberately never held.

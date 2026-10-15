@@ -26,6 +26,7 @@ juce_add_plugin(xerum
 set(XERUM_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ParameterBridge.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/PresetState.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/PresetBrowser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/XerumAudioProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/XerumAudioProcessorEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/InterfaceLook.cpp
@@ -56,10 +57,15 @@ target_compile_definitions(xerum PRIVATE
 
 # `xerum_model` is pure C++ (no JUCE) and `xerum_dsp`/`xerum_content` likewise; the plugin is the only
 # place the two worlds meet, which is what keeps the format and DSP suites runnable without a host.
+#
+# `xerum_presets` (ticket `54`) is the factory bank's own catalogue — its directory, its extension, its
+# manifest name and, since ticket `55`, the manifest reader the browser is built over. Linking it is what
+# keeps "the bank lives at `Factory/manifest.json`" a statement in one place rather than two.
 target_link_libraries(xerum PRIVATE
     xerum_model
     xerum_dsp
     xerum_content
+    xerum_presets
     juce::juce_audio_utils
     juce::juce_recommended_config_flags)
 

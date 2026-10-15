@@ -10,6 +10,7 @@
 #include "preset_block.h"
 #include "schema.h"
 
+#include <cstring>
 #include <sstream>
 
 namespace xerum::plugin
@@ -72,6 +73,41 @@ LoadedPreset loadPresetFile (const juce::File& file)
 
     const auto* data = static_cast<const std::byte*> (block.getData());
     const std::span<const std::byte> bytes { data, block.getSize() };
+
+    //==========================================================================
+    // **xerum's own block first**, and the reason is ticket `55`.
+    //
+    // The factory bank (ticket `54`) ships in the product's own format — `model::encodePresetBlock`, the
+    // same bytes `getStateInformation` writes — and the browser loads a bank file through **this**
+    // function, `loadPresetFromFile`, which is the same call the import button makes. So this one door
+    // has to recognise both formats, and it decides which it is holding by the file's own magic rather
+    // than by which call site opened it: there is one code path, and the bytes say what they are.
+    //
+    // Tried first because the check is a fixed-string comparison against the block header and bails out
+    // immediately for anything else, so the reference's containers pay one `memcmp`.
+    {
+        const auto block_ = model::decodePresetBlock (bytes, model::kPresetBlockMagic,
+                                                     model::kPresetBlockFormat);
+
+        if (block_.ok)
+        {
+            result.ok = true;
+            result.document = block_.document;
+            result.report = block_.report;
+            result.reportEntriesFromModel = block_.reportEntriesFromModel;
+            return result;
+        }
+
+        // It carries our magic and did not decode: a damaged xerum preset. Saying so is worth more than
+        // handing it to the container reader, which would truthfully report that it is not a Serum
+        // container — true, and not the thing to tell someone whose factory bank file is corrupt.
+        if (block.getSize() >= model::kPresetBlockMagic.size()
+            && std::memcmp (data, model::kPresetBlockMagic.data(), model::kPresetBlockMagic.size()) == 0)
+        {
+            result.error = block_.error;
+            return result;
+        }
+    }
 
     try
     {

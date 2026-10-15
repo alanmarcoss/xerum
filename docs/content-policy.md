@@ -59,8 +59,12 @@ which turns "find the factory bank" into a search rather than a guess.
 The same place every other asset is found: the content roots, in the order the import contract's §5
 states — a user-configured root, the reference's tree if present, xerum's application-support
 directory, and the source tree in a development checkout. A preset file is then loaded through the
-product's **own** loader (`XerumAudioProcessor::setStateInformation`), exactly as a host's state
-restore is, which is why the bank needs no new reader.
+product's **own** loader — either `XerumAudioProcessor::setStateInformation`, exactly as a host's state
+restore is, or, since ticket `55`, `XerumAudioProcessor::loadPresetFromFile`, the door the browser uses
+and the one the import button uses. Both reach the same reader: `model::decodePresetBlock`, which is why
+the bank needs no reader of its own. Ticket `55` is the reason a *file* is read that way too — a preset
+chosen in the browser had to be loaded through the same call as one imported, so `loadPresetFile` now
+tells the two formats apart by their magic rather than by which call site opened them.
 
 **If the bank is absent** — a build with no content directory, or a user who removed it — the search
 finds nothing, and that is the honest answer: no factory presets. Nothing else depends on its presence;
