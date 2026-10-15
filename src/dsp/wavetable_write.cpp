@@ -879,6 +879,210 @@ const std::vector<TableSpec>& starterLibrary()
           .interpolation = FrameInterpolation::Linear,
           .sixteenBit = false },
 
+        // ------------------------------------------------------------------------------------------
+        // The character tables. The five above are the shapes every synth has; these are the ones the
+        // factory bank is built out of, and each is a *morph*: a single axis of change the preset's
+        // table position reads. Written as formulas here rather than captured from anywhere, which is
+        // what makes the bank ours (docs/content-policy.md).
+        //
+        // Two conventions, both so that a preset can be authored against them without measuring:
+        //
+        //   * frames are `FrameInterpolation::Linear`, so a fractional table position crossfades and a
+        //     whole-numbered one picks a frame;
+        //   * the last frame is the extreme of the sweep, and `Wavetable::interpolated` clamps a position
+        //     at or beyond `frameCount - 1`, so a preset's position runs 1..frameCount-1.
+        // ------------------------------------------------------------------------------------------
+
+        { .name = "Harmonic Sweep",
+          .relativePath = "xerum/Harmonic Sweep.wav",
+          .formula = "sum(sin(pi*x), sin(2*pi*x)*min(1,2*y), sin(3*pi*x)*max(0,3*y-1), "
+                     "sin(5*pi*x)*max(0,2*y-1), sin(8*pi*x)*max(0,2*y-1.5))*0.25",
+          .description = "Additive: a pure sine whose second, third, fifth and eighth harmonics fade in "
+                         "across the frames, so the position is a brightness control.",
+          .frameCount = 24,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Formant Sweep",
+          .relativePath = "xerum/Formant Sweep.wav",
+          .formula = "(sin(pi*x)*exp(-pow((1-(1+13*y))/1.5,2)) + sin(2*pi*x)*exp(-pow((2-(1+13*y))/1.5,2)) "
+                     "+ sin(3*pi*x)*exp(-pow((3-(1+13*y))/1.5,2)) + sin(4*pi*x)*exp(-pow((4-(1+13*y))/1.5,2)) "
+                     "+ sin(5*pi*x)*exp(-pow((5-(1+13*y))/1.5,2)) + sin(6*pi*x)*exp(-pow((6-(1+13*y))/1.5,2)) "
+                     "+ sin(7*pi*x)*exp(-pow((7-(1+13*y))/1.5,2)) + sin(8*pi*x)*exp(-pow((8-(1+13*y))/1.5,2)) "
+                     "+ sin(9*pi*x)*exp(-pow((9-(1+13*y))/1.5,2)) + sin(10*pi*x)*exp(-pow((10-(1+13*y))/1.5,2)) "
+                     "+ sin(11*pi*x)*exp(-pow((11-(1+13*y))/1.5,2)) + sin(12*pi*x)*exp(-pow((12-(1+13*y))/1.5,2)) "
+                     "+ sin(13*pi*x)*exp(-pow((13-(1+13*y))/1.5,2)) + sin(14*pi*x)*exp(-pow((14-(1+13*y))/1.5,2)))"
+                     "*0.5",
+          .description = "A single resonant peak walked up the harmonic series from the first to the "
+                         "fourteenth, which is what a vowel sweep is when it is done additively.",
+          .frameCount = 24,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Formant High",
+          .relativePath = "xerum/Formant High.wav",
+          .formula = "(sin(pi*x)*exp(-pow((1-(5+6*y))/1.2,2)) + sin(2*pi*x)*exp(-pow((2-(5+6*y))/1.2,2)) "
+                     "+ sin(3*pi*x)*exp(-pow((3-(5+6*y))/1.2,2)) + sin(4*pi*x)*exp(-pow((4-(5+6*y))/1.2,2)) "
+                     "+ sin(5*pi*x)*exp(-pow((5-(5+6*y))/1.2,2)) + sin(6*pi*x)*exp(-pow((6-(5+6*y))/1.2,2)) "
+                     "+ sin(7*pi*x)*exp(-pow((7-(5+6*y))/1.2,2)) + sin(8*pi*x)*exp(-pow((8-(5+6*y))/1.2,2)) "
+                     "+ sin(9*pi*x)*exp(-pow((9-(5+6*y))/1.2,2)) + sin(10*pi*x)*exp(-pow((10-(5+6*y))/1.2,2)) "
+                     "+ sin(11*pi*x)*exp(-pow((11-(5+6*y))/1.2,2)))*0.55",
+          .description = "The same additive peak, but starting at the fifth harmonic and moving to the "
+                         "eleventh: the bright half of the vowel sweep, on its own.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Vocal Stack",
+          .relativePath = "xerum/Vocal Stack.wav",
+          .formula = "(sin(pi*x)*(exp(-pow((1-2)/1,2)) + exp(-pow((1-(6+6*y))/1.3,2))) "
+                     "+ sin(2*pi*x)*(exp(-pow((2-2)/1,2)) + exp(-pow((2-(6+6*y))/1.3,2))) "
+                     "+ sin(3*pi*x)*(exp(-pow((3-2)/1,2)) + exp(-pow((3-(6+6*y))/1.3,2))) "
+                     "+ sin(4*pi*x)*(exp(-pow((4-2)/1,2)) + exp(-pow((4-(6+6*y))/1.3,2))) "
+                     "+ sin(5*pi*x)*(exp(-pow((5-2)/1,2)) + exp(-pow((5-(6+6*y))/1.3,2))) "
+                     "+ sin(6*pi*x)*(exp(-pow((6-2)/1,2)) + exp(-pow((6-(6+6*y))/1.3,2))) "
+                     "+ sin(7*pi*x)*(exp(-pow((7-2)/1,2)) + exp(-pow((7-(6+6*y))/1.3,2))) "
+                     "+ sin(8*pi*x)*(exp(-pow((8-2)/1,2)) + exp(-pow((8-(6+6*y))/1.3,2))) "
+                     "+ sin(9*pi*x)*(exp(-pow((9-2)/1,2)) + exp(-pow((9-(6+6*y))/1.3,2))) "
+                     "+ sin(10*pi*x)*(exp(-pow((10-2)/1,2)) + exp(-pow((10-(6+6*y))/1.3,2))) "
+                     "+ sin(11*pi*x)*(exp(-pow((11-2)/1,2)) + exp(-pow((11-(6+6*y))/1.3,2))) "
+                     "+ sin(12*pi*x)*(exp(-pow((12-2)/1,2)) + exp(-pow((12-(6+6*y))/1.3,2))))*0.55",
+          .description = "Two fixed formants: one held at the second harmonic, one walked from the sixth "
+                         "to the twelfth. Choirs, not vowels.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Odd Stack",
+          .relativePath = "xerum/Odd Stack.wav",
+          .formula = "sum(sin(pi*x), sin(3*pi*x)*y*1.2, sin(5*pi*x)*y*0.8, sin(7*pi*x)*y*0.5, "
+                     "sin(9*pi*x)*y*0.3)*0.6",
+          .description = "Odd harmonics only, appearing with the frame: the hollow, clarinet-like end of "
+                         "the additive family.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Saw Fade",
+          .relativePath = "xerum/Saw Fade.wav",
+          .formula = "(sin(pi*x) + sin(2*pi*x)*0.5 + sin(3*pi*x)*0.33 + sin(4*pi*x)*0.25 "
+                     "+ sin(5*pi*x)*0.2 + sin(6*pi*x)*0.17 + sin(7*pi*x)*0.14 + sin(8*pi*x)*0.12)"
+                     "*0.35*(1-y) + sin(pi*x)*y",
+          .description = "An eight-harmonic saw fading into its own fundamental: the plainest morph in "
+                         "the library, and the one a bass or a lead wants.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Square Fade",
+          .relativePath = "xerum/Square Fade.wav",
+          .formula = "sign(x)*(1-y) + sin(pi*x)*y",
+          .description = "Square crossfaded into sine across the frames. Signed, so its middle frame is "
+                         "quieter than either end — a morph that thins as it opens.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Bit Crush",
+          .relativePath = "xerum/Bit Crush.wav",
+          .formula = "round(x*(2+30*(1-y)))/(2+30*(1-y))",
+          .description = "A ramp quantised onto fewer and fewer levels as the frame rises: 32 steps "
+                         "down to 2, which is arithmetic rather than a bit-crusher effect.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Bend Sweep",
+          .relativePath = "xerum/Bend Sweep.wav",
+          .formula = "sin(pi*x*(1 + 5*y*(1 - x*x)))",
+          .description = "A sine whose phase is warped about the centre, so the zero crossings crowd "
+                         "together as the frame opens while the cycle stays seamless at the edges.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Ring Swell",
+          .relativePath = "xerum/Ring Swell.wav",
+          .formula = "sin(pi*x)*cos(pi*7*x*(0.3+y))",
+          .description = "A sine ring-modulated by a quotient of itself and a rising multiplier: the "
+                         "fundamental stays, and a clash of inharmonic partials grows around it.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Glass Stack",
+          .relativePath = "xerum/Glass Stack.wav",
+          .formula = "sum(sin(pi*x), sin(5*pi*x)*0.5*y, sin(11*pi*x)*0.35*y, sin(13*pi*x)*0.28*y, "
+                     "sin(17*pi*x)*0.2*y)*0.5",
+          .description = "The fundamental with 5th, 11th, 13th and 17th harmonics stacked on top: high, "
+                         "thin and glassy at the top of its sweep.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Noise Blend",
+          .relativePath = "xerum/Noise Blend.wav",
+          .formula = "sin(pi*x)*(1-y) + (frac(sin(i*12.9898 + n*7.233)*43758.5453)*2 - 1)*y*0.8",
+          .description = "A sine dissolving into deterministic noise — a hash of the sample index, not a "
+                         "random number, so the table regenerates byte for byte.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Dust",
+          .relativePath = "xerum/Dust.wav",
+          .formula = "frac(sin(i*12.9898 + n*78.233)*43758.5453)*2 - 1",
+          .description = "The same hash with nothing under it: eight frames of flat noise, for the presets "
+                         "that want a texture rather than a tone.",
+          .frameCount = 8,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Growl Fold",
+          .relativePath = "xerum/Growl Fold.wav",
+          .formula = "tanh((1 + 10*y)*x)*0.9",
+          .description = "A ramp through a tanh saturator, driven from 1x to 11x: the saw-side companion "
+                         "to Fold Drive, which does the same to a sine.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Pulse Grit",
+          .relativePath = "xerum/Pulse Grit.wav",
+          .formula = "((w < 0.5 - 0.45*y) ? 1 : -1)*0.9",
+          .description = "A pulse narrowing from 50% to 5% across the frames — the other half of the "
+                         "pulse-width family from PWM Morph, which runs 5% to 95%.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Sync Saw",
+          .relativePath = "xerum/Sync Saw.wav",
+          .formula = "2*frac(w*(1 + 13*y)) - 1",
+          .description = "A saw read through a rising sync ratio, 1x to 14x. Sync Sweep does the same to "
+                         "a sine, and the two are different sounds.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Metal Sync",
+          .relativePath = "xerum/Metal Sync.wav",
+          .formula = "sin(2*pi*frac(w*(2.5 + 9*y)))",
+          .description = "The same sync read at **half-integer** ratios from 2.5 to 11.5, which puts the "
+                         "cycle's partials between the harmonics instead of on them.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
+        { .name = "Sparkle",
+          .relativePath = "xerum/Sparkle.wav",
+          .formula = "sin(pi*x)*0.8*(1-y) + sin(19*pi*x)*y*0.5 + sin(23*pi*x)*y*0.3",
+          .description = "A sine replaced by the 19th and 23rd harmonics as the frame rises: air, and "
+                         "nothing else, at the top of its sweep.",
+          .frameCount = 12,
+          .interpolation = FrameInterpolation::Linear,
+          .sixteenBit = false },
+
         { .name = "Fallback Shapes",
           .relativePath = "xerum/Fallback Shapes.wav",
           .formula = "(n < 1) ? sin(pi*x) : ((n < 2) ? (1 - 2*abs(x)) : ((n < 3) ? x : sign(x)))",

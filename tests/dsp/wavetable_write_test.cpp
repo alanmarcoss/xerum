@@ -671,7 +671,10 @@ TEST_CASE ("encoding is deterministic and refuses malformed tables", "[wavetable
 
 TEST_CASE ("every shipped table is exactly what the tool generates", "[wavetable-write]")
 {
-    REQUIRE (starterLibrary().size() == 10);
+    // The catalogue's size, pinned on purpose: the shipped bytes are checked below, and a table that
+    // silently stops being generated would otherwise only show as a missing file. Ticket `54` took it
+    // from ten to twenty-eight by adding the character tables the factory bank is built from.
+    REQUIRE (starterLibrary().size() == 28);
     REQUIRE_FALSE (fallbackTableReference().empty());
 
     // Both encodings the format supports ship, so the reader's 16-bit path is exercised by our own

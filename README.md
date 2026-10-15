@@ -207,8 +207,9 @@ notarization work the map keeps as fog; this section records what an unsigned bu
 
 ### Content: one more step, and what happens without it
 
-xerum ships a small content library of its own — `content/Tables/xerum/`: sine, saw, square and
-triangle, a fallback table, and five tables generated from formulas we wrote — and resolves a preset's
+xerum ships a content library of its own — `content/Tables/xerum/`: sine, saw, square and triangle, a
+fallback table, and **twenty-two morphing tables generated from formulas we wrote** (harmonic sweeps,
+formant stacks, pulse widths, sync, saturation, noise blends) — and resolves a preset's
 asset references against, in order:
 
 1. `XERUM_CONTENT_ROOT`, if you set it;
@@ -231,6 +232,18 @@ resolves whatever content you give it from roots 1 and 3, and reports the rest.
 
 **xerum never writes into the reference instrument's content tree.** That directory is another
 application's install, with a database over it that the reference maintains.
+
+### The factory bank
+
+xerum also ships **104 factory presets of its own**, in `content/Factory/` — Bass, Lead, Pad, Keys,
+Pluck, FX, Texture and Percussion, none of them named after or derived from the reference's bank. They
+live in the same content roots the tables do (so root 3 above finds them after the `cp -R`), a preset is
+one `Factory/<Category>/<Name>.xerumpreset` file, and `Factory/manifest.json` lists every one of them
+with its category, description and tables. The file is **xerum's own block format**, not a
+`.SerumPreset`, and it is loaded through the product's own loader — the same path a host's state restore
+takes. If the bank is absent, the product simply has no factory presets; nothing else depends on it.
+The rules the bank is held to, and how they are enforced, are in
+[docs/content-policy.md](docs/content-policy.md).
 
 ## Getting a preset in
 

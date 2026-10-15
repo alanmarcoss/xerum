@@ -35,6 +35,58 @@ it is visible when made.
 built, not when audio plays — which keeps a subsystem out of the plugin, and makes a bad formula a
 build failure rather than a session failure.
 
+## The factory preset bank
+
+`54`. The bank the product ships with is **content**, so it follows the rules above: every preset is
+written here, and every wavetable one plays is a file this repository generated.
+
+| What | Where |
+|---|---|
+| The presets | `<content root>/Factory/<Category>/<Name>.xerumpreset` — 104 of them, across Bass, Lead, Pad, Keys, Pluck, FX, Texture and Percussion |
+| The bank's manifest | `<content root>/Factory/manifest.json` — every preset's name, category, path, description and tables, and the file format, so the browser (ticket `55`) reads a file instead of reverse-engineering the bank |
+| The authoring tool | `tools/preset-author.cpp` (`build/tools/xerum-preset-author`) |
+| The bank itself, as data | `src/presets/factory_bank.cpp` |
+
+### Why `Factory/`, and not `Presets/`
+
+A reference install's content root **already contains `Presets/`** — its own factory bank, which is
+licensed material and must never be browsed as ours. A bank directory called `Presets` would therefore
+be ambiguous the moment a machine had both installed. `Factory/` exists in no content root but ours,
+which turns "find the factory bank" into a search rather than a guess.
+
+### Where the loader finds it
+
+The same place every other asset is found: the content roots, in the order the import contract's §5
+states — a user-configured root, the reference's tree if present, xerum's application-support
+directory, and the source tree in a development checkout. A preset file is then loaded through the
+product's **own** loader (`XerumAudioProcessor::setStateInformation`), exactly as a host's state
+restore is, which is why the bank needs no new reader.
+
+**If the bank is absent** — a build with no content directory, or a user who removed it — the search
+finds nothing, and that is the honest answer: no factory presets. Nothing else depends on its presence;
+a preset's *tables* are what the audio path needs, and those resolve separately.
+
+### The format is ours
+
+A `.xerumpreset` is **xerum's own block** — the magic, a format version and CBOR of the document
+(`src/model/preset_block.h`) — not the reference's container. It is deliberately not shaped like a
+`.SerumPreset`, so nobody can mistake one for the other, and the extension is ours so a browser can
+tell them apart by name.
+
+### How the rule is enforced for the bank
+
+1. A preset may only play tables **this repository ships**: the authoring tool refuses to write a
+   preset that names a table `dsp::starterLibrary()` does not generate, that spells its table as a
+   rooted reference (`/Analog/...` — the spelling a reference preset uses), or that reads a frame
+   outside the table it names.
+2. The bank's own manifest is a second **provenance manifest**, and the release check reads it: every
+   preset must declare its origin and licence and exist on disk, and **every table a preset names must
+   be declared in `content/manifest.json`** — the cross-check that makes "self-contained" a build
+   failure rather than an intention.
+3. The bank's tests load every preset through the product's own loader and render it
+   (`plugin/tests/bank_test.cpp`), and hold the catalogue to its own rules
+   (`tests/model/factory_bank_test.cpp`).
+
 ## Content roots
 
 xerum **reads** the reference's layout, so an existing install and third-party packs resolve as-is. It
@@ -77,7 +129,9 @@ Policy prose is not a check. The release path carries one:
 
 1. **A provenance manifest** lists every shipped content file with its origin and licence. The build
    **fails** when a shipped file is absent from it — you cannot add content without saying where it
-   came from.
+   came from. There are two, one per authoring tool: `content/manifest.json` for the wavetables and
+   `content/Factory/manifest.json` for the factory presets, and the check also fails when a preset
+   plays a table the table manifest does not declare.
 2. **Where the reference is installed**, the check verifies no shipped file is byte-identical to any
    reference content file. This is the check that would actually catch a mistake; it runs locally
    because it needs the reference.
@@ -94,6 +148,18 @@ Policy prose is not a check. The release path carries one:
 | The provenance manifest | `content/manifest.json` — per file: path, origin, licence, formula, frame count, interpolation, sha256 |
 | The release check | `tools/check-content-provenance.py`, wired as the CTest test `content-provenance` |
 
+The factory bank (ticket `54`) adds its own rows to that table, and its own two commands:
+
+| Piece | Path |
+|---|---|
+| The bank, as data | `src/presets/factory_bank.cpp` |
+| The authoring tool | `tools/preset-author.cpp` (`build/tools/xerum-preset-author`) |
+| The shipped presets | `content/Factory/<Category>/<Name>.xerumpreset` |
+| The bank's manifest | `content/Factory/manifest.json` — per preset: name, category, path, description, tables, sha256 |
+| The bank's tests | `tests/model/factory_bank_test.cpp` (the catalogue and the bytes), `plugin/tests/bank_test.cpp` (loading, rendering, and that no two presets collapse) |
+
+    build/tools/xerum-preset-author --out content --write --manifest content/Factory/manifest.json
+    build/tools/xerum-preset-author --verify   # the shipped bytes are what the bank encodes
     build/tools/xerum-wavetable-author --out content --write --manifest content/manifest.json
     build/tools/xerum-wavetable-author --verify    # the shipped bytes are what the formulas generate
     ctest --test-dir build -R content-provenance   # the release gate

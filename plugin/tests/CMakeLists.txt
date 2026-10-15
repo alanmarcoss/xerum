@@ -19,7 +19,8 @@ add_executable(xerum-plugin-tests
     interface_test.cpp
     third_party_test.cpp
     mod_sources_test.cpp
-    fidelity_test.cpp)
+    fidelity_test.cpp
+    bank_test.cpp)
 
 target_sources(xerum-plugin-tests PRIVATE ${XERUM_PLUGIN_SOURCES})
 
@@ -44,6 +45,9 @@ target_link_libraries(xerum-plugin-tests PRIVATE
     xerum_model
     xerum_dsp
     xerum_content
+    # The factory bank's catalogue (ticket 54). Its render proof lives in this suite because only the
+    # product can load and render a preset; the bank itself is data and links no JUCE.
+    xerum_presets
     juce::juce_audio_utils
     juce::juce_dsp
     juce::juce_recommended_config_flags

@@ -15,7 +15,8 @@ add_executable(xerum-model-tests
     engine_selection_test.cpp
     structural_fidelity_test.cpp
     third_party_pack_test.cpp
-    noise_sub_vocabulary_test.cpp)
+    noise_sub_vocabulary_test.cpp
+    factory_bank_test.cpp)
 
 target_link_libraries(xerum-model-tests PRIVATE
     xerum_model
@@ -24,6 +25,9 @@ target_link_libraries(xerum-model-tests PRIVATE
     # test is the one place where "what the report claims we ship" and "what the engine implements" have
     # to be compared to each other.
     xerum_dsp
+    # The factory bank (ticket 54), checked here against the files it ships. It links the engine because
+    # the bank is authored in the engine's own vocabulary; nothing here renders.
+    xerum_presets
     Catch2::Catch2WithMain)
 
 # Fixtures are ours, not the reference's: a payload we wrote, compressed in each of the container's
@@ -31,6 +35,9 @@ target_link_libraries(xerum-model-tests PRIVATE
 # (see docs/test-strategy.md).
 target_compile_definitions(xerum-model-tests PRIVATE
     XERUM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    # The repository root, because the factory bank's test checks the presets **on disk** against the bank
+    # in memory, and the content root is a directory in the source tree (ticket 54).
+    XERUM_REPO_ROOT="${CMAKE_SOURCE_DIR}"
     # The build tree this binary was built in. The round-trip test needs it to find the *harness it was
     # built alongside* rather than whichever one happens to sit at the shortest path — see
     # `findHostBinary` in reference_roundtrip_test.cpp for why that distinction is load-bearing.
