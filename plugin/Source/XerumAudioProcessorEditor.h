@@ -184,6 +184,13 @@ private:
 
     XerumAudioProcessor& processor_;
 
+    /// The design system's look-and-feel, set on this editor (ticket `53`). Every drawn surface beneath it
+    /// — the pickers, the pills, the scroll bars JUCE creates for a viewport, a dropdown — resolves its
+    /// colours from the palette rather than from JUCE's own dark scheme, whose `defaultFill` (#42a2c8) was
+    /// on screen before this existed. Owned here, so it is destroyed with the window and never outlives the
+    /// message manager.
+    ui::look::XerumLookAndFeel lookAndFeel_;
+
     ui::InterfacePlan plan_;
     juce::OwnedArray<ui::ParameterPanel> panels_;
     ui::CompositionView composition_;

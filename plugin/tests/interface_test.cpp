@@ -1342,6 +1342,166 @@ juce::File firstFactoryPreset (XerumAudioProcessor& processor)
 }
 } // namespace
 
+
+//==============================================================================
+namespace
+{
+/// The colour ids a stock widget of this type asks its look-and-feel for when it draws — the list is the
+/// point of the test below, because an id that is not here is one nothing on screen consults.
+std::vector<int> colourIdsOf (const juce::Component& component)
+{
+    if (dynamic_cast<const juce::ComboBox*> (&component) != nullptr)
+        return { juce::ComboBox::backgroundColourId, juce::ComboBox::textColourId,
+                 juce::ComboBox::outlineColourId, juce::ComboBox::buttonColourId,
+                 juce::ComboBox::arrowColourId, juce::ComboBox::focusedOutlineColourId };
+
+    if (dynamic_cast<const juce::Slider*> (&component) != nullptr)
+        return { juce::Slider::backgroundColourId, juce::Slider::thumbColourId, juce::Slider::trackColourId,
+                 juce::Slider::rotarySliderFillColourId, juce::Slider::rotarySliderOutlineColourId,
+                 juce::Slider::textBoxTextColourId, juce::Slider::textBoxBackgroundColourId,
+                 juce::Slider::textBoxOutlineColourId, juce::Slider::textBoxHighlightColourId };
+
+    if (dynamic_cast<const juce::ToggleButton*> (&component) != nullptr)
+        return { juce::ToggleButton::textColourId, juce::ToggleButton::tickColourId,
+                 juce::ToggleButton::tickDisabledColourId };
+
+    if (dynamic_cast<const juce::TextButton*> (&component) != nullptr)
+        return { juce::TextButton::buttonColourId, juce::TextButton::buttonOnColourId,
+                 juce::TextButton::textColourOffId, juce::TextButton::textColourOnId };
+
+    if (dynamic_cast<const juce::Label*> (&component) != nullptr)
+        return { juce::Label::textColourId, juce::Label::backgroundColourId, juce::Label::outlineColourId };
+
+    if (dynamic_cast<const juce::ScrollBar*> (&component) != nullptr)
+        return { juce::ScrollBar::backgroundColourId, juce::ScrollBar::thumbColourId,
+                 juce::ScrollBar::trackColourId };
+
+    return {};
+}
+
+/// Every component of a tree, the editor included — what a drawn surface can be.
+void collectComponents (juce::Component& component, std::vector<juce::Component*>& out)
+{
+    out.push_back (&component);
+
+    for (int i = 0; i < component.getNumChildComponents(); ++i)
+        collectComponents (*component.getChildComponent (i), out);
+}
+} // namespace
+
+TEST_CASE ("every colour a drawn surface resolves is a token", "[interface][ui]")
+{
+    // Ticket `53`'s correction. The window capture found JUCE's own dark-scheme `defaultFill` (#42a2c8) on
+    // screen — 0.416 % of the window, the matrix viewport's scroll bars — because the interface had never
+    // given its remaining stock widgets a look-and-feel of its own. `ui::look::XerumLookAndFeel` is that
+    // look-and-feel; this case is the measurement of "no non-token colour can reappear in a drawn surface",
+    // id by id, over the editor's **own** component tree: every component of every stock class it contains
+    // is asked for the colour ids its class draws with, and each answer has to be one of
+    // `ui::look::palette()` or a colour that draws nothing.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (matrixDocument(), {}, 0);
+
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    // The editor's own look-and-feel is the design system's, and it is the one the tree inherits.
+    CHECK (dynamic_cast<ui::look::XerumLookAndFeel*> (&editor->getLookAndFeel()) != nullptr);
+
+    std::vector<juce::Component*> components;
+    collectComponents (*editor, components);
+
+    const auto palette = ui::look::palette();
+    const auto isPaletteColour = [&palette] (const juce::Colour colour)
+    {
+        if (colour.getAlpha() == 0)
+            return true;   // draws nothing, which is not a colour at all
+
+        return std::find (palette.begin(), palette.end(), colour) != palette.end();
+    };
+
+    auto checked = 0;
+    auto nonPalette = 0;
+
+    for (auto* component : components)
+    {
+        for (const auto id : colourIdsOf (*component))
+        {
+            // `inheritFromParent` false: this is the colour the look-and-feel would hand the widget, which
+            // is what it paints with.
+            const auto colour = component->findColour (id, false);
+            ++checked;
+
+            if (isPaletteColour (colour))
+                continue;
+
+            ++nonPalette;
+
+            INFO ("component " << juce::String (typeid (*component).name()) << ", colour id " << id << " -> "
+                               << colour.toDisplayString (false).toStdString());
+
+            CHECK (colour.getAlpha() == 0);
+        }
+    }
+
+    // The walk has to have seen something: the tree is the composed page, and a colourless tree would make
+    // every assertion above vacuous.
+    std::fprintf (stderr, "[interface] %d colour ids resolved over %d components; %d outside the palette\n",
+                  checked, static_cast<int> (components.size()), nonPalette);
+    CHECK (checked > 40);
+    CHECK (nonPalette == 0);
+
+    // And the blue itself: no id this interface can reach resolves to it any more.
+    CHECK (juce::Colour (0xff42a2c8).getARGB() != ui::look::XerumLookAndFeel().findColour (juce::ScrollBar::thumbColourId).getARGB());
+    CHECK (ui::look::XerumLookAndFeel().findColour (juce::ScrollBar::thumbColourId) == ui::look::borderHi);
+
+    // **And it is not drawn either.** The ids above are what a widget would ask for; this is what the
+    // editor's own render contains — JUCE's paint path at the window's own size, the same measurement
+    // ticket `52` made. The scroll bars are inside this image (the matrix's grid is taller and wider than
+    // its viewport), so the colour that used to be here would be here.
+    editor->setSize (1080, 1108);
+
+    const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+    std::map<juce::uint32, int> counts;
+    auto blue = 0;
+
+    for (int y = 0; y < image.getHeight(); ++y)
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto pixel = image.getPixelAt (x, y);
+            const auto key = pixel.getARGB() & 0x00ffffffu;
+            ++counts[key];
+
+            if (std::abs (static_cast<int> (pixel.getRed()) - 0x42) <= 2
+                && std::abs (static_cast<int> (pixel.getGreen()) - 0xa2) <= 2
+                && std::abs (static_cast<int> (pixel.getBlue()) - 0xc8) <= 2)
+                ++blue;
+        }
+
+    std::vector<std::pair<juce::uint32, int>> ranked (counts.begin(), counts.end());
+    std::sort (ranked.begin(), ranked.end(),
+               [] (const auto& a, const auto& b) { return a.second > b.second; });
+
+    const auto total = static_cast<double> (image.getWidth()) * static_cast<double> (image.getHeight());
+    std::fprintf (stderr, "[interface] the editor's own render, %dx%d:\n", image.getWidth(), image.getHeight());
+
+    for (const auto& [key, count] : ranked)
+    {
+        if (count < 400)
+            break;
+
+        std::fprintf (stderr, "[interface]   rgb(%3u,%3u,%3u)  %6.3f %%  %s\n", (key >> 16) & 0xffu,
+                      (key >> 8) & 0xffu, key & 0xffu, 100.0 * count / total,
+                      count == static_cast<int> (juce::Colour (0xff42a2c8).getARGB() & 0x00ffffffu)
+                          ? "JUCE's dark-scheme fill blue" : "");
+    }
+
+    std::fprintf (stderr, "[interface]   #42a2c8 anywhere in the render: %d px\n", blue);
+    CHECK (blue == 0);
+}
+
 TEST_CASE ("the composed page fits the window it opens at, and stays legible at 900x600",
            "[interface][ui]")
 {

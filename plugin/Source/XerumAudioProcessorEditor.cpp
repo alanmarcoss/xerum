@@ -48,6 +48,10 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 {
     // The interface's own existence, counted. A host opening the interface is the only thing that moves
     // these, and `plugin/tests/interface_test.cpp` asserts it.
+    // The design system's colours, for everything JUCE draws that this interface does not: the first thing
+    // the constructor does, because a component built below reads its look-and-feel when it paints.
+    setLookAndFeel (&lookAndFeel_);
+
     created_.fetch_add (1, std::memory_order_relaxed);
     alive_.fetch_add (1, std::memory_order_relaxed);
 
@@ -216,6 +220,9 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
 XerumAudioProcessorEditor::~XerumAudioProcessorEditor()
 {
+    // Detach before anything is torn down: a component must not outlive the look-and-feel it points at.
+    setLookAndFeel (nullptr);
+
     processor_.removeChangeListener (this);
     alive_.fetch_sub (1, std::memory_order_relaxed);
 }

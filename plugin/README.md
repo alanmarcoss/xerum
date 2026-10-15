@@ -890,11 +890,11 @@ channel): `surface` 72.5 %, `bg` 15.6 %, `surface2` 11.6 % (the knob bodies and 
 tolerance), `fgMuted` 0.37 %, `accent` 0.25 % (the value arcs, the wordmark, the coverage number),
 `fgDim` 0.19 %, `fg` 0.09 %, `accentDim` 0.06 % (the modulation arc on `voicefilter0.freq`, depth 0.075).
 With the half-loading fixture loaded, `red` is 0.005 % (the strip's high-severity dot) and `orange` is
-absent — correct for a fixture with no medium entry. **Every colour on the page is a token**, with one
-exception that ticket `53`'s window capture found and this in-process count could not name: the matrix
-viewport's **own scroll bars** are drawn by JUCE's default look-and-feel in its dark scheme's fill blue
-`#42a2c8` (0.42 % of the window; located in the matrix's rows only). It is not a token and not this
-ticket's to theme; it is recorded here because 52's claim that everything is a token was too strong.
+absent — correct for a fixture with no medium entry. **Every colour on the page is a token**, and ticket
+`53` made that true rather than nearly true: the window capture found the matrix viewport's **own scroll
+bars** drawn by JUCE's default look-and-feel in its dark scheme's fill blue `#42a2c8` (0.42 % of the
+window), because the interface had never given its remaining stock widgets a look-and-feel of its own.
+`ui::look::XerumLookAndFeel` is that look-and-feel (below), and the same two bars are now `border-hi`.
 
 **The fall-through, named**: `Global` and `Amp Envelope`, in `default-section`, because the design's
 composition names no section for them. `fx-section` names `FX`, which matches no group in this table.
@@ -978,6 +978,14 @@ Two of them are not numbers at all, they are things the composition was doing wr
   `defaultSection()`'s band is `bottom`, so the macros and `Global` + `Amp Envelope` are one row. The
   section's *order* is unchanged — it is still the last entry — which is what keeps it the fall-through.
 
+And one colour, which the window capture found rather than the layout: the interface had never given its
+remaining stock widgets a look-and-feel of its own, so JUCE's default — `LookAndFeel_V4`'s dark scheme,
+whose `defaultFill` is `#42a2c8` — drew the matrix viewport's **scroll bars** (0.416 % of the window) and
+would have drawn a focused picker's outline. **`ui::look::XerumLookAndFeel`** (a `ColourScheme` built
+entirely from the palette plus the ids `LookAndFeel_V4` fixes by hand, for every stock class this interface
+can contain) is set on the editor, so a drawn surface beneath it resolves a colour from `InterfaceLook.h`
+or from nothing; the same two bars are now `border-hi`.
+
 And one structural change, which is the design's own answer to "the matrix is a 64-row grid in a window
 that can show eight":
 
@@ -1050,9 +1058,9 @@ instrument.
 
 ```sh
 cmake --build build-53 -j8
-./build-53/plugin/tests/xerum-plugin-tests "[interface]"   # 5559 assertions, 19 cases — all passed
-./build-53/plugin/tests/xerum-plugin-tests                 # the full plugin suite: 15417 assertions in
-                                                           # 69 cases — all passed
+./build-53/plugin/tests/xerum-plugin-tests "[interface]"   # 5566 assertions, 20 cases — all passed
+./build-53/plugin/tests/xerum-plugin-tests                 # the full plugin suite: 15424 assertions in
+                                                           # 70 cases — all passed
 /tmp/pluginval-104/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 \
     --validate build-53/plugin/xerum_artefacts/Release/VST3/xerum.vst3     # SUCCESS, including its
                                                                            # Editor + Editor Automation tests
@@ -1083,16 +1091,25 @@ xcrun swift /tmp/xerum52-allwin.swift <pid>        # CGWindowListCopyWindowInfo
 **1082×1136 at (739, 219), layer 0, on screen** — the editor's 1080×1108 plus the 1 px frame and the 28 px
 title bar — entirely on this display (219 + 1136 = 1355 < 1440).
 
-**The palette on screen**: `screencapture -x` of the whole screen, cropped to the window's own rect from
-`CGWindowListCopyWindowInfo` (739, 219, 1082×1136) — the window's own `-l<id>` capture returned a black
-1000×1000 image this session, the failure ticket `52` recorded, so the screen capture *is* the OS's
-composited pixels. Counted against the tokens: `surface` #1a1917 **52.92 %** (logical rows 35–1134),
-`bg` #111110 31.30 % (36–1131), `surface2` 4.60 %, `border` 4.55 %, the macOS title bar 2.13 % (rows 1–27),
-`fg` 0.578 %, **JUCE's default scroll-bar blue #42a2c8 0.416 %** (the matrix's rows only — see the
-correction in the ticket `52` section), `accent` #e89b30 0.377 % (rows 42–1048), `fgDim` 0.358 %,
-`fgMuted` 0.301 %, `border-hi` 0.146 %, `accentDim` 0.067 %, `green` 0.017 % (rows 810–1126: the matrix's
-live-row dots and the report bar's clean dot), **`red` absent** — correct for a clean import. The interface
-is painted from row 35 to row 1134 of a 1136-row window: to its bottom edge.
+**The palette, counted on the editor's own render** (`createComponentSnapshot` at 1080×1108 — JUCE's own
+paint path at the window's own size, the measurement ticket `52` made, and the one available here: a fresh
+desktop capture of the window was not possible this session — `screencapture -l<id>` fails with *"could not
+create image from window"*, the failure `52` recorded, and the shared desktop had Chrome, Slack, WhatsApp
+and Ghostty in front of the xerum window with no Assistive access to raise it):
+
+| exact colour in the render | share | what it is |
+|---|---|---|
+| `rgb(26,25,23)` = `surface` | 53.38 % | the panels and the page |
+| `rgb(17,17,16)` = `bg` | 29.36 % | the window behind them |
+| `rgb(34,33,32)` = `surface2` | 3.87 % | knob bodies, the header gradient |
+| `rgb(42,40,38)` = `border` | 3.58 % | the panel chrome and the knob tracks |
+| `rgb(58,56,54)` = `borderHi` | **0.426 %** | **the two scroll bars, which is where the blue was** |
+| `rgb(232,155,48)` = `accent` | 0.19 % | value arcs, the wordmark |
+| `rgb(212,206,196)` = `fg` | 0.12 % | readouts and titles |
+
+**`#42a2c8` anywhere in the render: 0 px.** Every other colour above 0.02 % is an anti-aliased blend of two
+tokens. On screen (the earlier capture, before the fix) the same two scroll bars held JUCE's dark-scheme
+`defaultFill` at 0.416 %; they now hold `border-hi` at 0.426 % of the editor's render.
 
 **No interface code on the audio path**, the way tickets `44`, `51` and `52` measured it:
 
@@ -1123,6 +1140,10 @@ two threads are separated in the running product and not merely in the source.
   beside it in the same band", which is what the design's `bottom-row` means.
 * The matrix's row count was asserted to equal the constant `8`. It is now asserted to equal the geometry
   and to be at least `8`, which is stronger: the heading cannot promise a count the panel does not show.
+* One case is **new**, for the colour the window capture found: `every colour a drawn surface resolves is
+  a token` walks the editor's own component tree — 1440 components, 4532 colour ids of every stock class it
+  contains — and requires each resolved colour to be in `ui::look::palette()` or to draw nothing, then counts
+  the editor's own render and requires zero pixels of `#42a2c8`.
 * One assertion is **new**, for a defect the compaction would have introduced: the compact band puts a pill
   on the same line as a `knob-sm` and `ParameterControl::resized` gave a toggle its whole row — 48 px tall
   beside a 28 px knob, nearly three times the design's own `.toggle`. The pill is now one line tall wherever

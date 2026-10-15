@@ -28,8 +28,11 @@
 #pragma once
 
 #include <juce_graphics/juce_graphics.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 
 #include "document.h"
+
+#include <vector>
 
 namespace xerum::plugin::ui::look
 {
@@ -151,7 +154,36 @@ inline juce::Colour severityColour (const xerum::model::Severity severity)
 }
 
 //==============================================================================
-// 6. The two faces, defined out of line so this header stays a token list.
+// 7. The look-and-feel the interface's stock widgets ask for their colours through
+//
+// Ticket `51` themed the two stock widgets that remained **per instance**, through JUCE's own colour ids,
+// and left everything else at JUCE's default — which is `LookAndFeel_V4`'s dark scheme, whose
+// `defaultFill` is `#42a2c8`, a blue that is not in this palette. Ticket `53`'s window capture found
+// exactly that colour on screen (0.416 % of the window, drawn by the matrix viewport's own scroll bars),
+// and the same scheme draws a focused picker's outline, a dropdown's highlight and a tooltip's frame.
+//
+// This class is the token list's answer: a `ColourScheme` built **entirely** from the palette above, then
+// the colour ids `LookAndFeel_V4` fixes by hand, each of them a token too. The editor owns one and sets it
+// on itself, so every drawn surface beneath it — including components JUCE creates later, like a scroll
+// bar — resolves a colour from this file or from nothing. `plugin/tests/interface_test.cpp` walks the
+// editor's own component tree and asserts that, id by id, rather than trusting it.
+class XerumLookAndFeel final : public juce::LookAndFeel_V4
+{
+public:
+    XerumLookAndFeel();
+};
+
+/// Every colour this palette names, for a caller that has to show a drawn surface used none other — the
+/// test's tree walk. One list, in this file, so a token added here is checkable there without a second
+/// list to keep in step.
+inline std::vector<juce::Colour> palette()
+{
+    return { bg,      surface,   surface2,  border,    borderHi, fg,       fgDim,
+             fgMuted, accent,    accentDim, accentBg,  red,      orange,   green };
+}
+
+//==============================================================================
+// 8. The two faces, defined out of line so this header stays a token list.
 
 inline juce::Font bodyFont (const float size, const bool bold)
 {
