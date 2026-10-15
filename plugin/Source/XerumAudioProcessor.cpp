@@ -7,6 +7,8 @@
 #include "schema.h"
 #include "spectral_morph.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -354,10 +356,12 @@ void XerumAudioProcessor::prepareToPlay (const double sampleRate, const int maxi
 
     // **The rack's scratch** (ticket 60). `prepare` sizes every effect's dry path and a splitter's bands
     // and rebuilds the chain from the slots a preset already installed — the rack is order-independent, and
-    // this is the order that needs no deferral. The bus racks' inputs are the mixer's, and there is no
-    // mixer yet, so they hold the silence it will one day fill.
+    // this is the order that needs no deferral. It also re-dereferences the impulses those slots borrow, so
+    // the plan `publishFxRack` installed has to outlive this call, which it does.
     fxBank_.prepare (sampleRate_, maxBlock_);
 
+    // The bus racks' inputs are the mixer's, and the mixer is the voice layer's sends (ticket `64`): they
+    // are cleared and filled per block in `processBlock`, and hold silence only until the first one.
     for (auto* bus : { &bus1Left_, &bus1Right_, &bus2Left_, &bus2Right_ })
         bus->assign (static_cast<std::size_t> (maxBlock_), 0.0f);
 
@@ -533,6 +537,11 @@ void XerumAudioProcessor::refreshSettingsFromParameters() noexcept
     if (layout_.limitCeiling >= 0)
         limiter_.setCeilingDb (amount (layout_.limitCeiling));
 
+    // **The mixer's sends** (ticket `64`), copied from the table the message thread wrote while the audio
+    // thread was held out — the same rule the drawn responses above follow. Nothing else in a reference
+    // preset's routing matrix is a parameter, so there is no `values_` entry to read for it.
+    next.sends = routing_;
+
     engine_.setSettings (next);
     settings_ = next;
 }
@@ -660,24 +669,57 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // The engine renders **stereo** and overwrites, so it is rendered in chunks no larger than `prepare`
     // sized. Ticket 41 made the bus stereo so that the unison spread reaches the output; the master gain
     // is still applied here, per sample, on both channels.
+    //
+    // **The mixer's sends** (ticket `64`) come out of the same call: the pool's voices *add* their BUS 1 and
+    // BUS 2 sends into the buffers below, at the levels the preset's routing matrix gives them, so what the
+    // bus racks process is the preset's own signal rather than the silence these used to hold. They are
+    // cleared first, because the engine adds to them rather than overwriting.
+    std::fill (bus1Left_.begin(), bus1Left_.end(), 0.0f);
+    std::fill (bus1Right_.begin(), bus1Right_.end(), 0.0f);
+    std::fill (bus2Left_.begin(), bus2Left_.end(), 0.0f);
+    std::fill (bus2Right_.begin(), bus2Right_.end(), 0.0f);
+
     const int chunkLimit = juce::jmax (1, static_cast<int> (left_.size()));
 
     for (int done = 0; done < numSamples; done += chunkLimit)
     {
         const int chunk = juce::jmin (chunkLimit, numSamples - done);
-        engine_.process (left_.data() + done, right_.data() + done, chunk);
+
+        dsp::BusSends sends;
+        sends.left[0] = bus1Left_.data() + done;
+        sends.right[0] = bus1Right_.data() + done;
+        sends.left[1] = bus2Left_.data() + done;
+        sends.right[1] = bus2Right_.data() + done;
+
+        engine_.process (left_.data() + done, right_.data() + done, sends, chunk);
     }
 
     // The master gain is applied to the engine's own stereo render **before** the ceiling, because the
     // ceiling is a master stage: it has to see what the master gain produced, not the host's channel
     // mapping of it. The ramp is unchanged — one step per sample across the block.
+    //
+    // **The sends take it too**, because they are the same mixer stage: the reference's own `Main Vol`
+    // scales the bus as well as the main path (measured through its host at the init patch). When nothing
+    // is sent the four buffers stay the silence they were filled with, and the multiplies are skipped.
     {
         auto gain = gainStart;
+        const bool sending = engine_.settings().sends.any();
 
         for (int i = 0; i < numSamples; ++i)
         {
-            left_[static_cast<std::size_t> (i)] *= static_cast<float> (gain);
-            right_[static_cast<std::size_t> (i)] *= static_cast<float> (gain);
+            const auto coefficient = static_cast<float> (gain);
+
+            left_[static_cast<std::size_t> (i)] *= coefficient;
+            right_[static_cast<std::size_t> (i)] *= coefficient;
+
+            if (sending)
+            {
+                bus1Left_[static_cast<std::size_t> (i)] *= coefficient;
+                bus1Right_[static_cast<std::size_t> (i)] *= coefficient;
+                bus2Left_[static_cast<std::size_t> (i)] *= coefficient;
+                bus2Right_[static_cast<std::size_t> (i)] *= coefficient;
+            }
+
             gain += gainStep;
         }
     }
@@ -686,14 +728,9 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     // **The rack** (ticket `60`), in the preset's own order, between the master gain and the ceiling: MAIN
     // first, then the two busses where their `kParamFXBus{n}Dest` says. It runs on what the voice pool
-    // produced, so an effect sees the same signal a host would hear without it. Bus 1 and bus 2 get the
-    // mixer's sends, and the mixer's sends are not implemented — the buffers hold the silence they were
-    // sized with, so a bus rack processes silence and adds nothing. `plugin/README.md` records that.
-    std::fill (bus1Left_.begin(), bus1Left_.end(), 0.0f);
-    std::fill (bus1Right_.begin(), bus1Right_.end(), 0.0f);
-    std::fill (bus2Left_.begin(), bus2Left_.end(), 0.0f);
-    std::fill (bus2Right_.begin(), bus2Right_.end(), 0.0f);
-
+    // produced, so an effect sees the same signal a host would hear without it. Bus 1 and bus 2 are the
+    // mixer's sends (ticket `64`), filled above at the routing matrix's levels; a preset that sends nothing
+    // leaves them silent, and a bus rack then processes what it is handed — which is nothing.
     fxBank_.process (left_.data(), right_.data(), bus1Left_.data(), bus1Right_.data(), bus2Left_.data(),
                      bus2Right_.data(), numSamples);
 
@@ -886,16 +923,26 @@ int XerumAudioProcessor::interpolateAfterLoadOf (const model::PresetDocument& do
 void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
 {
     // Whatever was in flight belongs to the *previous* document, so it goes now. Its result, if it ever
-    // arrives, is not this document's answer and `flushContent` will not publish it.
+    // arrives, is not this document's answer and `flushContent` will not publish it. The impulse wait goes
+    // with it: a rack that is not published because of *this* document's impulses must not stay unpublished
+    // because of the last one's.
     pendingPlan_.reset();
     pendingResolved_.reset();
     pendingFinished_.reset();
+    impulsesPending_ = false;
 
     auto plan = std::make_shared<ContentPlan> (planContent (document));
 
-    // Nothing to read: every slot carries its table inline or wants none. No thread, no wait — and this is
-    // the case where ticket 56 changes nothing at all.
-    if (plan->references.empty())
+    // Anything the worker has to *read*: a table reference, or an impulse a slot names by file. A preset
+    // that carries everything inline needs no thread and no wait — and this is the case where ticket `56`
+    // changes nothing at all.
+    const bool needsFilesystem =
+        ! plan->references.empty()
+        || std::any_of (plan->impulses.begin(), plan->impulses.end(),
+                        [] (const ContentPlan::ImpulseWant& want)
+                        { return ! want.embedded && ! want.reference.empty(); });
+
+    if (! needsFilesystem)
     {
         ResolvedContent nothing;
         publishResolved (*plan, nothing);
@@ -921,6 +968,41 @@ void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
         for (const auto& reference : plan->references)
             resolved->lookups.push_back (library->loadTable (reference));
 
+        // **The impulses** (ticket `64`): the same walk, then a decode that is a codec job rather than a
+        // filesystem one — and it happens here rather than on the caller's thread because a ten-second
+        // impulse is a real cost and the caller's budget is 250 ms.
+        resolved->impulseLookups.assign (plan->impulses.size(), {});
+
+        for (std::size_t i = 0; i < plan->impulses.size(); ++i)
+        {
+            const auto& want = plan->impulses[i];
+
+            if (want.embedded || want.reference.empty())
+                continue;
+
+            auto lookup = library->loadAsset (want.reference, content::kImpulseDirectory);
+
+            if (lookup.found())
+            {
+                IrAsset asset;
+                asset.modulePath = want.modulePath;
+                asset.reference = want.reference;
+                std::string error;
+
+                if (decodeImpulse (lookup.bytes, asset, error))
+                    resolved->impulses.push_back (std::move (asset));
+                else
+                {
+                    // A path that is there and is not audio is a refusal like any other: recorded with its
+                    // path and its reason, never silence.
+                    lookup.resolution = content::Resolution::Unreadable;
+                    lookup.error = error;
+                }
+            }
+
+            resolved->impulseLookups[i] = std::move (lookup);
+        }
+
         resolved->problems = library->problems();
     }, finished);
 
@@ -945,6 +1027,15 @@ void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
     pendingPlan_ = std::move (plan);
     pendingResolved_ = std::move (resolved);
     pendingFinished_ = finished;
+
+    // **A preset whose impulses are on their way is not published yet** (ticket `64`). The rack is what
+    // borrows them, and a rack published now would hand its convolver nothing and say "no impulse response
+    // was supplied" about a preset whose impulse is a filesystem answer away. The timer's `flushContent`
+    // publishes the content and then the rack, once, with the report it deserves. Only when a slot names an
+    // impulse by file: an inline one is already in hand, and a preset that names none is not waiting.
+    impulsesPending_ = std::any_of (pendingPlan_->impulses.begin(), pendingPlan_->impulses.end(),
+                                    [] (const ContentPlan::ImpulseWant& want)
+                                    { return ! want.embedded && ! want.reference.empty(); });
 }
 
 XerumAudioProcessor::ContentPlan XerumAudioProcessor::planContent (const model::PresetDocument& document)
@@ -1021,6 +1112,13 @@ XerumAudioProcessor::ContentPlan XerumAudioProcessor::planContent (const model::
             plan.references.push_back (kDefaultTable);
             break;
         }
+
+    // **The racks' impulses** (ticket `64`) join the same walk, and for a hard reason rather than a tidy
+    // one: `contentWork_` supersedes its queue rather than growing it, so a second submission would drop
+    // the table walk that has not run yet. One plan, one walk, one bounded wait. A slot that carries its
+    // impulse inline asks for nothing — the rack's own decode builds it — so only the file references are
+    // listed.
+    plan.impulses = impulseWants (document);
 
     return plan;
 }
@@ -1106,6 +1204,42 @@ void XerumAudioProcessor::publishResolved (ContentPlan& plan, ResolvedContent& r
     }
 
     publishTables (std::move (next));
+
+    // **The impulses** (ticket `64`). A miss is an ordinary miss and it is named at the slot it belongs to:
+    // the convolution then passes the dry signal, which the effect itself says too. A path that is *there*
+    // and could not be read — including one that is not audio this build can read — is a refusal, and the
+    // walk's own words for it are carried out with its path. Neither becomes silence: the dry signal
+    // passing through is said, in this report and by the effect.
+    for (std::size_t i = 0; i < plan.impulses.size(); ++i)
+    {
+        const auto& want = plan.impulses[i];
+
+        if (want.embedded || want.reference.empty())
+            continue;
+
+        const auto* lookup = i < resolved.impulseLookups.size()
+                                 ? &resolved.impulseLookups[i]
+                                 : nullptr;
+
+        if (lookup != nullptr && lookup->found())
+        {
+            if (lookup->resolution == content::Resolution::CaseInsensitive)
+                addReportEntry (report_, model::Severity::Info, want.modulePath, want.reference,
+                                "resolved case-insensitively to " + lookup->path.string());
+
+            continue;
+        }
+
+        addReportEntry (report_, model::Severity::High, want.modulePath, want.reference,
+                        lookup != nullptr && ! lookup->error.empty()
+                            ? lookup->error + ", so this convolution passes the dry signal"
+                            : std::string ("no content root could supply an impulse response, so this "
+                                           "convolution passes the dry signal"));
+    }
+
+    // The decoded impulses, shared with the plan that borrows them. Replacing this pointer is safe: the
+    // installed rack holds the *plan*, and the plan holds the previous set.
+    irAssets_ = std::make_shared<IrAssets> (std::move (resolved.impulses));
 }
 
 void XerumAudioProcessor::flushContent()
@@ -1122,6 +1256,15 @@ void XerumAudioProcessor::flushContent()
     pendingPlan_.reset();
     pendingResolved_.reset();
     pendingFinished_.reset();
+
+    // **The rack this document's impulses were holding up** (ticket `64`). Its impulses are here now, so
+    // the rack is published once, with them, and the report says what actually happened rather than what
+    // was true before the filesystem answered.
+    if (impulsesPending_)
+    {
+        impulsesPending_ = false;
+        publishFxRack (document_);
+    }
 
     // The tables the interface shows have changed, and so has the report: this is the same notification a
     // preset load makes, for the same reason.
@@ -1772,6 +1915,11 @@ FxSlotKey parseFxSlotKey (const std::string_view key, const std::string_view pre
 
 constexpr std::size_t kPlainParamsLength = 13;   // strlen ("/plainParams/")
 
+/// The reference's own names for the routing matrix's seven rows, in `RoutingSlot{N}` order — the names its
+/// host surface uses (`A>BUS1` … `Filter 2>BUS2`), so a report entry reads like the control it is about.
+constexpr const char* kRoutingRowNames[dsp::kRoutingRowCount] = { "A", "B", "C", "Noise", "Sub Osc",
+                                                                 "Filter 1", "Filter 2" };
+
 } // namespace
 
 std::shared_ptr<XerumAudioProcessor::FxPlan>
@@ -1900,6 +2048,51 @@ XerumAudioProcessor::planFxRack (const model::PresetDocument& document) const
                 plan->notes.push_back (std::move (note));
             }
 
+            // **The impulse** (ticket `64`). A slot that convolves borrows one, and where it sits has to be
+            // recorded because the rack's slots are built here in array order, with an empty slot for a gap
+            // — the position is not the FX index. An inline impulse is built from the document right here,
+            // because it asks the filesystem nothing; a file reference is the content layer's, and attaches
+            // in `publishFxRack`.
+            if (slot.cls == dsp::FxClass::Convolve)
+            {
+                const auto modulePath = "FXRack" + std::to_string (rack) + "/FX[" + std::to_string (index) + "]";
+                FxPlan::ImpulsePosition position;
+                position.modulePath = modulePath;
+                position.rack = rack;
+                position.position = rackSlots.size();
+
+                if (const auto reference = document.parameters.find (modulePath + "/FXConv/relativePathToIR");
+                    reference != document.parameters.end())
+                    modelText (reference->second, position.reference);
+
+                plan->impulsePositions.push_back (std::move (position));
+
+                if (document.parameters.count (modulePath + "/FXConv/embeddedIR[0][0]") != 0)
+                {
+                    auto embedded = embeddedImpulse (document, modulePath);
+
+                    if (embedded.has_value())
+                    {
+                        // The pointer goes into the plan's own storage, not the local: a slot dereferences
+                        // it for as long as the plan lives, and a `prepareToPlay` after a load rebuilds the
+                        // chain from those slots.
+                        plan->inlineImpulses.push_back (std::make_unique<IrAsset> (std::move (*embedded)));
+                        slot.impulse = &plan->inlineImpulses.back()->impulse;
+                    }
+                    else
+                    {
+                        model::ReportEntry note;
+                        note.severity = model::Severity::Medium;
+                        note.modulePath = modulePath;
+                        note.item = "embeddedIR";
+                        note.reason =
+                            "the preset carries an impulse response inline, but not as the `numChannels` x "
+                            "`numFrames` array it declares, so the convolution passes the dry signal";
+                        plan->notes.push_back (std::move (note));
+                    }
+                }
+            }
+
             rackSlots.push_back (std::move (slot));
             ++next;
         }
@@ -1908,9 +2101,279 @@ XerumAudioProcessor::planFxRack (const model::PresetDocument& document) const
     return plan;
 }
 
+std::vector<XerumAudioProcessor::ContentPlan::ImpulseWant>
+XerumAudioProcessor::impulseWants (const model::PresetDocument& document) const
+{
+    std::vector<ContentPlan::ImpulseWant> wants;
+
+    for (int rack = 0; rack < dsp::FxBank::kRackCount; ++rack)
+    {
+        const auto prefix = "FXRack" + std::to_string (rack) + "/FX[";
+
+        // Keyed by the slot, because a slot's two markers arrive in whatever order the map holds them.
+        std::vector<ContentPlan::ImpulseWant> found;
+        std::map<int, std::size_t> at;
+
+        for (auto it = document.parameters.lower_bound (prefix);
+             it != document.parameters.end() && it->first.starts_with (prefix); ++it)
+        {
+            const auto key = parseFxSlotKey (it->first, prefix);
+
+            if (! key.ok)
+                continue;
+
+            // **The impulse is a class child, not a `plainParams` leaf.** `FXRack{n}/FX[i]/FXConv/` holds
+            // `relativePathToIR` and `embeddedIR[][]`; ticket `60`'s decode skips everything outside
+            // `…/plainParams/` on purpose (asset hints are not parameters), so this is where they are read.
+            const auto conv = key.rest.find ("/FXConv/");
+
+            if (conv == std::string::npos)
+                continue;
+
+            auto where = at.find (key.index);
+
+            if (where == at.end())
+            {
+                ContentPlan::ImpulseWant want;
+                want.modulePath = "FXRack" + std::to_string (rack) + "/FX[" + std::to_string (key.index) + "]";
+                found.push_back (std::move (want));
+                where = at.emplace (key.index, found.size() - 1).first;
+            }
+
+            auto& want = found[where->second];
+            const auto leaf = key.rest.substr (conv + 8);
+
+            if (leaf == "relativePathToIR")
+                modelText (it->second, want.reference);
+            else if (leaf.starts_with ("embeddedIR["))
+                want.embedded = true;
+        }
+
+        for (auto& want : found)
+            wants.push_back (std::move (want));
+    }
+
+    return wants;
+}
+
+std::optional<XerumAudioProcessor::IrAsset>
+XerumAudioProcessor::embeddedImpulse (const model::PresetDocument& document, const std::string& modulePath) const
+{
+    const auto prefix = modulePath + "/FXConv";
+
+    const auto countLeaf = [&document, &prefix] (const char* leafName, int& out)
+    {
+        const auto found = document.parameters.find (prefix + "/" + leafName);
+        double number = 0.0;
+
+        if (found == document.parameters.end() || ! modelNumber (found->second, number))
+            return false;
+
+        out = static_cast<int> (std::lround (number));
+        return out > 0;
+    };
+
+    int channels = 0;
+    int frames = 0;
+
+    if (! countLeaf ("numChannels", channels) || ! countLeaf ("numFrames", frames))
+        return std::nullopt;
+
+    IrAsset asset;
+    asset.modulePath = modulePath;
+    asset.storage.assign (static_cast<std::size_t> (channels) * static_cast<std::size_t> (frames), 0.0f);
+    asset.channels.assign (static_cast<std::size_t> (channels), nullptr);
+
+    for (int channel = 0; channel < channels; ++channel)
+    {
+        auto* destination = asset.storage.data() + static_cast<std::size_t> (channel) * static_cast<std::size_t> (frames);
+
+        for (int frame = 0; frame < frames; ++frame)
+        {
+            const auto found = document.parameters.find (prefix + "/embeddedIR[" + std::to_string (channel) + "]["
+                                                         + std::to_string (frame) + "]");
+            double number = 0.0;
+
+            // A partial array is not an impulse: one missing sample is reported by the caller rather than
+            // convoluted with a hole in it.
+            if (found == document.parameters.end() || ! modelNumber (found->second, number))
+                return std::nullopt;
+
+            destination[frame] = static_cast<float> (number);
+        }
+
+        asset.channels[static_cast<std::size_t> (channel)] = destination;
+    }
+
+    double rate = 0.0;
+    const auto rateLeaf = document.parameters.find (prefix + "/sampleRate");
+
+    if (rateLeaf != document.parameters.end())
+        modelNumber (rateLeaf->second, rate);
+
+    asset.impulse.channels = asset.channels.data();
+    asset.impulse.channelCount = channels;
+    asset.impulse.frames = frames;
+    asset.impulse.sampleRate = rate;
+
+    return asset;
+}
+
+bool XerumAudioProcessor::decodeImpulse (const std::vector<std::byte>& bytes, IrAsset& asset, std::string& error)
+{
+    // The reference's `Impulses/` corpus is FLAC and a user's own impulse is usually WAV, so both are
+    // registered. Nothing here is xerum's own format, and nothing here is on the audio thread.
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+
+    std::unique_ptr<juce::AudioFormatReader> reader (
+        formats.createReaderFor (std::make_unique<juce::MemoryInputStream> (bytes.data(), bytes.size(), false)));
+
+    if (reader == nullptr)
+    {
+        error = "the impulse response is not an audio file this build can read";
+        return false;
+    }
+
+    const auto frames = static_cast<int> (juce::jlimit<juce::int64> (0, juce::int64 (1) << 24,
+                                                                    reader->lengthInSamples));
+
+    if (frames <= 0)
+    {
+        error = "the impulse response file reads as empty";
+        return false;
+    }
+
+    const auto channels = juce::jlimit (1, 2, static_cast<int> (reader->numChannels));
+    juce::AudioBuffer<float> buffer (static_cast<int> (reader->numChannels), frames);
+
+    if (! reader->read (&buffer, 0, frames, 0, true, true))
+    {
+        error = "the impulse response could not be read";
+        return false;
+    }
+
+    asset.storage.assign (static_cast<std::size_t> (channels) * static_cast<std::size_t> (frames), 0.0f);
+    asset.channels.assign (static_cast<std::size_t> (channels), nullptr);
+
+    for (int channel = 0; channel < channels; ++channel)
+    {
+        auto* destination = asset.storage.data() + static_cast<std::size_t> (channel) * static_cast<std::size_t> (frames);
+
+        std::copy (buffer.getReadPointer (channel), buffer.getReadPointer (channel) + frames, destination);
+        asset.channels[static_cast<std::size_t> (channel)] = destination;
+    }
+
+    asset.impulse.channels = asset.channels.data();
+    asset.impulse.channelCount = channels;
+    asset.impulse.frames = frames;
+    asset.impulse.sampleRate = reader->sampleRate;
+
+    return true;
+}
+
+dsp::BusSendSettings XerumAudioProcessor::planRouting (const model::PresetDocument& document)
+{
+    dsp::BusSendSettings settings;
+
+    const auto leafValue = [&document] (const std::string& path, double& out)
+    {
+        const auto found = document.parameters.find (path);
+
+        return found != document.parameters.end() && modelNumber (found->second, out);
+    };
+
+    // **The reference's own law for a send**, measured through its host with the init patch loaded (see
+    // `dsp::BusSendSettings`): the preset stores the level as a percent and the send's amplitude is that
+    // level cubed, so 50 % is -18 dB and full level is unity.
+    const auto sendGain = [] (const double percent)
+    {
+        const auto level = std::clamp (percent / 100.0, 0.0, 1.0);
+        return level * level * level;
+    };
+
+    std::string unappliedDestinations;
+
+    for (int row = 0; row < dsp::kRoutingRowCount; ++row)
+    {
+        const auto prefix = "RoutingSlot" + std::to_string (row) + "/plainParams/";
+        double level = 0.0;
+
+        if (leafValue (prefix + "kParamFXBus1Level", level))
+            settings.gain[static_cast<std::size_t> (row)][0] = sendGain (level);
+
+        if (leafValue (prefix + "kParamFXBus2Level", level))
+            settings.gain[static_cast<std::size_t> (row)][1] = sendGain (level);
+
+        // **The destination is not applied, and says so.** The reference gives each routing row a
+        // destination (`kRoutingDestDirect`/`Filter`/`Master`/`None`); xerum's voice layer has one fixed
+        // path — every source runs into the voice filters and then the mixer — which is what `Filter`
+        // describes. A preset that stored anything else is asking for something this build does not do, and
+        // rendering it through the fixed path anyway is exactly the silent default the contract forbids. Its
+        // *sends* are applied either way, because those are what ticket `64` wired.
+        const auto destination = document.parameters.find (prefix + "kParamRoutingDest");
+        std::string text;
+
+        if (destination != document.parameters.end() && modelText (destination->second, text)
+            && text != "kRoutingDestFilter")
+        {
+            if (! unappliedDestinations.empty())
+                unappliedDestinations += ", ";
+
+            unappliedDestinations += std::string (kRoutingRowNames[row]) + " -> " + text;
+        }
+    }
+
+    if (! unappliedDestinations.empty())
+        addReportEntry (report_, model::Severity::Medium, "RoutingSlot", "kParamRoutingDest",
+                        "the preset routes " + unappliedDestinations
+                            + "; xerum's voice path is fixed (every source runs through the voice filters "
+                              "into the mixer, which is what `kRoutingDestFilter` describes) and the "
+                              "destination is not applied, so those rows sound through that path — their "
+                              "BUS 1 / BUS 2 sends are applied");
+
+    return settings;
+}
+
 void XerumAudioProcessor::publishFxRack (const model::PresetDocument& document)
 {
     auto plan = planFxRack (document);
+
+    // **The impulses the content layer resolved** (ticket `64`) attach to the slots that named them, before
+    // the rack is built: a slot holds a pointer into this storage, and `setSlots` dereferences it. The
+    // inline ones `planFxRack` already built are in the plan; these are the files, matched by the slot's
+    // own path.
+    plan->resolvedImpulses = irAssets_;
+
+    if (plan->resolvedImpulses != nullptr)
+        for (const auto& position : plan->impulsePositions)
+        {
+            // Both halves matter: the slot's path says *where* the impulse goes, the reference says which
+            // one — and the content layer's assets are this document's, matched against this document's
+            // own leaves.
+            const auto& assets = *plan->resolvedImpulses;
+            const auto asset = std::find_if (assets.begin(), assets.end(),
+                                             [&position] (const IrAsset& candidate)
+                                             {
+                                                 return candidate.modulePath == position.modulePath
+                                                        && ! position.reference.empty()
+                                                        && candidate.reference == position.reference;
+                                             });
+
+            if (asset != assets.end())
+                plan->racks[static_cast<std::size_t> (position.rack)][position.position].impulse = &asset->impulse;
+        }
+
+    // **A rack whose impulses are still being resolved is not published yet.** Building it now would hand
+    // its convolver nothing and report "no impulse response was supplied" about a preset whose impulse is a
+    // filesystem answer away, and the report is not allowed to say something it will have to take back.
+    // The timer's `flushContent` publishes the content and then this rack, once, with the impulses;
+    // `fxDeferred_` is what makes that a retry rather than a dropped preset.
+    if (impulsesPending_)
+    {
+        fxDeferred_.store (true, std::memory_order_release);
+        return;
+    }
 
     if (! freezeAndWait())
     {
@@ -1937,12 +2400,21 @@ void XerumAudioProcessor::publishFxRack (const model::PresetDocument& document)
     fxBank_.setBusRouting (busNumber ("kParamFXBus1Dest"), busNumber ("kParamFXBus1Vol"),
                            busNumber ("kParamFXBus2Dest"), busNumber ("kParamFXBus2Vol"));
 
+    // **The mixer's sends** (ticket `64`), from the same document and inside the same frozen window: the
+    // audio thread reads them through `settings_`, and an array of doubles written underneath a running
+    // block is exactly the tear the handshake exists to prevent.
+    routing_ = planRouting (document);
+
     // The plan outlives this call because the slots borrow from it: `prepareToPlay` re-prepares the bank,
     // which rebuilds the chain and dereferences those curves and responses again.
     fxPlan_ = std::move (plan);
     fxDeferred_.store (false, std::memory_order_release);
 
     frozen_.store (false, std::memory_order_release);
+
+    // The audio thread copies the new sends into its own settings on the next block. It has to be told:
+    // a routing change is not a parameter change, and nothing else would raise the flag.
+    settingsDirty_.store (true, std::memory_order_release);
 
     // What neither half could honour. The **decode's** own notes are per slot; the **rack's**
     // `unresolved()` is a class name — which the model's walk has already reported (`checkEffects`) — or

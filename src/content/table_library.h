@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -45,6 +46,27 @@ struct TableLookup
 
     bool found() const { return resolution == Resolution::Exact || resolution == Resolution::CaseInsensitive; }
 };
+
+/// A reference resolved to **bytes**, for an asset this layer does not parse.
+///
+/// Ticket `64`. An impulse response is an audio file the convolver reads, not a wavetable, so the
+/// resolution rules are the ones `loadTable` applies — the same walk, the same absence/refusal
+/// distinction — and only the read is generic: whoever asked decodes the bytes. Which codec that takes is
+/// deliberately not this layer's business; it links no JUCE and touches no decoder.
+struct AssetLookup
+{
+    Resolution resolution { Resolution::Missing };
+    std::string error;              ///< why, when it is not Exact or CaseInsensitive
+    std::filesystem::path path;     ///< what it resolved to, when it did
+    std::vector<std::byte> bytes;
+
+    bool found() const { return resolution == Resolution::Exact || resolution == Resolution::CaseInsensitive; }
+};
+
+/// The subdirectory the reference instrument's own content tree keeps its impulse responses under.
+/// `Impulses/Factory/Long/Crisp.flac` is a reference as a preset spells it, and the `Impulses/` join is
+/// this layer's — exactly as `Tables/` is for a wavetable.
+inline constexpr std::string_view kImpulseDirectory = "Impulses";
 
 /// A content path that is **there and cannot be read**, and why.
 ///
@@ -80,8 +102,17 @@ public:
     /// `/Analog/Basic Shapes.wav`, resolved under a root's `Tables` directory.
     TableLookup loadTable (std::string_view reference) const;
 
-    /// Drop the cache. Needed when the content on disk changes underneath a running instance.
-    void clearCache() const { cache_.clear(); }
+    /// Resolve a reference to the **bytes** of the file it names, under `subdirectory` inside a root first
+    /// and then under the root itself, exactly as `loadTable` does. The absence/refusal distinction is
+    /// `loadTable`'s too: nothing there is reported here as anything else.
+    AssetLookup loadAsset (std::string_view reference, std::string_view subdirectory) const;
+
+    /// Drop the caches. Needed when the content on disk changes underneath a running instance.
+    void clearCache() const
+    {
+        cache_.clear();
+        assetCache_.clear();
+    }
 
 private:
     std::vector<std::filesystem::path> roots_;
@@ -101,6 +132,20 @@ private:
     /// Keyed by the *resolved* path, so two references that land on the same file are read once. A factory
     /// table is up to 2 MB and the engine asks for the same handful constantly.
     mutable std::map<std::string, TableLookup> cache_;
+
+    /// The bytes cache, keyed the same way and for the same reason: an impulse response is up to a few MB
+    /// and a preset that names one asks for it on every load.
+    mutable std::map<std::string, AssetLookup> assetCache_;
+
+    /// One reference's **path**, under `subdirectory` inside a root and then under the root itself: the
+    /// exact-spelling walk first, then the case-insensitive one, in root order. Absence and refusal are
+    /// told apart here and recorded on the library; whether the caller then parses a wavetable or copies
+    /// raw bytes is not this function's business, which is the whole of ticket `64`'s share of it.
+    ///
+    /// `resolution` and `error` are set even when nothing is found — `Missing` with the roots' count, or
+    /// `Unreadable` with the reason one root gave.
+    std::optional<std::filesystem::path> findAsset (std::string_view reference, std::string_view subdirectory,
+                                                    Resolution& resolution, std::string& error) const;
 };
 
 } // namespace xerum::content

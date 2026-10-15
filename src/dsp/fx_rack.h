@@ -29,9 +29,10 @@
 // supplies — either the `embeddedIR` a preset can carry inline or a file the caller resolved from
 // `relativePathToIR`, which is how the shipped 109-file `Impulses/` corpus (ticket `04` §6, 78 distinct
 // references in the factory bank) reaches the effect. This layer touches no filesystem, so the reference
-// is a borrowed pointer and the resolution belongs to the content layer (tickets `16`/`34`). When it is
-// null the convolver **reports** through `problem()` and passes the dry signal; it never convolves with
-// nothing, which would be exactly the silent drop `docs/preset-import-contract.md` forbids.
+// is a borrowed pointer and the resolution belongs to the content layer, which is where ticket `64` put it
+// (`content::TableLibrary::loadAsset` under `Impulses/`, decoded by the plugin). When it is null the
+// convolver **reports** through `problem()` and passes the dry signal; it never convolves with nothing,
+// which would be exactly the silent drop `docs/preset-import-contract.md` forbids.
 //
 // **Defaults.** A preset never stores a value equal to its default, so every default is a convention
 // here until ticket `38`'s table establishes one. Each effect states its conventions where it reads

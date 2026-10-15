@@ -55,8 +55,9 @@ the whole of what the engine claims:
 * **FX** — 14 of the reference's 16 effect classes, covering 99 % of use, in the MAIN / BUS 1 / BUS 2
   rack arrangement (tickets `12`, `29`), **in the signal path** between the master gain and the ceiling
   (ticket `60`): a preset's `FXRack{n}/FX[]` arrays are read from the document and processed in the
-  preset's own order. MAIN is fed by the voice pool; BUS 1 and BUS 2 are wired and receive silence,
-  because the voice layer's sends (`RoutingSlot`'s `kParamFXBus{n}Level`) are not implemented.
+  preset's own order. MAIN is fed by the voice pool and BUS 1 and BUS 2 by the voice layer's sends
+  (ticket `64`: `RoutingSlot`'s `kParamFXBus{n}Level`, at the reference's own cubic law), with a preset
+  that sends nothing leaving them silent.
 * **Voices** — polyphonic with a fixed ceiling, unison with a measured stereo spread, mono/legato,
   and MIDI note, sustain-pedal and pitch-bend handling (tickets `28`, `30`, `41`). Pitch bend is
   ±2 semitones, the reference's init value — stated, not measured (ticket `30`).

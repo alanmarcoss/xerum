@@ -69,6 +69,21 @@ void panGains (double position, double spread, double& left, double& right)
 }
 } // namespace
 
+bool BusSendSettings::any() const
+{
+    for (const auto& row : gain)
+        for (const auto level : row)
+            if (level != 0.0)
+                return true;
+
+    return false;
+}
+
+bool BusSends::wanted() const
+{
+    return (left[0] != nullptr && right[0] != nullptr) || (left[1] != nullptr && right[1] != nullptr);
+}
+
 VoiceMode voiceModeFor (bool mono, bool legato)
 {
     if (! mono)
@@ -365,7 +380,7 @@ void Voice::kill()
     lastFilterSample_.fill (0.0);
 }
 
-void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatrix* matrix,
+void Voice::render (float* outLeft, float* outRight, const BusSends& sends, int frames, ModulationMatrix* matrix,
                     const ModulationInputs& inputs)
 {
     if (stage_ == VoiceStage::Idle || frames <= 0)
@@ -572,6 +587,15 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
     if (! filterVaries)
         setConstantFilter();
 
+    // **Whether this voice sends anything** (ticket `64`), decided once per call: a preset with no
+    // routing-matrix levels, or a caller with no bus buffers, records no taps and writes nothing — so a
+    // render that asked for no sends is the render it was before the sends existed.
+    const bool sending = sends.wanted() && settings_.sends.any();
+
+    /// One pair per routing row, filled in the frame loop below and read by the send that closes it.
+    std::array<float, kRoutingRowCount> tapLeft {};
+    std::array<float, kRoutingRowCount> tapRight {};
+
     for (int frame = 0; frame < frames; ++frame)
     {
         // A steal that finishes mid-block hands the voice to its pending note right here, so there is no
@@ -616,6 +640,15 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
         float left = 0.0f;
         float right = 0.0f;
 
+        // **What each routing row contributes, before the voice filters** — the source of a bus send
+        // (ticket `64`). Reset per frame so a row whose source is off this frame sends nothing rather
+        // than the last frame's sample.
+        if (sending)
+        {
+            tapLeft.fill (0.0f);
+            tapRight.fill (0.0f);
+        }
+
         // The two fixed slots first. Their output is mixed like any other slot's — the reference's own
         // mixer sums the five — and generating them here costs nothing, because neither reads another
         // slot. Neither is panned either, but for a different reason from a wavetable slot: **xerum wires
@@ -635,6 +668,13 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
             const auto value = noise_.next() * static_cast<float> (volume);
             left += value;
             right += value;
+
+            if (sending)
+            {
+                tapLeft[kNoiseSlot] = value;
+                tapRight[kNoiseSlot] = value;
+            }
+
             lastSlotSample_[static_cast<std::size_t> (kNoiseSlot)] = value;
         }
 
@@ -653,6 +693,13 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
             const auto value = sub_.next() * static_cast<float> (volume);
             left += value;
             right += value;
+
+            if (sending)
+            {
+                tapLeft[kSubSlot] = value;
+                tapRight[kSubSlot] = value;
+            }
+
             lastSlotSample_[static_cast<std::size_t> (kSubSlot)] = value;
         }
 
@@ -707,6 +754,12 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
             left += sumLeft * amplitude;
             right += sumRight * amplitude;
 
+            if (sending)
+            {
+                tapLeft[s] = sumLeft * amplitude;
+                tapRight[s] = sumRight * amplitude;
+            }
+
             // What this slot contributed, which is both its `OSC A/B/C` source value and what any warp
             // reading *this* oscillator sees. Post-level, so a preset that mutes the source stops the
             // modulation with it rather than leaving it running silently.
@@ -718,34 +771,44 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
         for (int f = 0; f < kFilterSlots; ++f)
         {
             const auto& fs = settings_.filters[f];
-            if (! fs.enabled)
-                continue;
 
-            if (filterVaries)
+            if (fs.enabled)
             {
-                const auto cutoff = clampDouble (fs.cutoff
-                                                     + cutoffRamp[f].at (frame, frames)
-                                                           * kCutoffModulationSpan,
-                                                 0.0, 1.0);
-                const auto resonance = clampDouble (fs.resonance
-                                                        + resoRamp[f].at (frame, frames)
-                                                              * kResonanceModulationSpan,
-                                                    0.0, 100.0);
-
-                for (auto& filter : filters_[f])
+                if (filterVaries)
                 {
-                    filter.setCutoff (cutoff);
-                    filter.setResonance (resonance);
+                    const auto cutoff = clampDouble (fs.cutoff
+                                                         + cutoffRamp[f].at (frame, frames)
+                                                               * kCutoffModulationSpan,
+                                                     0.0, 1.0);
+                    const auto resonance = clampDouble (fs.resonance
+                                                            + resoRamp[f].at (frame, frames)
+                                                                  * kResonanceModulationSpan,
+                                                        0.0, 100.0);
+
+                    for (auto& filter : filters_[f])
+                    {
+                        filter.setCutoff (cutoff);
+                        filter.setResonance (resonance);
+                    }
                 }
+
+                left = filters_[f][0].process (left);
+                right = filters_[f][1].process (right);
+
+                // `Filter 1`/`Filter 2` as modulation sources: the signal leaving that filter. Filter 2's
+                // input is filter 1's output, so the two sources are what the chain actually produces.
+                lastFilterSample_[static_cast<std::size_t> (f)]
+                    = 0.5 * (static_cast<double> (left) + static_cast<double> (right));
             }
 
-            left = filters_[f][0].process (left);
-            right = filters_[f][1].process (right);
-
-            // `Filter 1`/`Filter 2` as modulation sources: the signal leaving that filter. Filter 2's
-            // input is filter 1's output, so the two sources are what the chain actually produces.
-            lastFilterSample_[static_cast<std::size_t> (f)]
-                = 0.5 * (static_cast<double> (left) + static_cast<double> (right));
+            // **The `Filter 1` / `Filter 2` routing rows** (ticket `64`): the signal *leaving* this stage.
+            // A disabled filter passes its input through, so its row carries the pre-filter mix — which is
+            // also why this sits outside the `enabled` branch rather than with the filter's own source.
+            if (sending)
+            {
+                tapLeft[static_cast<std::size_t> (kSlotCount + f)] = left;
+                tapRight[static_cast<std::size_t> (kSlotCount + f)] = right;
+            }
         }
 
         const double envelope = envelope_.level();
@@ -760,6 +823,36 @@ void Voice::render (float* outLeft, float* outRight, int frames, ModulationMatri
         const auto amplitude = static_cast<float> (envelope * velocity_ * fade);
         outLeft[frame] += left * amplitude;
         outRight[frame] += right * amplitude;
+
+        // **The sends** (ticket `64`) close the frame, with the same amplitude the main path just took, so
+        // a released or stolen voice's bus send fades with it. Each bus sums its rows' taps at their own
+        // levels and *adds* — the reference's send is a parallel tap, and the main path above is the
+        // source's own either way.
+        if (sending)
+        {
+            for (int bus = 0; bus < 2; ++bus)
+            {
+                if (sends.left[bus] == nullptr || sends.right[bus] == nullptr)
+                    continue;
+
+                float busLeft = 0.0f;
+                float busRight = 0.0f;
+
+                for (int row = 0; row < kRoutingRowCount; ++row)
+                {
+                    const auto gain = static_cast<float> (settings_.sends.gain[row][bus]);
+
+                    if (gain == 0.0f)
+                        continue;
+
+                    busLeft += tapLeft[static_cast<std::size_t> (row)] * gain;
+                    busRight += tapRight[static_cast<std::size_t> (row)] * gain;
+                }
+
+                sends.left[bus][frame] += busLeft * amplitude;
+                sends.right[bus][frame] += busRight * amplitude;
+            }
+        }
     }
 
     if (stage_ == VoiceStage::Releasing && envelope_.idle())
@@ -1040,7 +1133,7 @@ void VoiceEngine::setSustainPedal (bool down)
     sustainDown_ = down;
 }
 
-void VoiceEngine::process (float* outLeft, float* outRight, int frames)
+void VoiceEngine::process (float* outLeft, float* outRight, const BusSends& sends, int frames)
 {
     if (outLeft == nullptr || outRight == nullptr || frames <= 0)
         return;
@@ -1075,7 +1168,7 @@ void VoiceEngine::process (float* outLeft, float* outRight, int frames)
         // different settings and its own state, and the two must not be conflated: ticket 48 asserts a
         // matrix envelope moving a filter while the amplitude envelope shapes the level.
 
-        voice.render (outLeft, outRight, frames, matrixActive ? &matrix_ : nullptr, inputs);
+        voice.render (outLeft, outRight, sends, frames, matrixActive ? &matrix_ : nullptr, inputs);
     }
 }
 

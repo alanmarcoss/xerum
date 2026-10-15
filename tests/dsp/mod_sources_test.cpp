@@ -81,7 +81,7 @@ std::vector<float> renderEngine (VoiceEngine& engine, const int totalFrames, con
     std::vector<float> right (static_cast<std::size_t> (totalFrames));
 
     for (int done = 0; done < totalFrames; done += block)
-        engine.process (left.data() + done, right.data() + done, std::min (block, totalFrames - done));
+        engine.process (left.data() + done, right.data() + done, {}, std::min (block, totalFrames - done));
 
     return left;
 }

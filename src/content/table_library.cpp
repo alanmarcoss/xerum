@@ -198,19 +198,24 @@ void TableLibrary::addRoot (const std::filesystem::path& root)
     roots_.push_back (root);
 }
 
-TableLookup TableLibrary::loadTable (std::string_view reference) const
+std::optional<std::filesystem::path> TableLibrary::findAsset (std::string_view reference,
+                                                              std::string_view subdirectory,
+                                                              Resolution& resolution, std::string& error) const
 {
+    resolution = Resolution::Missing;
+    error.clear();
+
     const auto relative = normaliseReference (reference);
 
     if (relative.empty())
     {
-        TableLookup lookup;
-        lookup.error = "empty asset reference";
-        return lookup;
+        error = "empty asset reference";
+        return std::nullopt;
     }
 
-    // The reference's own layout: table references resolve under `Tables`.
-    const auto candidates = { std::filesystem::path ("Tables") / relative, std::filesystem::path (relative) };
+    // The reference's own layout: a table resolves under `Tables` and an impulse under `Impulses`, and both
+    // fall back to the reference exactly as the preset spelled it.
+    const auto candidates = { std::filesystem::path (subdirectory) / relative, std::filesystem::path (relative) };
 
     for (const auto& root : roots_)
     {
@@ -236,65 +241,17 @@ TableLookup TableLibrary::loadTable (std::string_view reference) const
                 continue;
             }
 
-            if (present)
-            {
-                const bool exactSpelling = spelledExactly (root, suffix, refusal);
-                const auto key = candidate.string();
+            if (! present)
+                continue;
 
-                if (const auto cached = cache_.find (key); cached != cache_.end())
-                    return cached->second;
+            resolution = spelledExactly (root, suffix, refusal) ? Resolution::Exact : Resolution::CaseInsensitive;
 
-                std::ifstream in (candidate, std::ios::binary);
+            // A refusal met on the way to a hit is still a refusal (ticket `56`): the file resolved, but
+            // something above it would not be listed, and that is worth saying rather than swallowing.
+            if (! refusal.path.empty())
+                noteProblem (refusal.path, refusal.reason);
 
-                // The **non-throwing** size call, deliberately: a specious entry in a content root — a
-                // FIFO, a socket, anything the filesystem will not size — used to throw out of here, and
-                // an exception is not a report. It is an unreadable asset like any other (ticket `56`).
-                std::error_code sizing;
-                const auto size = std::filesystem::file_size (candidate, sizing);
-
-                if (sizing)
-                {
-                    TableLookup lookup;
-                    lookup.resolution = Resolution::Unreadable;
-                    lookup.path = candidate;
-                    lookup.error = "could not read " + candidate.string() + " (" + sizing.message() + ")";
-                    cache_.emplace (key, lookup);
-                    return lookup;
-                }
-
-                std::vector<std::byte> bytes (static_cast<std::size_t> (size));
-
-                if (in.good() && ! bytes.empty())
-                {
-                    in.read (reinterpret_cast<char*> (bytes.data()), (std::streamsize) bytes.size());
-
-                    const auto parsed = xerum::dsp::parseWavetable (bytes);
-
-                    TableLookup lookup;
-                    lookup.path = candidate;
-
-                    if (parsed.ok)
-                    {
-                        lookup.resolution = exactSpelling ? Resolution::Exact : Resolution::CaseInsensitive;
-                        lookup.table = parsed.table;
-                    }
-                    else
-                    {
-                        lookup.resolution = Resolution::Unreadable;
-                        lookup.error = parsed.error;
-                    }
-
-                    cache_.emplace (key, lookup);
-                    return lookup;
-                }
-
-                TableLookup lookup;
-                lookup.resolution = Resolution::Unreadable;
-                lookup.path = candidate;
-                lookup.error = "could not read " + candidate.string();
-                cache_.emplace (key, lookup);
-                return lookup;
-            }
+            return candidate;
         }
 
         // Exact failed everywhere under this root; try ignoring case before moving on.
@@ -309,63 +266,161 @@ TableLookup TableLibrary::loadTable (std::string_view reference) const
             if (failing && ! isAbsence (failing))
                 noteProblem (found, "could not be read (" + failing.message() + ")");
 
-            if (present)
-            {
-                const auto key = found.string();
+            if (! present)
+                continue;
 
-                if (const auto cached = cache_.find (key); cached != cache_.end())
-                {
-                    auto lookup = cached->second;
-                    lookup.resolution = Resolution::CaseInsensitive;
-                    return lookup;
-                }
-
-                std::ifstream in (found, std::ios::binary);
-
-                std::error_code sizing;
-                const auto size = std::filesystem::file_size (found, sizing);
-
-                if (sizing)
-                    continue;
-
-                std::vector<std::byte> bytes (static_cast<std::size_t> (size));
-
-                if (in.good() && ! bytes.empty())
-                {
-                    in.read (reinterpret_cast<char*> (bytes.data()), (std::streamsize) bytes.size());
-
-                    const auto parsed = xerum::dsp::parseWavetable (bytes);
-
-                    TableLookup lookup;
-                    lookup.path = found;
-                    lookup.resolution = parsed.ok ? Resolution::CaseInsensitive : Resolution::Unreadable;
-
-                    if (parsed.ok)
-                    {
-                        lookup.table = parsed.table;
-                        cache_.emplace (key, lookup);
-                    }
-                    else
-                    {
-                        lookup.error = parsed.error;
-                    }
-
-                    return lookup;
-                }
-            }
+            resolution = Resolution::CaseInsensitive;
+            return found;
         }
 
         if (! refusal.path.empty())
             noteProblem (refusal.path, refusal.reason);
     }
 
-    TableLookup lookup;
-    lookup.resolution = Resolution::Missing;
-    lookup.error = "not found in " + std::to_string (roots_.size()) + " content root(s)";
+    resolution = Resolution::Missing;
+    error = "not found in " + std::to_string (roots_.size()) + " content root(s)";
 
     if (! problems_.empty())
-        lookup.error += "; " + std::to_string (problems_.size()) + " content path(s) could not be read";
+        error += "; " + std::to_string (problems_.size()) + " content path(s) could not be read";
 
+    return std::nullopt;
+}
+
+TableLookup TableLibrary::loadTable (std::string_view reference) const
+{
+    Resolution resolution;
+    std::string error;
+    const auto found = findAsset (reference, "Tables", resolution, error);
+
+    if (! found.has_value())
+    {
+        TableLookup lookup;
+        lookup.resolution = resolution;
+        lookup.error = error;
+        return lookup;
+    }
+
+    const auto key = found->string();
+
+    if (const auto cached = cache_.find (key); cached != cache_.end())
+    {
+        // The *spelling* is a fact about the reference that asked, not about the file: a hit through the
+        // case-insensitive pass is reported as one even when another reference already read that same file
+        // exactly. A read that failed stays failed — that is a fact about the file.
+        auto lookup = cached->second;
+
+        if (lookup.found())
+            lookup.resolution = resolution;
+
+        return lookup;
+    }
+
+    std::ifstream in (*found, std::ios::binary);
+
+    // The **non-throwing** size call, deliberately: a specious entry in a content root — a FIFO, a socket,
+    // anything the filesystem will not size — used to throw out of here, and an exception is not a report.
+    // It is an unreadable asset like any other (ticket `56`).
+    std::error_code sizing;
+    const auto size = std::filesystem::file_size (*found, sizing);
+
+    if (sizing)
+    {
+        TableLookup lookup;
+        lookup.resolution = Resolution::Unreadable;
+        lookup.path = *found;
+        lookup.error = "could not read " + found->string() + " (" + sizing.message() + ")";
+        cache_.emplace (key, lookup);
+        return lookup;
+    }
+
+    std::vector<std::byte> bytes (static_cast<std::size_t> (size));
+
+    if (in.good() && ! bytes.empty())
+    {
+        in.read (reinterpret_cast<char*> (bytes.data()), (std::streamsize) bytes.size());
+
+        const auto parsed = xerum::dsp::parseWavetable (bytes);
+
+        TableLookup lookup;
+        lookup.path = *found;
+        lookup.resolution = resolution;
+
+        if (parsed.ok)
+            lookup.table = parsed.table;
+        else
+        {
+            lookup.resolution = Resolution::Unreadable;
+            lookup.error = parsed.error;
+        }
+
+        cache_.emplace (key, lookup);
+        return lookup;
+    }
+
+    TableLookup lookup;
+    lookup.resolution = Resolution::Unreadable;
+    lookup.path = *found;
+    lookup.error = "could not read " + found->string();
+    cache_.emplace (key, lookup);
+    return lookup;
+}
+
+AssetLookup TableLibrary::loadAsset (std::string_view reference, std::string_view subdirectory) const
+{
+    Resolution resolution;
+    std::string error;
+    const auto found = findAsset (reference, subdirectory, resolution, error);
+
+    AssetLookup lookup;
+
+    if (! found.has_value())
+    {
+        lookup.resolution = resolution;
+        lookup.error = error;
+        return lookup;
+    }
+
+    const auto key = found->string();
+
+    if (const auto cached = assetCache_.find (key); cached != assetCache_.end())
+    {
+        auto cachedLookup = cached->second;
+
+        if (cachedLookup.found())
+            cachedLookup.resolution = resolution;
+
+        return cachedLookup;
+    }
+
+    lookup.path = *found;
+    lookup.resolution = resolution;
+
+    std::error_code sizing;
+    const auto size = std::filesystem::file_size (*found, sizing);
+
+    if (sizing)
+    {
+        lookup.resolution = Resolution::Unreadable;
+        lookup.error = "could not read " + found->string() + " (" + sizing.message() + ")";
+        assetCache_.emplace (key, lookup);
+        return lookup;
+    }
+
+    std::ifstream in (*found, std::ios::binary);
+    std::vector<std::byte> bytes (static_cast<std::size_t> (size));
+
+    if (! in.good() || bytes.empty())
+    {
+        lookup.resolution = Resolution::Unreadable;
+        lookup.error = "could not read " + found->string();
+        assetCache_.emplace (key, lookup);
+        return lookup;
+    }
+
+    in.read (reinterpret_cast<char*> (bytes.data()), static_cast<std::streamsize> (bytes.size()));
+
+    lookup.bytes = std::move (bytes);
+    assetCache_.emplace (key, lookup);
     return lookup;
 }
 

@@ -171,6 +171,23 @@ fault, because the reference's own default is attenuated 14 dB by two of its own
 no engine level**; a fix would be a defaults ticket, not this one. The harness gained `--notes`/`--velocity`
 for it, additively: `[fidelity-stimulus]` still requires byte-identity, so the capture protocol did not move.
 
+**`[gain-staging][fx-units]` is the same instrument pointed at the two leaves ticket `63` could not reach**
+(ticket `62`): `kParamLevelOut`, the FX "level" knob, and `FXComp`'s `kParamThresh`. Neither is on the
+reference's parameter surface — its 2623 parameters carry sixteen generic `FX Main Param`s per rack and all
+of them read zero with a real rack loaded — so the case **authors a preset that differs from a factory one
+only in the leaf under test** (`patchReferencePreset`: decode the payload tree, set the leaf in the tree,
+re-wrap the container, so no structural quirk is lost), renders it on both sides and compares the ratios
+*between stored values*, which is what makes the measurement independent of everything else the two engines
+do differently. The fitted models are `gain = 4·s²` (unity at `s = 0.5`, the leaf's own default: a preset
+that omits it renders byte-identically to one storing `0.5`) and `threshold amplitude = (1−s)³` (the
+stored `0` is `0 dBFS`), the latter measured with the ratio at its limit so the compressor pins its
+output to the threshold, and its **exponent** — `ln(amplitude)/ln(1−s) = 2.999` across six stored
+values — is the part the sweep establishes; the *absolute pin* is a stimulus-dependent factor above the
+threshold (1.10× on one stimulus, 1.41× on another), so the case asserts the ratio between stored values,
+which is exact, rather than a peak that would be asserting the reference's detector. The case asserts
+each model against the reference and each output against the other side's at four stored values, so a
+model fitted to two points could not pass.
+
 ## Where fixtures live
 
 Outside the repository, in a documented location (`~/.xerum-fixtures/`), covered by `.gitignore`.

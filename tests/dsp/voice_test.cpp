@@ -136,7 +136,7 @@ void render (VoiceEngine& engine, std::vector<float>& out, int frames, int block
     for (int i = 0; i < frames; i += blockSize)
     {
         const int n = std::min (blockSize, frames - i);
-        engine.process (out.data() + i, right.data() + i, n);
+        engine.process (out.data() + i, right.data() + i, {}, n);
     }
 }
 
@@ -150,7 +150,7 @@ void renderStereo (VoiceEngine& engine, std::vector<float>& left, std::vector<fl
     for (int i = 0; i < frames; i += blockSize)
     {
         const int n = std::min (blockSize, frames - i);
-        engine.process (left.data() + i, right.data() + i, n);
+        engine.process (left.data() + i, right.data() + i, {}, n);
     }
 }
 
@@ -159,6 +159,63 @@ std::vector<float> render (VoiceEngine& engine, int frames, int blockSize = 128)
     std::vector<float> out;
     render (engine, out, frames, blockSize);
     return out;
+}
+
+/// Every output the pool has: the main pair and the two busses (ticket `64`). Rendered in blocks, with the
+/// send buffers' own block added to rather than overwritten — which is what the engine's contract says.
+struct SendRender
+{
+    std::vector<float> left, right;
+    std::vector<float> bus1Left, bus1Right;
+    std::vector<float> bus2Left, bus2Right;
+};
+
+SendRender renderWithSends (VoiceEngine& engine, int frames, int blockSize = 128)
+{
+    SendRender out;
+    out.left.assign (static_cast<std::size_t> (frames), 0.0f);
+    out.right.assign (static_cast<std::size_t> (frames), 0.0f);
+    out.bus1Left.assign (static_cast<std::size_t> (frames), 0.0f);
+    out.bus1Right.assign (static_cast<std::size_t> (frames), 0.0f);
+    out.bus2Left.assign (static_cast<std::size_t> (frames), 0.0f);
+    out.bus2Right.assign (static_cast<std::size_t> (frames), 0.0f);
+
+    for (int i = 0; i < frames; i += blockSize)
+    {
+        const int n = std::min (blockSize, frames - i);
+
+        BusSends sends;
+        sends.left[0] = out.bus1Left.data() + i;
+        sends.right[0] = out.bus1Right.data() + i;
+        sends.left[1] = out.bus2Left.data() + i;
+        sends.right[1] = out.bus2Right.data() + i;
+
+        engine.process (out.left.data() + i, out.right.data() + i, sends, n);
+    }
+
+    return out;
+}
+
+double rmsOf (const std::vector<float>& samples)
+{
+    double sum = 0.0;
+
+    for (const auto sample : samples)
+        sum += static_cast<double> (sample) * static_cast<double> (sample);
+
+    return samples.empty() ? 0.0 : std::sqrt (sum / static_cast<double> (samples.size()));
+}
+
+/// The first nonzero sample of a render, so two renders can be compared for bit equality.
+std::size_t firstDifference (const std::vector<float>& a, const std::vector<float>& b)
+{
+    const auto count = std::min (a.size(), b.size());
+
+    for (std::size_t i = 0; i < count; ++i)
+        if (a[i] != b[i])
+            return i;
+
+    return count;
 }
 
 /// The magnitude spectrum over [minHz, maxHz] at `stepHz`, by direct DFT with a Hann window and an
@@ -725,14 +782,14 @@ TEST_CASE ("voice: no heap allocation on the audio thread", "[voice]")
         if (i % 48 == 0)
             engine->noteOff (48 + ((i + 16) % 24));
 
-        engine->process (block.data(), blockRight.data(), static_cast<int> (block.size()));
+        engine->process (block.data(), blockRight.data(), {}, static_cast<int> (block.size()));
     }
 
     // Change settings and the sustain pedal during the render too: neither may allocate.
     engine->setSettings (settings);
     engine->setSustainPedal (true);
     engine->noteOn (60, 1.0);
-    engine->process (block.data(), blockRight.data(), static_cast<int> (block.size()));
+    engine->process (block.data(), blockRight.data(), {}, static_cast<int> (block.size()));
     engine->setSustainPedal (false);
 
     g_tracking.store (false, std::memory_order_relaxed);
@@ -828,7 +885,7 @@ TEST_CASE ("voice: the modulation generators allocate nothing on the audio threa
         if (i % 48 == 0)
             engine->noteOff (48 + ((i + 16) % 24));
 
-        engine->process (block.data(), blockRight.data(), static_cast<int> (block.size()));
+        engine->process (block.data(), blockRight.data(), {}, static_cast<int> (block.size()));
     }
 
     g_tracking.store (false, std::memory_order_relaxed);
@@ -891,12 +948,12 @@ TEST_CASE ("voice: the NOISE and SUB slots allocate nothing on the audio thread"
         if (i % 32 == 0)
             engine.noteOff (36 + ((i + 6) % 12));
 
-        engine.process (block.data(), blockRight.data(), static_cast<int> (block.size()));
+        engine.process (block.data(), blockRight.data(), {}, static_cast<int> (block.size()));
     }
 
     // A settings change mid-render too: it must not allocate either.
     engine.setSettings (settings);
-    engine.process (block.data(), blockRight.data(), static_cast<int> (block.size()));
+    engine.process (block.data(), blockRight.data(), {}, static_cast<int> (block.size()));
 
     g_tracking.store (false, std::memory_order_relaxed);
 
@@ -998,3 +1055,157 @@ TEST_CASE ("the unison spread reaches the output as a difference between the cha
 
     CHECK (channelDifference (mirrorRight, wideLeft) < 1e-5);
 }
+
+// ---------------------------------------------------------------- ticket 64: the bus sends
+//
+// The reference's routing matrix gives every source — OSC A/B/C, NOISE, SUB and the two voice filters —
+// a level into BUS 1 and BUS 2, and ticket `60` wired those busses end to end while nothing fed them.
+// What is asserted here is the voice layer's half, by *difference*: the bus output with a send against the
+// same render without one, the tap's position against the voice filter, and the level's own law.
+
+TEST_CASE ("the routing matrix's sends reach the bus outputs, and the main path keeps its own signal",
+           "[voice][sends]")
+{
+    // Measured on the reference first (through its host, init patch): a send is a **parallel tap** — at
+    // full level against the dry render the output was exactly twice the dry one, so the main path is not
+    // attenuated by a send — and this asserts the same property of xerum's voice.
+    const auto table = sineTable();
+
+    const auto run = [&table] (const double bus1Level, const double bus2Level)
+    {
+        VoiceSettings settings = sineSettings (&table);
+        settings.sends.gain[0][0] = bus1Level;
+        settings.sends.gain[0][1] = bus2Level;
+
+        VoiceEngine engine;
+        engine.prepare (kSampleRate, 128, 8);
+        engine.setSettings (settings);
+        REQUIRE (engine.noteOn (60, 1.0) == 0);
+        return renderWithSends (engine, 8192);
+    };
+
+    const auto none = run (0.0, 0.0);
+    const auto sent = run (1.0, 0.0);
+    const auto both = run (1.0, 1.0);
+
+    // No send: the bus outputs are the silence the caller cleared them to, bit for bit.
+    CHECK (rmsOf (none.bus1Left) == 0.0);
+    CHECK (rmsOf (none.bus1Right) == 0.0);
+    CHECK (rmsOf (none.bus2Left) == 0.0);
+
+    // A send at unity puts the source into BUS 1 and leaves BUS 2 alone.
+    REQUIRE (rmsOf (sent.bus1Left) > 0.1);
+    CHECK (rmsOf (sent.bus2Left) == 0.0);
+
+    // **The send is the source's own signal at unity**, so the send and the main path agree sample for
+    // sample — which is the parallel tap the reference's own numbers describe.
+    CHECK (firstDifference (sent.bus1Left, sent.left) == sent.left.size());
+    CHECK (firstDifference (sent.bus1Right, sent.right) == sent.right.size());
+
+    // The main path did not lose what it sent: with no filter in the way, the dry render is unchanged by
+    // the send existing.
+    CHECK (firstDifference (none.left, sent.left) == none.left.size());
+
+    // Both busses together, independently.
+    REQUIRE (rmsOf (both.bus2Left) > 0.1);
+    CHECK (firstDifference (both.bus2Left, sent.bus1Left) == sent.bus1Left.size());
+}
+
+TEST_CASE ("a send is taken before the voice filter, which is where the reference takes it", "[voice][sends]")
+{
+    // Measured on the reference: with `Filter 1` enabled at a low cutoff the main path came back a
+    // hundredth of the dry render while the send still carried the bright unfiltered oscillator. So the
+    // bus send is the source's own output and not the voice's filtered one.
+    const auto table = sineTable();
+
+    VoiceSettings settings = sineSettings (&table);
+    settings.sends.gain[0][0] = 1.0;
+    settings.filters[0].enabled = true;
+    settings.filters[0].cutoff = 0.05;      // deep lowpass against a 261 Hz sine's own harmonics
+    settings.filters[0].resonance = 10.0;
+    settings.filters[0].spec = filterSpecFromName ("L12");
+
+    VoiceEngine engine;
+    engine.prepare (kSampleRate, 128, 8);
+    engine.setSettings (settings);
+    REQUIRE (engine.noteOn (60, 1.0) == 0);
+    const auto rendered = renderWithSends (engine, 8192);
+
+    // The bus carries the pre-filter source; the main path is what the filter left. They are different
+    // signals, so the send is not a copy of the voice's output.
+    CHECK (rmsOf (rendered.bus1Left) > 0.1);
+    CHECK (firstDifference (rendered.bus1Left, rendered.left) < rendered.left.size());
+}
+
+TEST_CASE ("a send's level is an amplitude the bus carries, and the two busses are independent",
+           "[voice][sends]")
+{
+    // The voice layer multiplies by what it is given: `dsp::BusSendSettings::gain` is an **amplitude**,
+    // and the conversion from the reference's stored percent to that amplitude (its cube) belongs to the
+    // plugin, where the document is read — `[plugin][audio][fx]` pins the law itself against the
+    // reference's measured numbers. What this case pins is that a level reaches the bus as a linear gain
+    // and that one row's two busses do not interfere.
+    const auto table = sineTable();
+
+    const auto busRms = [&table] (const double level, const int bus)
+    {
+        VoiceSettings settings = sineSettings (&table);
+        settings.sends.gain[0][static_cast<std::size_t> (bus)] = level;
+
+        VoiceEngine engine;
+        engine.prepare (kSampleRate, 128, 8);
+        engine.setSettings (settings);
+        REQUIRE (engine.noteOn (60, 1.0) == 0);
+
+        const auto rendered = renderWithSends (engine, 8192);
+        return rmsOf (bus == 0 ? rendered.bus1Left : rendered.bus2Left);
+    };
+
+    const auto full = busRms (1.0, 0);
+    const auto half = busRms (0.5, 0);
+    const auto quarter = busRms (0.25, 0);
+    const auto otherBus = busRms (1.0, 1);
+
+    REQUIRE (full > 0.1);
+    CHECK (half == Catch::Approx (0.5 * full).epsilon (0.01));
+    CHECK (quarter == Catch::Approx (0.25 * full).epsilon (0.01));
+
+    // The second bus is its own level, not a copy of the first.
+    CHECK (otherBus == Catch::Approx (full).epsilon (0.01));
+    CHECK (busRms (0.0, 1) == 0.0);
+}
+
+TEST_CASE ("the Filter rows send what leaves the filter, one bus each", "[voice][sends]")
+{
+    // Rows 5 and 6 of the routing matrix are `Filter 1` and `Filter 2` — the signal *leaving* each stage —
+    // and a disabled filter passes its input through, so its row carries the pre-filter mix.
+    const auto table = sineTable();
+
+    const auto run = [&table] (const bool filterOn, const double level)
+    {
+        VoiceSettings settings = sineSettings (&table);
+        settings.sends.gain[5][0] = level;      // `Filter 1` -> BUS 1
+        settings.filters[0].enabled = filterOn;
+        settings.filters[0].cutoff = 0.05;
+        settings.filters[0].resonance = 10.0;
+        settings.filters[0].spec = filterSpecFromName ("L12");
+
+        VoiceEngine engine;
+        engine.prepare (kSampleRate, 128, 8);
+        engine.setSettings (settings);
+        REQUIRE (engine.noteOn (60, 1.0) == 0);
+        return renderWithSends (engine, 8192);
+    };
+
+    const auto off = run (false, 1.0);
+    const auto on = run (true, 1.0);
+
+    // Disabled: the row carries the mix the filter was handed, which is the voice's pre-filter signal.
+    CHECK (firstDifference (off.bus1Left, off.left) == off.left.size());
+
+    // Enabled: the row carries what the filter produced — a different, quieter signal than the pre-filter
+    // one, and the same one the main path has.
+    CHECK (rmsOf (on.bus1Left) < rmsOf (off.bus1Left));
+    CHECK (firstDifference (on.bus1Left, on.left) == on.left.size());
+}
+

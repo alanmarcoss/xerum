@@ -145,6 +145,82 @@ TEST_CASE ("a root that denies reads is reported, and the search goes on", "[con
     CHECK (problems.front().reason.find ("could not be read") != std::string::npos);
 }
 
+TEST_CASE ("an asset resolves to its bytes under the subdirectory the reference's own layout uses",
+           "[content]")
+{
+    // Ticket `64`: an impulse response is an audio file the convolver decodes, not a wavetable, so what the
+    // content layer supplies is the file's *bytes* — and the walk that finds it is the tables' walk, with
+    // `Impulses/` where `Tables/` was. The fixture root carries one, measured over nothing: the same
+    // rules (leading separator, both separators, case) apply because they are the same code.
+    const auto lib = library();
+
+    const auto exact = lib.loadAsset ("/Impulse.wav", kImpulseDirectory);
+
+    REQUIRE (exact.found());
+    CHECK (exact.resolution == Resolution::Exact);
+    CHECK (exact.path.filename() == "Impulse.wav");
+    CHECK_FALSE (exact.bytes.empty());
+
+    // The bytes are the file's, byte for byte — nothing here parses or rewrites them.
+    const auto onDisk = std::filesystem::path (XERUM_CONTENT_FIXTURE_DIR) / "Impulses" / "Impulse.wav";
+    CHECK (exact.bytes.size() == std::filesystem::file_size (onDisk));
+
+    // Both separators, and a leading one, exactly as a table reference is spelled.
+    CHECK (lib.loadAsset ("\\Impulse.wav", kImpulseDirectory).found());
+    CHECK (lib.loadAsset ("Sub\\Nested.wav", kImpulseDirectory).found());
+    CHECK (lib.loadAsset ("sub/NESTED.wav", kImpulseDirectory).resolution == Resolution::CaseInsensitive);
+}
+
+TEST_CASE ("a missing asset and a refused one are told apart, and neither is a table's answer", "[content]")
+{
+    // The distinction is ticket `56`'s and it is the same one here: nothing there is an ordinary miss,
+    // while a path that is present and will not be read is a refusal. What a missing impulse must *not* do
+    // is come back as some other asset — the search under `Impulses/` falls back to the reference as the
+    // preset spelled it, which is a last chance rather than a substitution.
+    const auto lib = library();
+
+    const auto missing = lib.loadAsset ("NotThere.wav", kImpulseDirectory);
+    CHECK_FALSE (missing.found());
+    CHECK (missing.resolution == Resolution::Missing);
+    CHECK (missing.error.find ("not found in") != std::string::npos);
+    CHECK (missing.bytes.empty());
+
+    // A table's own name resolves as a *table*, not as an impulse: the two searches are separate, so a
+    // convolution cannot silently pick up a wavetable.
+    CHECK_FALSE (lib.loadAsset ("Basic Shapes.wav", kImpulseDirectory).found());
+    CHECK (lib.loadTable ("Basic Shapes.wav").found());
+
+    // An empty reference, refused the same way a table's is.
+    CHECK_FALSE (lib.loadAsset ("", kImpulseDirectory).found());
+}
+
+TEST_CASE ("an asset's own root that denies reads is a refusal carrying its path", "[content]")
+{
+    const auto refused = std::filesystem::temp_directory_path() / "xerum-denied-impulse-root-test";
+
+    std::filesystem::remove_all (refused);
+    std::filesystem::create_directories (refused / "Impulses");
+    std::filesystem::copy_file (std::filesystem::path (XERUM_CONTENT_FIXTURE_DIR) / "Impulses" / "Impulse.wav",
+                               refused / "Impulses" / "Impulse.wav");
+    REQUIRE (::chmod (refused.c_str(), 0) == 0);
+
+    TableLibrary lib;
+    lib.addRoot (refused);
+
+    const auto lookup = lib.loadAsset ("Impulse.wav", kImpulseDirectory);   // must not throw
+
+    ::chmod (refused.c_str(), 0755);
+
+    const auto problems = lib.problems();
+    std::filesystem::remove_all (refused);
+
+    CHECK_FALSE (lookup.found());
+
+    REQUIRE_FALSE (problems.empty());
+    CHECK (problems.front().path.string().rfind (refused.string(), 0) == 0);
+    CHECK (problems.front().reason.find ("could not be read") != std::string::npos);
+}
+
 TEST_CASE ("a table declaring spectral morphing loads like any other", "[content]")
 {
     // This case used to be an exception: 74 of the 288 factory tables carry `clm ` mode 2, 3 or 4, the

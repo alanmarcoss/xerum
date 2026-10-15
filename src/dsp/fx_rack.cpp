@@ -26,6 +26,61 @@ double clampd (double value, double low, double high)
 double dbToGain (double decibels) { return std::pow (10.0, decibels / 20.0); }
 double gainToDb (double gain) { return 20.0 * std::log10 (std::max (gain, 1.0e-30)); }
 
+// -------------------------------------------------------------------------------------------------
+// Ticket 62 — two FX leaves' unit models, established by sweeping the stored value against the
+// reference's own audio rather than by reading a display.
+// -------------------------------------------------------------------------------------------------
+
+/// The reference's FX `kParamLevelOut` ("level") knob, as a gain. **Measured, not assumed.**
+///
+/// xerum used to apply the stored value as a linear multiplier (`levelOut_ = value`), which is wrong:
+/// the knob is a **squared** taper whose unity is at the leaf's own default, `0.5`. Swept on
+/// `BA - Analog Classics 3` — one `FXEQ` slot, `kParamLevelOut` added at the stored values below and
+/// rendered on both sides under one stimulus (`render-preset.sh --verify`), the reference's peak was:
+///
+///     stored   0.1       0.25      0.5       0.75      1.0
+///     peak     0.011244  0.070277  0.281111  0.632546  1.124526
+///
+/// Every ratio to the `1.0` render is the stored value **squared** (0.01 / 0.0625 / 0.25 / 0.5625 /
+/// 1.0 to four digits), so the gain is `G·s²`; and a preset that **omits** the leaf renders
+/// byte-identically to one that stores `0.5`, which fixes `G = 4` (`4·0.5² = 1`, unity). Full scale is
+/// therefore `+12 dB` and the knob's middle is `0.0 dB`, which is the reference's own display of its
+/// default ("50% [-0.0 dB]"). `0` is silence.
+double fxLevelOutGain (double stored)
+{
+    const double s = clampd (stored, 0.0, 1.0);
+    return 4.0 * s * s;
+}
+
+/// The reference's `FXComp` `kParamThresh`, as a dBFS threshold. **Measured.**
+///
+/// xerum used to read the knob as `-120·s` (from the guide's "0 = 0 dB, 1 = -120 dB"), which at the
+/// corpus's own values is a brickwall 30–60 dB below where the reference's sits. Swept against the
+/// reference on a single-`FXComp` rack with the ratio at its limit, the output peak tracks the threshold
+/// — the compressor pins it — and
+///
+///     ln(amplitude) / ln(1 − s) = 2.999   across stored 0.4 … 0.9
+///
+/// an exponent of exactly **3**. The constant is anchored at the knob's own bottom: `s = 0` is
+/// `0 dBFS` (the threshold amplitude is `1`), which the sweep is consistent with, and the ratio between
+/// two stored values is exactly `((1−s₁)/(1−s₂))³` on a fixed stimulus (measured 3.375 against the
+/// predicted 3.375 at `s = 0.7` / `0.8`). So the amplitude is `(1−s)³`.
+///
+/// **What the sweep cannot read off, and does not fit:** the reference's *output peak* sits a
+/// stimulus-dependent factor above that threshold — 1.10× on one stimulus and 1.41× on another of the
+/// same preset — so its detector is not a sample-peak follower. xerum's is (`CompressorFx::compress`),
+/// so xerum pins closer to the threshold than the reference does; that is reported rather than folded
+/// into the knob's law, and the sweep asserts the stimulus-independent ratio.
+double fxCompThresholdDb (double stored)
+{
+    const double s = clampd (stored, 0.0, 1.0);
+
+    if (s >= 1.0)
+        return -180.0;
+
+    return 60.0 * std::log10 (1.0 - s);
+}
+
 /// A frequency as a fraction of the sample rate, kept strictly inside Nyquist so every `tan()` below
 /// stays finite. The same guard `filter.cpp` applies, for the same reason: a filter that emits NaNs a
 /// few samples after its cutoff reaches Nyquist is not a filter.
@@ -614,7 +669,7 @@ public:
         // The three every effect carries, plus the two the slot carries on top of its class.
         if (name == "kParamEnable")   { enabled_ = value != 0.0; return true; }
         if (name == "kParamWet")      { wet_ = clampd (value * 0.01, 0.0, 1.0); return true; }
-        if (name == "kParamLevelOut") { levelOut_ = value; return true; }
+        if (name == "kParamLevelOut") { levelOut_ = fxLevelOutGain (value); return true; }
         if (name == "type")           { return true; }   // the class's numeric mirror, already known
         if (name.starts_with ("kUIParam")) return true;  // a UI-only mirror of wet/gain, see the header
 
@@ -672,6 +727,8 @@ protected:
     int maxFrames_ { 1 };
     bool enabled_ { true };
     double wet_ { 1.0 };
+    /// The reference's own default: an FX slot that omits `kParamLevelOut` renders exactly as one that
+    /// stores `0.5`, and `fxLevelOutGain (0.5) == 1.0` (ticket 62).
     double levelOut_ { 1.0 };
     std::vector<double> dryLeft_ {}, dryRight_ {};
 
@@ -1331,8 +1388,9 @@ private:
 };
 
 // -------------------------------------------------------------------------------------------------
-// Compressor (type 5). `kParamThresh` is the guide's 0…1 (0 = 0 dB, 1 = -120 dB) and `kParamRatio`
-// 1…1e6, where 1e6 means limit. `kParamMultiband` splits into three bands with two LR4 crossovers at
+// Compressor (type 5). `kParamThresh` is a 0..1 knob whose threshold is **`1.1·(1−s)³` in amplitude**
+// (ticket 62 measured it against the reference — see `fxCompThresholdDb`); `kParamRatio` is the ratio
+// itself, 1…1e6, where 1e6 means limit. `kParamMultiband` splits into three bands with two LR4 crossovers at
 // `kParamXoverLow`/`kParamXoverHi`; per-band make-up is `kParamGain0..2` and the per-band threshold
 // offset is `kParamThreshUD0..2`, read as dB. `kParamRatio0..2`, `kParamRatioBelow*` and
 // `kParamDeadband*` are read and unused: ticket 04 measured their ranges but not what they do, and
@@ -1438,7 +1496,7 @@ private:
         detector = magnitude + coefficient * (detector - magnitude);
 
         const double levelDb = gainToDb (detector);
-        const double thresholdDb = -120.0 * threshold_ + thresholdOffsetDb;
+        const double thresholdDb = fxCompThresholdDb (threshold_) + thresholdOffsetDb;
         const double ratio = std::min (ratio_, 1.0e6);
 
         double reductionDb = 0.0;

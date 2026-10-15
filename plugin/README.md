@@ -1977,13 +1977,29 @@ latency assumes, and the order is asserted by a render rather than by the call's
 ceiling's own default, to the digit. Were the rack downstream of the ceiling, the boosted signal would arrive at
 the host unbounded.
 
-**The three racks are wired; only MAIN is fed.** A preset's `FXRack0/1/2` are MAIN / BUS 1 / BUS 2, and the
-*mixer* that sends a voice to BUS 1 or 2 lives in the voice layer — `RoutingSlot`'s `kParamFXBus{n}Level`, which
-xerum does not implement. So `FxBank` gets the pool's stereo render on MAIN and the *silence* its buffers were
-sized with on the two busses, and a bus rack therefore processes nothing: 169 factory presets put FX on BUS 1
-and 24 on BUS 2, and for those the rack is wired and inaudible. `[plugin][audio][fx]`'s "a rack on BUS 1 changes
-nothing, because nothing feeds it" is that gap's record — the assertion to invert the day the mixer lands.
-`Global0`'s `kParamFXBus{n}Dest`/`Vol` are read and handed to the bank, so the routing is already the preset's.
+**The three racks are wired and all three are fed** (ticket `64`). A preset's `FXRack0/1/2` are MAIN / BUS 1 /
+BUS 2, and the *mixer* that sends a voice to BUS 1 or 2 lives in the voice layer: `RoutingSlot{N}`'s
+`kParamFXBus{1,2}Level`, which `XerumAudioProcessor::planRouting` reads out of the document and
+`dsp::VoiceEngine` applies as a parallel tap of each source — before the voice filters, which is where the
+reference takes it (measured through its host, along with the level's law: the amplitude is the stored percent
+**cubed**, and the master volume scales the send as it scales the main path). A preset that sends nothing leaves
+the two busses silent, which is the common case and not an error. `[plugin][audio][fx]` measures both halves —
+"a rack on BUS 1 changes the render, because the voice layer's send feeds it" and a factory preset's own sends
+zeroed against the same preset with them. `Global0`'s `kParamFXBus{n}Dest`/`Vol` are read and handed to the bank,
+so the routing is already the preset's.
+
+**The routing matrix's *destination* is not applied, and is reported.** `kParamRoutingDest` (Direct / Filter /
+Master / None) is a separate field from the sends; xerum's voice path is fixed — every source runs through the
+voice filters into the mixer, which is what `Filter` describes — so a preset that stored anything else gets a
+`RoutingSlot · kParamRoutingDest` entry naming the rows and the values, rather than being quietly rendered
+through the fixed path.
+
+**Impulse responses are resolved like wavetables** (ticket `64`). `FXConv`'s `relativePathToIR` is looked up
+through the content roots under the reference's own `Impulses/` tree and decoded with the codec layer the plugin
+already links (the corpus is FLAC, a user's own impulse is usually WAV); a preset's inline `embeddedIR` takes
+precedence, as an inline wavetable does. The absence/refusal distinction is ticket `56`'s and unchanged: a miss
+is a `high` entry at the slot and the convolution passes the dry signal, while a path the OS refuses is reported
+with its path — neither becomes silence.
 
 ## Where the parameters come from
 
@@ -2109,12 +2125,18 @@ comes out **6x louder** than its dry render — that row's rmsDiff worsens by 7.
 The direction of the whole set is worth stating, because an improvement here is not automatically a fix: the
 rack **removes energy** in most of these presets. The level error against the golden changes by **-25 … +16 dB**
 across the 32 fixtures, **median -1.4 dB**, and several of the improved `rmsDiff` rows are the rack attenuating
-a preset xerum was already too loud on. The candidate mechanism is a stated convention of `FxBase`: every
-effect's `kParamLevelOut` is applied as a **linear multiplier** (and its absence means unity), while 690 slots
-in the bank store one and its unit is not established — `FXDistortion`'s corpus values top out at 0.956,
+a preset xerum was already too loud on. The candidate mechanism named here was a stated convention of `FxBase`:
+every effect's `kParamLevelOut` was applied as a **linear multiplier** (and its absence meant unity), while 690
+slots in the bank store one and its unit was not established — `FXDistortion`'s corpus values top out at 0.956,
 `FXDelay`'s at 0.853, and `ARP - Acid101`'s two slots multiply the whole chain by 0.431 and 0.311, which is the
-12 dB its render loses. That is a convention to measure against the reference before it is changed, and it is
-recorded here rather than guessed at.
+12 dB its render loses. **Ticket `62` measured it and the convention is now the measured one**: the knob is a
+squared taper, `gain = 4·s²`, unity at the stored `0.5` (which is the leaf's own default, so an absent leaf was
+always unity) — swept on three classes, every ratio to the top being the stored value squared. Over the 690
+slots that changes a stored level by a **median +5.7 dB** (`0.5·20·log10` of `4s`), and `FXComp`'s threshold,
+read as `-120·s`, is now `(1−s)³` — a **30–60 dB** correction on the 470 compressor slots that store one, which
+is what put `808-decomposed` 21 dB down against a reference render. The detector difference that remains (the
+reference pins ~2.6 dB above the threshold where xerum's peak detector pins ~0 dB) is reported in
+`docs/test-strategy.md` rather than folded into the knob.
 
 ## What nobody here could judge
 

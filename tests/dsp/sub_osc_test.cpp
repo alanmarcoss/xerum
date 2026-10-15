@@ -128,7 +128,7 @@ std::vector<float> renderedSub (int note, SubShape shape, double octave, int fra
     std::vector<float> out (static_cast<std::size_t> (frames));
     std::vector<float> outRight (out.size());
     for (std::size_t i = 0; i < out.size(); i += 128)
-        engine.process (out.data() + i, outRight.data() + i, 128);
+        engine.process (out.data() + i, outRight.data() + i, {}, 128);
 
     // Skip the attack and the first cycles.
     return std::vector<float> (out.begin() + 4800, out.end());
@@ -343,7 +343,7 @@ TEST_CASE ("sub: the slot renders through the voice pool, at the note's frequenc
     std::vector<float> quiet (24000);
     std::vector<float> quietRight (quiet.size());
     for (std::size_t i = 0; i < quiet.size(); i += 128)
-        engine.process (quiet.data() + i, quietRight.data() + i, 128);
+        engine.process (quiet.data() + i, quietRight.data() + i, {}, 128);
 
     // A disabled SUB slot renders nothing, so the two settings blocks are the difference.
     VoiceEngine disabled;
@@ -357,7 +357,7 @@ TEST_CASE ("sub: the slot renders through the voice pool, at the note's frequenc
     std::vector<float> nothing (4096);
     std::vector<float> nothingRight (nothing.size());
     for (std::size_t i = 0; i < nothing.size(); i += 128)
-        disabled.process (nothing.data() + i, nothingRight.data() + i, 128);
+        disabled.process (nothing.data() + i, nothingRight.data() + i, {}, 128);
 
     for (const auto sample : nothing)
         REQUIRE (sample == 0.0f);

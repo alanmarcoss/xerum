@@ -287,10 +287,37 @@ private:
             int lookup { -1 };         ///< this slot's index in `references`, -1 when it names no file
         };
 
+        /// One impulse response a rack slot names (ticket `64`). Its bytes are resolved by the same worker
+        /// pass as the tables — one submission, because `contentWork_` supersedes rather than queues, so a
+        /// second submission would drop the first — and decoded into an `IrAsset` when the pass lands.
+        struct ImpulseWant
+        {
+            std::string modulePath;    ///< `FXRack{n}/FX[{i}]`, for the report and for the rack's own lookup
+            std::string reference;     ///< as the preset spelled it; empty when the slot names no file
+            bool embedded { false };   ///< the slot carries its impulse inline (`embeddedIR`)
+        };
+
         std::array<Slot, dsp::kOscillatorSlots> slots;
         std::vector<std::string> references;   ///< what the worker must resolve, in this order
         int fallback { -1 };                   ///< where `kDefaultTable` sits in `references`, -1 if unused
+
+        std::vector<ImpulseWant> impulses;             ///< the racks' convolution slots, in rack order
     };
+
+    /// **An impulse response, decoded**, and the storage its `dsp::ImpulseResponse` borrows.
+    ///
+    /// Ticket `64`. A rack slot holds a *pointer* to one of these, so it must outlive every `setSlots` that
+    /// refers to it — which is why a plan holds them and the processor holds the plan.
+    struct IrAsset
+    {
+        std::vector<float> storage;          ///< channel-major: `channelCount * frames` samples
+        std::vector<const float*> channels;  ///< one pointer per channel, into `storage`
+        dsp::ImpulseResponse impulse {};     ///< what the effect reads
+        std::string modulePath;              ///< `FXRack{n}/FX[{i}]`
+        std::string reference;               ///< as the preset spelled it; empty when it was inline
+    };
+
+    using IrAssets = std::vector<IrAsset>;
 
     /// What the worker found: one lookup per requested reference, in that order, and the content paths
     /// that refused. Nothing in here says whether it is *finished* — that is the flag `submit` hands back,
@@ -299,8 +326,30 @@ private:
     struct ResolvedContent
     {
         std::vector<content::TableLookup> lookups;
+        std::vector<content::AssetLookup> impulseLookups;
         std::vector<content::ContentProblem> problems;
+
+        /// The impulses that decoded, one per file reference that resolved. Decoding is a codec job, not a
+        /// filesystem one, but it happens on the same worker for the same reason: a long IR is a real cost
+        /// and the caller's budget is 250 ms.
+        IrAssets impulses;
     };
+
+    /// Every convolution slot a document carries, in rack order: where it sits, what it names, and whether
+    /// the preset carries the impulse inline. Pure — the decode it feeds touches nothing.
+    std::vector<ContentPlan::ImpulseWant> impulseWants (const model::PresetDocument& document) const;
+
+    /// **The impulse a slot carries inline** (`FXRack{n}/FX[{i}]/FXConv/embeddedIR[c][i]`), as an asset, or
+    /// nothing when the preset's own `numChannels`/`numFrames` do not add up to one. Contract §5's
+    /// precedence rule applied to impulses: a preset that carries its own impulse is self-contained, so it
+    /// is used whatever else the slot names. Pure.
+    std::optional<IrAsset> embeddedImpulse (const model::PresetDocument& document,
+                                            const std::string& modulePath) const;
+
+    /// Decode audio bytes into channel-major float storage — FLAC or WAV, which is what the reference's
+    /// `Impulses/` corpus and a user's own IR are. The codec is JUCE's; this layer only says what the bytes
+    /// are for. Returns false and fills `error` when no registered format can read them.
+    static bool decodeImpulse (const std::vector<std::byte>& bytes, IrAsset& asset, std::string& error);
 
     ContentPlan planContent (const model::PresetDocument& document);
 
@@ -378,6 +427,31 @@ private:
         /// it and the vector grows; owned here because `FxSlot` only borrows.
         std::vector<std::unique_ptr<dsp::PoleZeroDescription>> responses {};
 
+        /// **The impulses** (ticket `64`), for the same reason and by the same rule: a slot holds a
+        /// pointer, so the plan owns the storage. `inlineImpulses` are the ones a slot carries in the
+        /// document (`embeddedIR`), which the decode builds with no filesystem at all; `resolvedImpulses`
+        /// are the content layer's, shared with the processor so that a `prepareToPlay` after a load that
+        /// re-builds the chain out of these slots still dereferences live memory. `unique_ptr` for the same
+        /// reason the drawn responses use it: a slot points into the element, and a vector that grows moves
+        /// its elements.
+        std::vector<std::unique_ptr<IrAsset>> inlineImpulses {};
+        std::shared_ptr<const IrAssets> resolvedImpulses {};
+
+        /// Where a slot's `FxSlot` sits in `racks[rack]`, for the slots that borrow an impulse: the rack's
+        /// slots are built in array order with an empty one for a gap, so a slot's position is not its FX
+        /// index, and the attach pass has to be told where each one landed. The reference travels with it,
+        /// because the content layer's assets are keyed by both: a document that names a *different*
+        /// impulse for the same slot must not be handed the last document's.
+        struct ImpulsePosition
+        {
+            std::string modulePath;
+            std::string reference;
+            int rack { 0 };
+            std::size_t position { 0 };
+        };
+
+        std::vector<ImpulsePosition> impulsePositions {};
+
         /// What the decode could not hand the rack: a slot's drawn curve, whose domain is not established.
         /// The rack's own `unresolved()` and `problems()` are added to these when it is built.
         std::vector<model::ReportEntry> notes {};
@@ -385,6 +459,11 @@ private:
 
     /// Read the three racks out of a document. Pure — it touches no engine state and no audio thread.
     std::shared_ptr<FxPlan> planFxRack (const model::PresetDocument& document) const;
+
+    /// **The routing matrix's bus sends** (ticket `64`), read out of a document and reported: a level a
+    /// slot could not have honoured says so. Pure, like the rack's own decode, and published with it —
+    /// both are the document's routing and both are read by the audio thread only through `settings_`.
+    dsp::BusSendSettings planRouting (const model::PresetDocument& document);
 
     /// Install a document's racks, with the audio thread held out, and report what neither the decode nor
     /// the rack could honour. Message thread, under the state lock (which `applyDocument` holds).
@@ -414,14 +493,30 @@ private:
     /// it, and a new one is installed only with the audio thread held out.
     std::shared_ptr<FxPlan> fxPlan_ {};
 
+    /// **The voice layer's bus sends** (ticket `64`), decoded from the current document. Read by the audio
+    /// thread only as part of `settings_` — `refreshSettingsFromParameters` copies it in — and written here
+    /// only while the audio thread is held out, which is the same rule the drawn responses follow.
+    dsp::BusSendSettings routing_ {};
+
+    /// The impulse responses the content layer has resolved for the current document, keyed by slot. Shared
+    /// with the plan that borrows them, so replacing this leaves the installed rack's pointers valid.
+    std::shared_ptr<const IrAssets> irAssets_ {};
+
+    /// A preset whose impulse responses are still being resolved. The rack is **not** published while this
+    /// is set: publishing it would say "no impulse response was supplied" about a preset whose impulses are
+    /// on their way, and the report is not allowed to say something it will have to take back. The timer's
+    /// `flushContent` clears it and publishes the rack.
+    bool impulsesPending_ { false };
+
     /// A publish whose handshake timed out: the audio thread never left its block, so the rack was not
     /// replaced. The timer retries, re-planning from the document — never installing a plan the document
     /// may have outlived.
     std::atomic<bool> fxDeferred_ { false };
 
-    /// **BUS 1 and BUS 2's inputs.** The mixer that would feed them — a voice sending to a bus — belongs
-    /// to the voice layer, and sends are not implemented, so what reaches these racks today is silence,
-    /// which is what the buffers hold. Sized in `prepareToPlay` and cleared per block.
+    /// **BUS 1 and BUS 2's inputs.** The mixer that feeds them is the voice layer's sends (ticket `64`):
+    /// the engine adds each voice's send into these at the routing matrix's levels, the master gain is
+    /// applied to them with the main path's, and the rack processes what is left. Cleared per block, because
+    /// the engine adds rather than overwrites. Sized in `prepareToPlay`.
     std::vector<float> bus1Left_ {}, bus1Right_ {}, bus2Left_ {}, bus2Right_ {};
 
     std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> tables_ {};

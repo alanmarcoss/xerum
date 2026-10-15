@@ -147,6 +147,53 @@ inline constexpr int kNoiseSlot = 3;
 inline constexpr int kSubSlot = 4;
 inline constexpr int kSlotCount = kNoiseSlot + 2;   ///< 3 tabled + NOISE + SUB
 
+/// **The reference's routing-matrix rows** (ticket `64`), in the order `RoutingSlot{N}` numbers them:
+/// `OSC A`, `OSC B`, `OSC C`, `NOISE`, `SUB`, `Filter 1`, `Filter 2`. The five slots are the preset's own
+/// slot numbering — `kNoiseSlot` and `kSubSlot` — and the last two are the voice filters, so a row is
+/// addressed by the slot for 0..4 and by `kSlotCount + f` for a filter. The reference exposes exactly
+/// these seven as host parameters (`A>BUS1` … `Filter 2>BUS2`), which is where the names and the order
+/// come from.
+inline constexpr int kRoutingRowCount = kSlotCount + kFilterSlots;   ///< 7
+
+/// **The two FX busses' sends**, one gain per row per bus — amplitudes, not the preset's percent.
+///
+/// The reference's own numbers, measured through the host at the init patch (the plugin's normalised
+/// value `n` is the preset's percent / 100):
+///
+///   * the send's gain is **cubic** in the preset's level — `n^3`, exact to the measurement (`0.05`,
+///     `0.1`, `0.25`, `0.5`, `0.75` and `1.0` came back in the ratios 1/8000, 1/1000, 1/64, 1/8, 0.4219
+///     and 1.0 of the full-level send);
+///   * the send is a **parallel tap**: at full level with the bus at its own 0 dB point the render is
+///     exactly twice the dry one, so the main path is not attenuated by the send;
+///   * the tap is **before the voice filters**: with `Filter 1` enabled at a low cutoff the main path is
+///     a hundredth of the dry render while the send still carries the bright unfiltered oscillator. The
+///     `Filter 1`/`Filter 2` rows are therefore the signal *leaving* each filter, and the five source
+///     rows are the source's own output;
+///   * the master volume scales it: `Main Vol` at zero silences the bus as well as the main path.
+///
+/// Which of the two busses' sends a preset actually uses is the plugin's decode of
+/// `RoutingSlot{N}/plainParams/kParamFXBus{1,2}Level`; this struct is what the voice reads.
+struct BusSendSettings
+{
+    /// `[row][bus]`, bus 0 = BUS 1 and bus 1 = BUS 2. Zero is no send.
+    std::array<std::array<double, 2>, kRoutingRowCount> gain {};
+
+    bool any() const;
+};
+
+/// Where a voice's sends go: two stereo pairs, borrowed from the caller, one per bus.
+///
+/// A null pointer means "no such output" and the send to that bus is skipped, so a caller with no bus
+/// buffers — every unit test that predates ticket `64` — pays nothing. A bus nothing is sent to is left
+/// exactly as the caller left it, which is why the plugin clears them per block.
+struct BusSends
+{
+    float* left[2] { nullptr, nullptr };
+    float* right[2] { nullptr, nullptr };
+
+    bool wanted() const;
+};
+
 /// The steal crossfade. Short enough to be a steal, long enough not to be a click.
 inline constexpr double kStealFadeSeconds = 0.002;
 
@@ -319,6 +366,11 @@ struct VoiceSettings
     double portamentoTime { 0.0 };      ///< seconds; 0 = instant
     double portamentoCurve { 50.0 };    ///< percent; 50 = linear (see `Voice::glidePitch`)
     bool portamentoAlways { false };    ///< glide even when no previous note is held
+
+    /// **The bus sends** (ticket `64`). Not a bridged parameter — nothing in a reference preset puts the
+    /// routing matrix on the host surface as a xerum parameter — so the plugin decodes it from the
+    /// document, the same way it decodes the racks.
+    BusSendSettings sends {};
 };
 
 /// One voice: oscillators, filters, an amplitude envelope, and the note it is playing.
@@ -389,7 +441,11 @@ public:
 
     /// Render `frames` samples into `outLeft`/`outRight`, adding. `matrix` may be null (no modulation);
     /// `inputs` is the engine's block inputs, which the voice augments with its own per-voice values.
-    void render (float* outLeft, float* outRight, int frames, ModulationMatrix* matrix,
+    ///
+    /// `sends` (ticket `64`) is where this voice's bus sends go, and its own levels are in `settings()`.
+    /// Both may be empty: a caller with no busses gets exactly the render it got before the sends
+    /// existed, because every tap is skipped when nothing is sent.
+    void render (float* outLeft, float* outRight, const BusSends& sends, int frames, ModulationMatrix* matrix,
                  const ModulationInputs& inputs);
 
 private:
@@ -485,7 +541,11 @@ public:
 
     /// Render `frames` samples of the whole pool, stereo, into `outLeft` and `outRight` (overwritten,
     /// not added to). Both must hold `frames` samples; the pool sums into each.
-    void process (float* outLeft, float* outRight, int frames);
+    ///
+    /// `sends` is the mixer's other half (ticket `64`): the pool's voices add their bus sends into it, and
+    /// a caller that passes no busses gets the pool's main output and nothing else. The bus buffers are
+    /// **added to**, not overwritten, because each voice contributes its own — the caller clears them.
+    void process (float* outLeft, float* outRight, const BusSends& sends, int frames);
 
     int polyphony() const { return polyphony_; }
     int activeVoiceCount() const;

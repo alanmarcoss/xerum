@@ -77,6 +77,16 @@
 #include "PresetState.h"
 #include "XerumAudioProcessor.h"
 
+// Ticket 62 authors reference-loadable preset variants from the payload tree, so it needs the model's
+// container and codec readers and the payload writer — the same library `loadPresetFile` sits on.
+#include "cbor.h"
+#include "cbor_write.h"
+#include "container.h"
+#include "decompress.h"
+#include "value.h"
+#include "write.h"
+#include "zstd_write.h"
+
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include <catch2/catch_approx.hpp>
@@ -85,12 +95,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -262,6 +274,24 @@ double peakOf (const Stereo& audio)
     return peak;
 }
 
+/// The peak **after** `fromSeconds`, which is what a sustained measurement of a compressor needs.
+/// Both compressors let the first samples through — a detector rises from zero — so a peak over the
+/// whole render measures the onset, and the onset's overshoot is a different size at each threshold.
+/// Past the attack the two stages are at their steady behaviour, which is what the knob's law governs.
+double steadyPeak (const Stereo& audio, const double fromSeconds)
+{
+    const auto from = (std::size_t) (fromSeconds * audio.sampleRate);
+    double peak = 0.0;
+
+    for (auto i = from; i < audio.left.size(); ++i)
+        peak = std::max (peak, (double) std::abs (audio.left[i]));
+
+    for (auto i = from; i < audio.right.size(); ++i)
+        peak = std::max (peak, (double) std::abs (audio.right[i]));
+
+    return peak;
+}
+
 /// RMS over both channels, the unit ticket 54's bank figures are in.
 double rmsOf (const Stereo& audio)
 {
@@ -348,6 +378,192 @@ bool writeWav (const fs::path& path, const Stereo& audio)
     const auto ok = writer->writeFromAudioSampleBuffer (buffer, 0, buffer.getNumSamples());
     writer.reset();
     return ok;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Authoring a reference-loadable variant of a factory preset (ticket 62)
+// ---------------------------------------------------------------------------------------------------
+//
+// The two leaves ticket 62 sweeps live inside an FX slot, and the reference exposes **no** FX parameter
+// on its host surface: its 2623 parameters carry sixteen generic `FX Main Param`s per rack, and all of
+// them read zero with a real rack loaded (measured, not assumed —
+// `xerum-host --plugin Serum2.vst3 --dump-params`). So the only way to move such a leaf is to write a
+// preset that stores it: decode the factory preset's **payload tree**, set the leaf in the tree, and
+// re-wrap the container. The tree is edited rather than rebuilt from a document, so every structural
+// quirk survives exactly and the patched file differs from the original only where it was asked to.
+
+std::vector<std::byte> readBytes (const fs::path& path)
+{
+    std::ifstream in (path, std::ios::binary);
+    const std::vector<char> chars { std::istreambuf_iterator<char> (in), std::istreambuf_iterator<char>() };
+    std::vector<std::byte> bytes (chars.size());
+    std::memcpy (bytes.data(), chars.data(), chars.size());
+    return bytes;
+}
+
+bool writeBytes (const fs::path& path, const std::span<const std::byte> bytes)
+{
+    std::error_code ec;
+    fs::create_directories (path.parent_path(), ec);
+
+    std::ofstream out (path, std::ios::binary);
+    out.write (reinterpret_cast<const char*> (bytes.data()), (std::streamsize) bytes.size());
+    return (bool) out;
+}
+
+void splitSegments (const std::string& path, std::vector<std::pair<std::string, int>>& out)
+{
+    std::string segment;
+
+    for (std::size_t i = 0; i <= path.size(); ++i)
+    {
+        const char c = i < path.size() ? path[i] : '/';
+
+        if (c != '/')
+        {
+            segment.push_back (c);
+            continue;
+        }
+
+        if (segment.empty())
+            continue;
+
+        const auto bracket = segment.find ('[');
+
+        if (bracket == std::string::npos)
+            out.push_back ({ segment, -1 });
+        else
+            out.push_back ({ segment.substr (0, bracket), std::atoi (segment.substr (bracket + 1).c_str()) });
+
+        segment.clear();
+    }
+}
+
+/// One path segment, descending the tree and **creating** what is missing — a slot appended to an empty
+/// rack is a legitimate authoring step, and a leaf added to an existing `plainParams` map is how the
+/// corpus itself records a knob that was moved off its default.
+xerum::model::Value* descend (xerum::model::Value& node, const std::pair<std::string, int>& segment)
+{
+    if (! node.isMap())
+    {
+        node.type = xerum::model::Value::Type::Map;
+        node.entries.clear();
+    }
+
+    xerum::model::Value* container = nullptr;
+
+    for (auto& entry : node.entries)
+        if (entry.first == segment.first) { container = &entry.second; break; }
+
+    if (container == nullptr)
+    {
+        node.entries.push_back ({ segment.first, xerum::model::Value {} });
+        container = &node.entries.back().second;
+
+        if (segment.second >= 0) { container->type = xerum::model::Value::Type::Array; container->items.clear(); }
+    }
+
+    if (segment.second < 0)
+        return container;
+
+    if (! container->isArray())
+    {
+        container->type = xerum::model::Value::Type::Array;
+        container->items.clear();
+    }
+
+    if ((int) container->items.size() <= segment.second)
+        container->items.resize ((std::size_t) segment.second + 1);
+
+    return &container->items[(std::size_t) segment.second];
+}
+
+bool patchLeaf (xerum::model::Value& root, const std::string& path, const double value)
+{
+    std::vector<std::pair<std::string, int>> segments;
+    splitSegments (path, segments);
+
+    if (segments.empty())
+        return false;
+
+    xerum::model::Value* node = &root;
+
+    for (std::size_t i = 0; i + 1 < segments.size(); ++i)
+        node = descend (*node, segments[i]);
+
+    xerum::model::Value* leaf = descend (*node, segments.back());
+    leaf->type = xerum::model::Value::Type::Float;
+    leaf->real = value;
+    return true;
+}
+
+/// Replace the metadata's `hash` field, which identifies the payload and so must follow it. The rest of
+/// the metadata block — including fields this build does not understand — is carried verbatim.
+std::string withHash (const std::string& metadata, const std::string& hash)
+{
+    const auto key = metadata.find ("\"hash\"");
+
+    if (key == std::string::npos)
+        return metadata;
+
+    const auto open = metadata.find ('"', metadata.find (':', key));
+    const auto close = metadata.find ('"', open + 1);
+
+    if (open == std::string::npos || close == std::string::npos)
+        return metadata;
+
+    return metadata.substr (0, open + 1) + hash + metadata.substr (close);
+}
+
+void appendLittle (std::vector<std::byte>& out, const std::uint64_t value, const int width)
+{
+    for (int i = 0; i < width; ++i)
+        out.push_back (static_cast<std::byte> ((value >> (8 * i)) & 0xFF));
+}
+
+/// Decode `in`, set each `path=value` in its payload tree, and write a container the reference opens.
+bool patchReferencePreset (const fs::path& in, const fs::path& out,
+                           const std::vector<std::pair<std::string, double>>& sets, std::string& error)
+{
+    const auto raw = readBytes (in);
+    const auto container = xerum::model::readContainer (raw);
+
+    if (! container.ok) { error = "container: " + container.error; return false; }
+
+    const auto payload = xerum::model::decompress (container.payload, container.codec, container.declaredSize);
+
+    if (! payload.ok) { error = "decompress: " + payload.error; return false; }
+
+    auto decoded = xerum::model::decodeCbor (payload.bytes);
+
+    if (! decoded.ok) { error = "cbor: " + decoded.error; return false; }
+
+    for (const auto& [path, value] : sets)
+        if (! patchLeaf (decoded.value, path, value))
+        {
+            error = "could not set " + path;
+            return false;
+        }
+
+    const auto plain = xerum::model::encodeCbor (decoded.value);
+
+    if (plain.empty()) { error = "encoded an empty payload"; return false; }
+
+    const auto stream = xerum::model::encodeStoredZstdFrame (plain);
+    const auto metadata = withHash (container.metadataJson, xerum::model::md5Hex (stream));
+
+    std::vector<std::byte> bytes;
+    static constexpr char magic[] = "XferJson";
+    bytes.insert (bytes.end(), reinterpret_cast<const std::byte*> (magic),
+                  reinterpret_cast<const std::byte*> (magic + xerum::model::kContainerMagicSize));
+    appendLittle (bytes, metadata.size(), 8);
+    bytes.insert (bytes.end(), reinterpret_cast<const std::byte*> (metadata.data()),
+                  reinterpret_cast<const std::byte*> (metadata.data() + metadata.size()));
+    appendLittle (bytes, plain.size(), 4);
+    appendLittle (bytes, 2, 4);
+    bytes.insert (bytes.end(), stream.begin(), stream.end());
+
+    return writeBytes (out, bytes);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -480,7 +696,8 @@ std::string leaf (const xerum::model::PresetDocument& document, const std::strin
 ///     **counterfactual**: the same patch without ticket 63's two leaves, i.e. the 1.000000 ticket 58
 ///     measured.
 XerumRender renderXerum (const std::string& presetPath, const std::vector<int>& notes,
-                         const bool ceilingOn = false, const bool unityLevels = false)
+                         const bool ceilingOn = false, const bool unityLevels = false,
+                         const double seconds = kSeconds)
 {
     XerumRender result;
 
@@ -571,11 +788,11 @@ XerumRender renderXerum (const std::string& presetPath, const std::vector<int>& 
 
     // Rendered `latency` samples long and the front dropped, so the two sides start at the same sample
     // (ticket 46's compensation, for the same reason).
-    const auto extended = kSeconds + (double) (result.latency + kBlockSize) / (double) kSampleRate;
+    const auto extended = seconds + (double) (result.latency + kBlockSize) / (double) kSampleRate;
     result.audio = renderChord (processor, notes, extended);
     dropLeading (result.audio, result.latency);
 
-    const auto wanted = (std::size_t) (kSeconds * kSampleRate);
+    const auto wanted = (std::size_t) (seconds * kSampleRate);
     result.audio.left.resize (wanted);
     result.audio.right.resize (wanted);
 
@@ -666,9 +883,9 @@ std::string noteList (const std::vector<int>& notes)
 
 /// Everything the harness needs to render this stimulus, except the plugin and the output path, which the two
 /// routes below supply differently (the script owns `--plugin`, ticket 20's route; the init route does not).
-std::string stimulusArguments (const std::vector<int>& notes)
+std::string stimulusArguments (const std::vector<int>& notes, const double seconds = kSeconds)
 {
-    return " --seconds " + std::to_string (kSeconds)
+    return " --seconds " + std::to_string (seconds)
          + " --sr " + std::to_string (kSampleRate)
          + " --block " + std::to_string (kBlockSize)
          + " --notes " + quoted (noteList (notes))
@@ -738,7 +955,8 @@ ReferenceRender renderReferenceInit (const fs::path& host, const fs::path& plugi
 /// `--verify`s the render byte-identical before returning it.
 ReferenceRender renderReferencePreset (const fs::path& host, const fs::path& contentRoot,
                                        const fs::path& preset, const fs::path& out,
-                                       const std::vector<int>& notes)
+                                       const std::vector<int>& notes,
+                                       const double seconds = kSeconds)
 {
     ReferenceRender result;
 
@@ -758,7 +976,7 @@ ReferenceRender renderReferencePreset (const fs::path& host, const fs::path& con
                                 + " --bin " + quoted (host.string())
                                 + " --root " + quoted (contentRoot.string())
                                 + " --verify --"
-                                + stimulusArguments (notes), status);
+                                + stimulusArguments (notes, seconds), status);
 
     if (status != 0)
     {
@@ -1267,3 +1485,268 @@ TEST_CASE ("the reference's voice and ours, peak and RMS at one voice and at six
 }
 
 
+
+// ---------------------------------------------------------------------------------------------------
+// Ticket 62 — the FX level leaves' unit models, swept against the reference
+// ---------------------------------------------------------------------------------------------------
+//
+// Ticket 38 recorded the two init-patch level leaves as `unitModel: unestablished, "not-affine"`, and
+// ticket `63` settled them by the only instrument that can: **sweep the control against measured output
+// on both sides and fit the curve**. This case is that instrument pointed at the two leaves ticket `63`
+// could not reach, and both of them live inside an FX slot:
+//
+//   * **`kParamLevelOut`** — the "level" knob every effect carries. 690 slots across the reference's
+//     factory bank store one, and xerum applied the stored value as a **linear** multiplier.
+//   * **`FXComp`'s `kParamThresh`** — xerum read it as `-120·s` (the guide's "0 = 0 dB, 1 = -120 dB").
+//
+// Both were established the same way, and the method is the point: a preset is authored that differs
+// from a factory one **only** in the leaf under test (see `patchReferencePreset`), rendered by the
+// reference through ticket 20's route and by xerum in process, and the *ratios between stored values*
+// are compared — which is what makes the measurement independent of the two engines' other differences.
+//
+// **`kParamLevelOut`, measured.** On `BA - Analog Classics 3` (one `FXEQ` slot) with the leaf added:
+//
+//     stored      0.1       0.25      0.5       0.75      1.0
+//     reference   0.011244  0.070277  0.281111  0.632546  1.124526
+//
+// Every ratio to the `1.0` render is the stored value **squared**, and a preset that omits the leaf
+// renders byte-identically to one storing `0.5` — so the gain is `4·s²` and the knob's middle is unity.
+// `dsp::fxLevelOutGain` is that model; the assertions below hold both sides' ratio curves to it, at
+// four stored values, which is the counterfactual the ticket asks for.
+//
+// **`FXComp`'s `kParamThresh`, measured.** With the ratio at its limit the compressor pins its output
+// to the threshold. On `BA - Analog Classics 2` with one `FXComp` slot appended, the ratio between two
+// stored values is exactly `((1−s₁)/(1−s₂))³` — `ln(amplitude)/ln(1−s) = 2.999` across stored 0.4…0.9,
+// so the threshold amplitude is `(1−s)³` and the stored `0` is `0 dBFS`. The constant cannot be read off
+// a peak: the reference's output sits a *stimulus-dependent* factor above the threshold (1.10× on one
+// stimulus, 1.41× on another), so its detector does not read the sample peak and that factor is reported
+// rather than folded into the knob. `dsp::fxCompThresholdDb` is the law.
+//
+// Every render is required reproducible: the reference's through `render-preset.sh --verify` (two
+// renders byte-identical, ticket 20) and xerum's by rendering twice in process.
+
+TEST_CASE ("the FX level and compressor-threshold unit models, swept against the reference",
+           "[plugin][gain-staging][fx-units]")
+{
+    const auto host = findHost();
+    const auto plugin = fs::path (referencePlugin());
+    const auto root = fs::path (envOr ("XERUM_SERUM_CONTENT_ROOT", kDefaultContentRoot));
+    const auto outDir = artefactDir();
+
+    std::error_code ec;
+
+    if (! fs::exists (host, ec))
+        SKIP ("the headless harness has not been built (see host/README.md); set XERUM_HOST_BIN");
+
+    if (! fs::exists (plugin, ec))
+        SKIP ("the reference plugin is not installed at " + plugin.string()
+              + "; this sweep has no reference side without it");
+
+    const auto levelPreset = root / "Presets/Factory/Bass/Retro Analog/BA - Analog Classics 3.SerumPreset";
+    const auto compBase = root / "Presets/Factory/Bass/Retro Analog/BA - Analog Classics 2.SerumPreset";
+
+    if (! fs::exists (levelPreset, ec) || ! fs::exists (compBase, ec))
+        SKIP ("the retro-analog factory presets are not installed under " + root.string());
+
+    const auto notes = chordNotes (1);
+
+    // --- the level knob -----------------------------------------------------------------------------
+    //
+    // `BA - Analog Classics 3`'s one slot is an `FXEQ`, which is linear, so the ratio between two
+    // stored values isolates the leaf whatever else the two engines do differently.
+    const std::string levelLeaf = "FXRack0/FX[0]/FXEQ/plainParams/kParamLevelOut";
+    const double levelValues[] = { 0.25, 0.5, 0.75, 1.0 };
+
+    std::vector<std::pair<double, double>> levelPeaks;      // stored -> xerum peak
+    std::vector<std::pair<double, double>> levelReference;  // stored -> reference peak
+
+    for (const auto stored : levelValues)
+    {
+        const auto file = outDir / ("fx-level-" + fixed (stored, 3) + ".SerumPreset");
+        std::string error;
+        REQUIRE (patchReferencePreset (levelPreset, file, { { levelLeaf, stored } }, error));
+        INFO (error);
+
+        const auto reference = renderReferencePreset (host, root, file, outDir / ("fx-level-ref.wav"), notes);
+        INFO ("the reference render failed: " << reference.error);
+        REQUIRE (reference.ok);
+
+        const auto xerum = renderXerum (file.string(), notes);
+        INFO ("xerum's render failed: " << xerum.error);
+        REQUIRE (xerum.ok);
+
+        levelPeaks.emplace_back (stored, peakOf (xerum.audio));
+        levelReference.emplace_back (stored, peakOf (reference.audio));
+
+        std::fprintf (stderr, "[fx-units] kParamLevelOut %.3f: reference %.6f (%.2f dB), xerum %.6f (%.2f dB)\n",
+                      stored, peakOf (reference.audio), toDb (peakOf (reference.audio)),
+                      peakOf (xerum.audio), toDb (peakOf (xerum.audio)));
+    }
+
+    // The stored value whose render is the reference for the ratios: 1.0, the top of the knob.
+    const auto levelPeakFor = [] (const std::vector<std::pair<double, double>>& peaks, const double stored)
+    {
+        for (const auto& [value, peak] : peaks)
+            if (std::abs (value - stored) < 1e-9)
+                return peak;
+
+        return 0.0;
+    };
+
+    const auto referenceTop = levelPeakFor (levelReference, 1.0);
+    const auto xerumTop = levelPeakFor (levelPeaks, 1.0);
+
+    REQUIRE (referenceTop > 0.01);
+    REQUIRE (xerumTop > 0.01);
+
+    for (const auto stored : levelValues)
+    {
+        INFO ("kParamLevelOut " << stored);
+
+        // The reference's own curve is the fitted model: ratio to the top is the stored value squared.
+        CHECK (levelPeakFor (levelReference, stored) / referenceTop == Catch::Approx (stored * stored).epsilon (0.03));
+
+        // **The counterfactual**: xerum's output must move with the leaf the way the reference's does,
+        // at every stored value — not merely at the one the model was fitted from.
+        CHECK (levelPeakFor (levelPeaks, stored) / xerumTop == Catch::Approx (stored * stored).epsilon (0.03));
+
+    }
+
+    // **The two sides' offset is the same at every stored value, and that is the statement.** Same
+    // preset, same stimulus, one mapping apart: everything else in the comparison — xerum's EQ, and the
+    // 3.23 dB raw-voice residual ticket 63 reports — is a *constant* offset, so a leaf whose law did not
+    // match would show it as an offset that moves with the stored value. The absolute offset is printed
+    // above; here it is the *spread* that is asserted, which is what an identical taper means.
+    double lowestOffset = 0.0, highestOffset = 0.0;
+
+    for (const auto stored : levelValues)
+    {
+        const auto offset = toDb (levelPeakFor (levelPeaks, stored)) - toDb (levelPeakFor (levelReference, stored));
+        INFO ("kParamLevelOut " << stored << " offset " << offset << " dB");
+        lowestOffset = lowestOffset == 0.0 ? offset : std::min (lowestOffset, offset);
+        highestOffset = highestOffset == 0.0 ? offset : std::max (highestOffset, offset);
+    }
+
+    CHECK (highestOffset - lowestOffset < 1.0);
+
+    // Zero is silence on both sides — the knob's bottom, and a check that the leaf really is the gain
+    // rather than something that merely correlates with it.
+    {
+        const auto file = outDir / "fx-level-0.000.SerumPreset";
+        std::string error;
+        REQUIRE (patchReferencePreset (levelPreset, file, { { levelLeaf, 0.0 } }, error));
+
+        const auto reference = renderReferencePreset (host, root, file, outDir / "fx-level-zero-ref.wav", notes);
+        REQUIRE (reference.ok);
+        CHECK (peakOf (reference.audio) < 1.0e-4);
+
+        const auto xerum = renderXerum (file.string(), notes);
+        REQUIRE (xerum.ok);
+        CHECK (peakOf (xerum.audio) < 1.0e-4);
+    }
+
+    // --- the compressor's threshold -----------------------------------------------------------------
+    //
+    // The ratio sits at its limit, so the compressor pins its output to the threshold. `BA - Analog
+    // Classics 2` has no FX at all, so a single `FXComp` slot is appended: the chain is the compressor
+    // alone and nothing else shapes the level.
+    //
+    // **What is asserted is the ratio between stored values, not an absolute pin.** The reference's
+    // output peak sits a *stimulus-dependent* factor above the threshold (1.10× on one stimulus, 1.41×
+    // on another — measured, and recorded in `fxCompThresholdDb`), because its detector does not read
+    // the sample peak; the ratio between two thresholds on one stimulus is exact and is the part the
+    // knob's law fixes. An absolute assertion here would be asserting the detector.
+    // 0.45 s, and the peak read from 0.25 s on: the note is held (the harness's note-off is at 0.5 s)
+    // and its level is flat across that window (measured 0.3816 / 0.3856 / 0.3818 peak in
+    // 0.02-0.15 / 0.15-0.30 / 0.30-0.45 s), so this is the stage at its steady state and neither the
+    // onset overshoot nor the release tail is being measured.
+    constexpr double kCompressorSeconds = 0.45;
+    const std::string compPrefix = "FXRack0/FX[0]/FXComp/plainParams/";
+    const double thresholdValues[] = { 0.5, 0.6, 0.7, 0.8 };
+
+    std::vector<std::pair<double, double>> thresholdReference;  // stored -> reference peak
+    std::vector<std::pair<double, double>> thresholdXerum;      // stored -> xerum peak
+
+    for (const auto stored : thresholdValues)
+    {
+        const auto file = outDir / ("fx-comp-" + fixed (stored, 3) + ".SerumPreset");
+        std::string error;
+        REQUIRE (patchReferencePreset (compBase, file,
+                                       { { "FXRack0/FX[0]/type", 5.0 },
+                                         { compPrefix + "kParamRatio", 1.0e6 },
+                                         { compPrefix + "kParamAttack", 0.1 },
+                                         { compPrefix + "kParamRelease", 137.6 },
+                                         { compPrefix + "kParamMakeup", 0.0 },
+                                         { compPrefix + "kParamThresh", stored } }, error));
+        INFO (error);
+
+        const auto reference = renderReferencePreset (host, root, file, outDir / ("fx-comp-ref.wav"), notes,
+                                                      kCompressorSeconds);
+        INFO ("the reference render failed: " << reference.error);
+        REQUIRE (reference.ok);
+
+        const auto xerum = renderXerum (file.string(), notes, false, false, kCompressorSeconds);
+        INFO ("xerum's render failed: " << xerum.error);
+        REQUIRE (xerum.ok);
+
+        thresholdReference.emplace_back (stored, steadyPeak (reference.audio, 0.25));
+        thresholdXerum.emplace_back (stored, steadyPeak (xerum.audio, 0.25));
+
+        const auto model = std::pow (1.0 - stored, 3.0);
+        const auto referencePeak = steadyPeak (reference.audio, 0.25);
+        const auto xerumPeak = steadyPeak (xerum.audio, 0.25);
+
+        // The peak over the threshold it should be pinning to: the reference's detector factor, printed
+        // because it is what the absolute assertion above deliberately does not claim.
+        std::fprintf (stderr, "[fx-units] kParamThresh %.3f: threshold model %.6f (%.2f dB), "
+                              "reference %.6f (%.2f dB, pin x%.3f), xerum %.6f (%.2f dB, pin x%.3f)\n",
+                      stored, model, toDb (model), referencePeak, toDb (referencePeak), referencePeak / model,
+                      xerumPeak, toDb (xerumPeak), xerumPeak / model);
+    }
+
+    const auto thresholdPeakFor = [] (const std::vector<std::pair<double, double>>& peaks, const double stored)
+    {
+        for (const auto& [value, peak] : peaks)
+            if (std::abs (value - stored) < 1e-9)
+                return peak;
+
+        return 0.0;
+    };
+
+    // The law is the ratio between two stored values, on one stimulus, and it is the model's exact
+    // statement: `A(s) ∝ (1−s)³`. Both sides must show it — the reference because that is what was
+    // measured, xerum because the mapping is supposed to reproduce it.
+    const auto referenceBase = thresholdPeakFor (thresholdReference, 0.5);
+    const auto xerumBase = thresholdPeakFor (thresholdXerum, 0.5);
+
+    REQUIRE (referenceBase > 1.0e-4);
+    REQUIRE (xerumBase > 1.0e-4);
+
+    for (const auto stored : thresholdValues)
+    {
+        INFO ("kParamThresh " << stored);
+
+        const auto predicted = std::pow ((1.0 - stored) / 0.5, 3.0);
+
+        CHECK (thresholdPeakFor (thresholdReference, stored) / referenceBase == Catch::Approx (predicted).epsilon (0.02));
+        CHECK (thresholdPeakFor (thresholdXerum, stored) / xerumBase == Catch::Approx (predicted).epsilon (0.02));
+
+    }
+
+    // The same statement as the level leaf: the two sides' offset is constant across stored values, so
+    // the law is identical and what separates them is the detector factor reported per row above (the
+    // reference pins ~2.6 dB above where xerum's peak detector pins), not the knob. The old `-120·s`
+    // reading put them 30 dB apart and moving.
+    double lowestCompOffset = 0.0, highestCompOffset = 0.0;
+
+    for (const auto stored : thresholdValues)
+    {
+        const auto offset = toDb (thresholdPeakFor (thresholdXerum, stored))
+                          - toDb (thresholdPeakFor (thresholdReference, stored));
+        INFO ("kParamThresh " << stored << " offset " << offset << " dB");
+        lowestCompOffset = lowestCompOffset == 0.0 ? offset : std::min (lowestCompOffset, offset);
+        highestCompOffset = highestCompOffset == 0.0 ? offset : std::max (highestCompOffset, offset);
+    }
+
+    CHECK (highestCompOffset - lowestCompOffset < 1.0);
+}

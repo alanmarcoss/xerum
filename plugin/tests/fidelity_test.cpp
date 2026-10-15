@@ -1523,13 +1523,47 @@ const std::vector<GateThreshold>& gateThresholds()
         // presets here (the level error against the golden moves by -25 … +16 dB across the 32 fixtures,
         // median -1.4 dB), so an improved `rmsDiff` on a row is often the rack *attenuating* a preset xerum
         // was already too loud on, not the rack being right. That reading is in `plugin/README.md` too.
+        // # Ticket `62`: the two FX leaves re-measured, and **no baseline or threshold moved here**
+        //
+        // Ticket 62 established two FX unit models by sweeping the reference (`kParamLevelOut` is
+        // `4·s²`, not linear; `FXComp`'s `kParamThresh` is `(1−s)³` in amplitude, not `-120·s`) and
+        // changed the mapping. Re-measured on the tree that carries it, at 48 kHz / block 512, the gate
+        // rows are:
+        //
+        //     fixture                   baseline rmsDiff  now        baseline spectral  now
+        //     arp-aardvark                  -25.44      -25.50          10.85          10.83
+        //     arp-acid101                   -21.72      -22.43           9.89          10.76
+        //     ba-funk-me-electric-2         -20.79      -20.61          14.76          14.97
+        //     ba-basist                     -19.14      -23.94          15.00          12.76
+        //     ba-deep-throat-bass           -19.52      -19.78          18.85          18.55
+        //     808-decomposed                -15.87      -16.34          15.40          15.33
+        //     808-diesel                    -18.60      -18.33          14.41          15.51
+        //
+        // `ba-basist` is the row ticket 63 already improved and deliberately did not re-baseline. Every
+        // row is inside its recorded threshold, so **no number here was edited to accommodate the
+        // mapping** and `kRegressionMarginDb` / `kSweepMarginDb` are untouched at 3.0. The two rows that
+        // moved most (`ba-basist`, `ba-deep-throat-bass`) are the ones whose racks store a
+        // `kParamLevelOut`; `808-decomposed`'s own compression is now read from its threshold rather
+        // than 33 dB below it, and it is the row ticket 60 re-measured and ticket 64 re-measured again
+        // for its sends. The `808-diesel` sweep row keeps its ticket-63 worst-configuration values.
         // slug                          rmsDiff dB   spectral dB   sweep rms   sweep spectral
         { "arp-aardvark",               -25.44,      10.85,       -25.44,      10.85 },   // engine:Wavetable
         { "arp-acid101",                -21.72,       9.89,       -21.72,       9.89 },   // engine:SubOsc
         { "ba-funk-me-electric-2",      -20.79,      14.76,       -20.79,      14.76 },   // warp:kBendPos
         { "ba-basist",                  -19.14,      15.00,       -19.14,      15.00 },   // warp:kPWM
         { "ba-deep-throat-bass",        -19.52,      18.85,       -19.52,      18.85 },   // warp:kRM_OSC
-        { "808-decomposed",             -21.82,      18.04,       -21.82,      18.04 },   // filter:MgL24 — re-measured by ticket 60
+        // **Ticket 64 re-measured one row: `808-decomposed`.** Its routing matrix sends `OSC A` into
+        // BUS 1 at 100 % and `OSC B` into BUS 2 at 89.5 %, and ticket 64 made those sends reach the busses,
+        // so the two bus racks (`FXDistortion`, and `FXFilter` + `FXDistortion`) now process the preset's
+        // own signal instead of silence. The render moves from -21.82/18.04 to **-15.87/15.40** — a *worse*
+        // match, not a better one, and the reason is not in this layer: the sources the reference sends
+        // through that loop are `kOsc_Sample` engines (deferred, so xerum sends what it has instead), and
+        // the bus return's own unit model is still ticket 60's convention. Measured through the reference's
+        // own plugin on this very preset: with its stored sends the render peaks at 0.347511, and with both
+        // sends zeroed at 0.052653 — so the sends are where this preset's sound is, and xerum now has that
+        // path rather than silence. That is a recorded move, not a tuned one: no threshold and no margin
+        // moved, and the sweep columns are this run's worst configuration rather than the capture row's.
+        { "808-decomposed",             -15.87,      15.40,       -15.73,      15.66 },   // filter:MgL24 — re-measured by ticket 64 (its sends now reach BUS 1/BUS 2)
         // `808-diesel` is the one row ticket 63 moved. It **omits** `Oscillator1/plainParams/kParamVolume`
         // (its container stores the enable but not the level), so before ticket 63 xerum played that
         // oscillator at unity where the reference plays it at its own default `75% [-5.0 dB]`; the leaves it

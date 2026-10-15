@@ -7,7 +7,10 @@
 
 #include <catch2/catch_approx.hpp>
 
+#include <sys/stat.h>
+
 #include <cstdio>
+#include <cstdlib>
 
 using namespace xerum::plugin;
 using namespace xerum::plugin::tests;
@@ -827,7 +830,9 @@ TEST_CASE ("each shipped class engages: the per-class difference the rack makes 
           { { "kParamTimeL", number (0.05) }, { "kParamLink", number (1.0) }, { "kParamFeedback", number (50.0) },
             { "kParamWet", number (100.0) } }, 0 },
         { "FXComp", xerum::dsp::FxClass::Compressor,
-          { { "kParamThresh", number (0.2) }, { "kParamRatio", number (4.0) }, { "kParamAttack", number (10.0) },
+          // Ticket 62 re-measured the threshold knob (`1.1·(1−s)³`, not `-120·s`); 0.6 is the stored
+          // value whose threshold is ≈ −23 dB, which is what this row has always exercised.
+          { { "kParamThresh", number (0.6) }, { "kParamRatio", number (4.0) }, { "kParamAttack", number (10.0) },
             { "kParamRelease", number (100.0) }, { "kParamMakeup", number (6.0) },
             { "kParamWet", number (100.0) } }, 0 },
         { "FXReverb", xerum::dsp::FxClass::Reverb,
@@ -908,13 +913,14 @@ TEST_CASE ("each shipped class engages: the per-class difference the rack makes 
     }
 }
 
-TEST_CASE ("a rack on BUS 1 changes nothing, because nothing feeds it — the mixer's sends are missing",
+TEST_CASE ("a rack on BUS 1 changes the render, because the voice layer's send feeds it",
            "[plugin][audio][fx]")
 {
-    // **A recorded gap, not a defect of the rack.** The reference's voices send to MAIN, BUS 1 and BUS 2;
-    // the sends live in the voice layer (`RoutingSlot`'s `kParamFXBus{n}Level`), which is not implemented,
-    // so the bus racks are wired and handed silence. This case is the gap's record: the day the mixer
-    // lands, `FXRack1` will change this render and this assertion is the one to invert.
+    // **The gap ticket `60` recorded, closed by ticket `64`.** The reference's voices send to MAIN, BUS 1
+    // and BUS 2, and the send lives in the voice layer — `RoutingSlot{N}`'s `kParamFXBus{n}Level`, which
+    // nothing read. So `FXRack1` was wired and handed silence, and this case's assertion was the reverse of
+    // this one: that a rack on BUS 1 changed *nothing*. The pair below is the ticket's own proof shape —
+    // the same rack, twice, with the send as the only difference between the renders.
     const auto clip = std::vector<std::pair<std::string, xerum::model::Value>> {
         { "kParamMode", text ("kHardClip") }, { "kParamDrive", number (60.0) }, { "kParamWet", number (100.0) }
     };
@@ -923,14 +929,470 @@ TEST_CASE ("a rack on BUS 1 changes nothing, because nothing feeds it — the mi
     addFxSlot (onMain, 0, xerum::dsp::FxClass::Distortion, clip);
 
     // The same slot on BUS 1 instead, at the default destination (summed into MAIN's input) and at unity
-    // volume — so if the bus carried anything, this render would differ from the dry one.
+    // volume — so what reaches it is what the voice layer sends.
     auto onBus = fxDocument();
     addFxSlot (onBus, 0, xerum::dsp::FxClass::Distortion, clip, 1);
+
+    // The routing matrix's own leaf, written the way a preset writes it: `RoutingSlot0` is `OSC A`, and the
+    // level is the percent the reference stores. 100 % is unity through the send's cubic law.
+    auto onBusSent = onBus;
+    onBusSent.parameters["RoutingSlot0/plainParams/kParamFXBus1Level"] = number (100.0);
 
     const auto dry = renderDocument (fxDocument(), 16, 512, noteThenRelease (60, 8));
     const auto mainRender = renderDocument (onMain, 16, 512, noteThenRelease (60, 8));
     const auto busRender = renderDocument (onBus, 16, 512, noteThenRelease (60, 8));
+    const auto sentRender = renderDocument (onBusSent, 16, 512, noteThenRelease (60, 8));
 
     CHECK (deltaOf (dry, mainRender).differing > 0);   // MAIN reaches the output
-    CHECK (deltaOf (dry, busRender).differing == 0);   // BUS 1 does not, and that is the gap
+
+    // No send in the preset: the bus carries nothing, and a rack on it changes nothing. That is the
+    // *absence* of a send, which is what most presets have — not a gap, any more.
+    CHECK (deltaOf (dry, busRender).differing == 0);
+
+    // **With the send, the same rack has something to process and reaches the output.** The difference is
+    // the send's, nothing else changed.
+    const auto sent = deltaOf (busRender, sentRender);
+    CHECK (sent.differing > 0);
+    CHECK (sent.differenceDb > -60.0);
 }
+
+//==============================================================================
+// Ticket `64` — the two structural gaps ticket `60` named rather than hid.
+//
+// 1. **The mixer's sends.** `RoutingSlot{N}/plainParams/kParamFXBus{n}Level` is a voice's level into
+//    BUS 1 or BUS 2, and nothing read it: the busses were wired end to end and fed silence. Both halves
+//    are asserted here — the level's own law (measured on the reference first, through its host) and the
+//    difference it makes to a render, on synthetic material and on a factory preset.
+// 2. **The impulse responses.** A preset's `FXConv` names one (`relativePathToIR`) or carries one
+//    (`embeddedIR`), and neither reached the convolver: the effect reported "no impulse response was
+//    supplied" for every convolution in the bank. What is asserted is that it now renders *with* the
+//    impulse, that a missing one is an ordinary miss named at the slot, and that a path the OS refuses is
+//    a refusal carrying its path — ticket `56`'s distinction, applied to the IR path.
+
+namespace
+{
+
+/// The reference's own send law, as `dsp::BusSendSettings` documents it: the preset stores a percent and
+/// the amplitude is that percent cubed. Written here so the test states the law rather than reading it out
+/// of the implementation.
+double sendGainOf (const double percent)
+{
+    const auto unit = percent / 100.0;
+    return unit * unit * unit;
+}
+
+/// Is this slot's own problem in the report? A convolution that could not be given an impulse says so
+/// through the effect's `problem()`, which lands as an `FXRack{n}` entry whose item is the class.
+bool hasFxConvProblem (const XerumAudioProcessor& processor)
+{
+    for (const auto& entry : processor.report().entries)
+        if (entry.modulePath.starts_with ("FXRack") && entry.item == "FXConv" && entry.severity == xerum::model::Severity::High)
+            return true;
+
+    return false;
+}
+
+/// Every entry whose item is this slot's impulse reference, and every `content` entry — the two halves of
+/// the absence/refusal distinction.
+std::vector<xerum::model::ReportEntry> entriesFor (const XerumAudioProcessor& processor, const std::string& item)
+{
+    std::vector<xerum::model::ReportEntry> out;
+
+    for (const auto& entry : processor.report().entries)
+        if (entry.item == item)
+            out.push_back (entry);
+
+    return out;
+}
+
+/// A decaying impulse in a 16-bit WAV, which is what a user's own impulse response looks like and what the
+/// decoder must read. Written by hand so the test has no fixture and no reference install behind it.
+void writeImpulseWav (const juce::File& file, const int frames, const double rate)
+{
+    const auto samples = [frames]
+    {
+        std::vector<float> out (static_cast<std::size_t> (frames));
+
+        for (int i = 0; i < frames; ++i)
+            out[static_cast<std::size_t> (i)]
+                = static_cast<float> (std::exp (-3.0 * static_cast<double> (i) / 512.0)
+                                      * std::sin (2.0 * 3.14159265358979323846 * 0.01 * static_cast<double> (i)));
+
+        return out;
+    }();
+
+    const auto dataBytes = static_cast<juce::uint32> (samples.size() * 2);
+    juce::MemoryOutputStream out;
+
+    out.write ("RIFF", 4);
+    out.writeInt (static_cast<int> (36 + dataBytes));
+    out.write ("WAVE", 4);
+    out.write ("fmt ", 4);
+    out.writeInt (16);
+    out.writeShort (1);                                        // PCM
+    out.writeShort (1);                                        // mono
+    out.writeInt (static_cast<int> (rate));
+    out.writeInt (static_cast<int> (rate) * 2);                // byte rate
+    out.writeShort (2);                                        // block align
+    out.writeShort (16);                                       // bits
+    out.write ("data", 4);
+    out.writeInt (static_cast<int> (dataBytes));
+
+    for (const auto sample : samples)
+        out.writeShort (static_cast<short> (juce::jlimit (-1.0f, 1.0f, sample) * 32767.0f));
+
+    file.replaceWithData (out.getData(), out.getDataSize());
+}
+
+/// A content root of the test's own making, held as `XERUM_CONTENT_ROOT` for as long as it lives — the
+/// same way `content_gate_test` and `third_party_test` pin one, and for the same reason: which root
+/// supplies an impulse must be the test's decision, not the machine's.
+struct IrRoot
+{
+    juce::File root;
+
+    IrRoot()
+    {
+        root = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                   .getNonexistentChildFile ("xerum-ir-root", {}, false);
+        REQUIRE (root.createDirectory().wasOk());
+
+        setenv ("XERUM_CONTENT_ROOT", root.getFullPathName().toRawUTF8(), 1);
+    }
+
+    ~IrRoot()
+    {
+        unsetenv ("XERUM_CONTENT_ROOT");
+        root.deleteRecursively();
+    }
+
+    /// `Impulses/<name>` under the root, which is the layout the reference's own tree uses.
+    juce::File impulseAt (const juce::String& name) const
+    {
+        auto file = root.getChildFile ("Impulses").getChildFile (name);
+        file.getParentDirectory().createDirectory();
+        return file;
+    }
+};
+
+/// A document with one oscillator and one `FXConv` slot on MAIN — everything the impulse cases need and
+/// nothing that would make the difference ambiguous.
+xerum::model::PresetDocument convDocument()
+{
+    auto document = fxDocument();
+    addFxSlot (document, 0, xerum::dsp::FxClass::Convolve,
+               { { "kParamWet", number (100.0) }, { "kParamLevelOut", number (50.0) } });
+    return document;
+}
+
+} // namespace
+
+TEST_CASE ("a send's level is the preset's percent cubed, which is the reference's own law",
+           "[plugin][audio][fx]")
+{
+    // Measured on the reference through its host before it was implemented here: `A>BUS1` at the
+    // normalised levels 0.05, 0.1, 0.25, 0.5, 0.75 and 1.0 produced bus contributions in the ratios
+    // 1/8000, 1/1000, 1/64, 1/8, 0.4219 and 1.0 of the full-level one — `n^3`, to the measurement.
+    const auto busRmsAt = [] (const double percent)
+    {
+        auto document = fxDocument();
+        document.parameters["RoutingSlot0/plainParams/kParamFXBus1Level"] = number (percent);
+        // An empty BUS 1 at the default destination (summed into MAIN's input) at unity volume: what the
+        // send adds is the whole of the difference.
+        return rmsOf (renderDocument (document, 16, 512, noteThenRelease (60, 8)));
+    };
+
+    const auto none = busRmsAt (0.0);
+    const auto full = busRmsAt (100.0);
+    const auto at50 = busRmsAt (50.0);
+
+    REQUIRE (full > none);
+
+    // The send's own contribution, at unity through the bus: `sqrt(full^2 - none^2)` is not valid here
+    // because the two are the same signal, so the arithmetic is done on the linear levels — the added
+    // level is `full - none` at a gain of 1, and `sendGain * (full - none)` at any other.
+    const auto unity = full - none;
+    CHECK (at50 - none == Catch::Approx (sendGainOf (50.0) * unity).epsilon (0.02));
+
+    // And the law is monotone in the level, which is what makes a preset's own value mean something.
+    const auto at25 = busRmsAt (25.0);
+    CHECK (at25 - none < at50 - none);
+    CHECK (at50 - none < unity);
+}
+
+TEST_CASE ("a factory preset's own routing sends change its render", "[plugin][audio][fx][corpus]")
+{
+    // **On real material.** `808 - Decomposed` sends `OSC A` into BUS 1 at full level and `OSC B` into
+    // BUS 2 at 89.5 %; the render with them is compared against the same document with both zeroed. The
+    // only difference between the two documents is the *sends*, so the difference between the two renders
+    // is the sends' — the ticket's proof shape, applied to a preset nobody wrote for it.
+    //
+    // **Why this preset.** Most of the bank's routing sends belong to presets whose sources are engines
+    // xerum does not synthesise yet — `ARP - Strum Multi`, `ARP - Kalimba Arps` and `ARP - Pizz Orch Arp`
+    // each store sends and each render silence here, so a send in them could not be measured at all. This
+    // one's oscillator A is a wavetable with a filter, which is what makes the difference audible; the
+    // peak check below is what keeps that from being an assumption.
+    const juce::File preset (juce::String (corpusRoot()) + "/Presets/Factory/Bass/808/808 - Decomposed.SerumPreset");
+
+    if (! preset.existsAsFile())
+        SKIP ("the reference's corpus is not installed at " << corpusRoot().toStdString());
+
+    const auto loaded = xerum::plugin::loadPresetFile (preset);
+    REQUIRE (loaded.ok);
+
+    auto sent = loaded.document;
+    auto silent = loaded.document;
+
+    int silenced = 0;
+
+    for (int row = 0; row < 7; ++row)
+        for (int bus = 1; bus <= 2; ++bus)
+        {
+            const auto leaf = "RoutingSlot" + std::to_string (row) + "/plainParams/kParamFXBus"
+                              + std::to_string (bus) + "Level";
+
+            if (sent.parameters.count (leaf) != 0)
+            {
+                silent.parameters[leaf] = number (0.0);
+                ++silenced;
+            }
+        }
+
+    REQUIRE (silenced > 0);   // the preset's own sends, or this case measures nothing
+
+    const auto withSends = renderDocument (sent, 24, 512, noteThenRelease (60, 12));
+    const auto withoutSends = renderDocument (silent, 24, 512, noteThenRelease (60, 12));
+    const auto delta = deltaOf (withoutSends, withSends);
+
+    std::fprintf (stderr,
+                  "[sends] 808 - Decomposed: %d send levels zeroed, residual-vs-silent %.2f dB, differing %zu "
+                  "of %zu, peak %.6f\n", silenced, delta.differenceDb, delta.differing, withSends.size(),
+                  delta.peakWith);
+
+    // The preset really sounds, or a zero difference would mean nothing.
+    REQUIRE (delta.peakWith > 0.05);
+
+    CHECK (delta.differing > 0);
+    CHECK (delta.differenceDb > -40.0);
+}
+
+TEST_CASE ("a routing destination xerum does not apply is reported, not defaulted", "[plugin][audio][fx]")
+{
+    // The reference's routing matrix gives each row a destination (`kRoutingDestDirect`/`Filter`/
+    // `Master`/`None`) as well as its bus sends. xerum's voice path is fixed — every source runs through
+    // the voice filters into the mixer, which is what `Filter` describes — so a preset that stored
+    // anything else is asking for something this build does not do. Its **sends** are applied (that is
+    // this ticket); the destination is reported rather than quietly rendered through the fixed path.
+    const auto destinationEntries = [] (const xerum::model::PresetDocument& document)
+    {
+        XerumAudioProcessor processor;
+        processor.prepareToPlay (48000.0, 512);
+        processor.applyDocument (document, {}, 0);
+        return entriesFor (processor, "kParamRoutingDest");
+    };
+
+    auto routedElsewhere = fxDocument();
+    routedElsewhere.parameters["RoutingSlot0/plainParams/kParamRoutingDest"] = text ("kRoutingDestNone");
+    routedElsewhere.parameters["RoutingSlot3/plainParams/kParamRoutingDest"] = text ("kRoutingDestDirect");
+
+    const auto reported = destinationEntries (routedElsewhere);
+    REQUIRE (reported.size() == 1);
+    CHECK (reported.front().reason.find ("kRoutingDestNone") != std::string::npos);
+    CHECK (reported.front().reason.find ("kRoutingDestDirect") != std::string::npos);
+    CHECK (reported.front().reason.find ("BUS 1 / BUS 2 sends are applied") != std::string::npos);
+
+    // `Filter` is the path xerum actually takes, so it is not something to report.
+    auto routedToFilter = fxDocument();
+    routedToFilter.parameters["RoutingSlot0/plainParams/kParamRoutingDest"] = text ("kRoutingDestFilter");
+    CHECK (destinationEntries (routedToFilter).empty());
+}
+
+TEST_CASE ("a convolution renders with the impulse the preset carries inline", "[plugin][audio][fx]")
+{
+    // `embeddedIR[c][i]` is a preset's own impulse, and contract §5's precedence rule applies to it as it
+    // does to an inline wavetable: a preset that carries its own data is self-contained. Nothing here
+    // touches the filesystem, so this case runs anywhere.
+    constexpr int kFrames = 512;
+
+    auto carrying = convDocument();
+    carrying.parameters["FXRack0/FX[0]/FXConv/numChannels"] = number (1.0);
+    carrying.parameters["FXRack0/FX[0]/FXConv/numFrames"] = number (static_cast<double> (kFrames));
+    carrying.parameters["FXRack0/FX[0]/FXConv/sampleRate"] = number (48000.0);
+
+    for (int i = 0; i < kFrames; ++i)
+        carrying.parameters["FXRack0/FX[0]/FXConv/embeddedIR[0][" + std::to_string (i) + "]"]
+            = number (std::exp (-4.0 * static_cast<double> (i) / kFrames));
+
+    // The counterfactual is the same slot with its impulse removed: nothing else changes, so the
+    // difference between the two renders is the impulse.
+    auto withoutImpulse = carrying;
+
+    for (int i = 0; i < kFrames; ++i)
+        withoutImpulse.parameters.erase ("FXRack0/FX[0]/FXConv/embeddedIR[0][" + std::to_string (i) + "]");
+
+    const auto withImpulse = renderDocument (carrying, 24, 512, noteThenRelease (60, 12));
+    const auto dry = renderDocument (withoutImpulse, 24, 512, noteThenRelease (60, 12));
+    const auto delta = deltaOf (dry, withImpulse);
+
+    std::fprintf (stderr, "[ir] inline impulse: differing %zu of %zu, residual %.2f dB\n", delta.differing,
+                  dry.size(), delta.differenceDb);
+
+    CHECK (delta.differing > 0);
+
+    // **And it is not reported as missing**, which is what every convolution said before ticket `64`.
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (carrying, {}, 0);
+    CHECK_FALSE (hasFxConvProblem (processor));
+}
+
+TEST_CASE ("a convolution renders with the impulse the content roots supply", "[plugin][audio][fx]")
+{
+    // The reference's own `Impulses/` corpus is FLAC and a user's is usually WAV, so the resolution goes
+    // through the content roots exactly as a wavetable's does and the file is decoded by the one codec
+    // layer the plugin already links. A root of the test's own making keeps the machine out of it.
+    IrRoot root;
+    writeImpulseWav (root.impulseAt ("Test/Hall.wav"), 2048, 48000.0);
+    REQUIRE (root.impulseAt ("Test/Hall.wav").existsAsFile());
+
+    auto carrying = convDocument();
+    carrying.parameters["FXRack0/FX[0]/FXConv/relativePathToIR"] = text ("Test/Hall.wav");
+
+    auto withoutReference = carrying;
+    withoutReference.parameters.erase ("FXRack0/FX[0]/FXConv/relativePathToIR");
+
+    const auto withImpulse = renderDocument (carrying, 24, 512, noteThenRelease (60, 12));
+    const auto dry = renderDocument (withoutReference, 24, 512, noteThenRelease (60, 12));
+    const auto delta = deltaOf (dry, withImpulse);
+
+    std::fprintf (stderr, "[ir] resolved impulse: differing %zu of %zu, residual %.2f dB\n", delta.differing,
+                  dry.size(), delta.differenceDb);
+
+    CHECK (delta.differing > 0);
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (carrying, {}, 0);
+    CHECK_FALSE (hasFxConvProblem (processor));
+
+    // **A miss is an ordinary miss named at the slot** — and the dry signal still passes, so neither case
+    // becomes silence.
+    auto missing = convDocument();
+    missing.parameters["FXRack0/FX[0]/FXConv/relativePathToIR"] = text ("Test/NotThere.wav");
+
+    XerumAudioProcessor missingProcessor;
+    missingProcessor.prepareToPlay (48000.0, 512);
+    missingProcessor.applyDocument (missing, {}, 0);
+
+    const auto named = entriesFor (missingProcessor, "Test/NotThere.wav");
+    REQUIRE (named.size() == 1);
+    CHECK (named.front().modulePath == "FXRack0/FX[0]");
+    CHECK (named.front().severity == xerum::model::Severity::High);
+    CHECK (named.front().reason.find ("not found in") != std::string::npos);
+
+    const auto dryRender = renderDocument (missing, 24, 512, noteThenRelease (60, 12));
+    CHECK (peakOf (dryRender) > 0.01);   // the convolution passes the signal, it does not silence it
+}
+
+TEST_CASE ("a content root the OS refuses is a refusal with its path, for an impulse as for a table",
+           "[plugin][audio][fx]")
+{
+    // Ticket `56`'s distinction, on the IR path: absence is an ordinary miss and says nothing about the
+    // machine; a path that is *there* and will not be read is a refusal, and it carries its path. The
+    // refusal here is a directory with its permissions taken away, which is the shape a consent prompt,
+    // a locked volume or a protected folder eventually takes.
+    IrRoot root;
+    const auto impulses = root.root.getChildFile ("Impulses");
+    impulses.createDirectory();
+    writeImpulseWav (impulses.getChildFile ("Hidden.wav"), 512, 48000.0);
+    REQUIRE (impulses.getChildFile ("Hidden.wav").existsAsFile());
+
+    if (::chmod (impulses.getFullPathName().toRawUTF8(), 0000) != 0)
+        SKIP ("could not take this directory's permissions away");
+
+    auto document = convDocument();
+    document.parameters["FXRack0/FX[0]/FXConv/relativePathToIR"] = text ("Hidden.wav");
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (document, {}, 0);
+
+    // Put the permissions back before any assertion can throw, so a failure does not leave a directory the
+    // test's own cleanup cannot remove.
+    ::chmod (impulses.getFullPathName().toRawUTF8(), 0755);
+
+    const auto refusals = entriesFor (processor, impulses.getChildFile ("Hidden.wav").getFullPathName().toStdString());
+
+    bool sawRefusal = ! refusals.empty();
+
+    for (const auto& entry : processor.report().entries)
+        if (entry.modulePath == "content" && entry.reason.find ("could not be read") != std::string::npos)
+            sawRefusal = true;
+
+    CHECK (sawRefusal);
+
+    // The refusal is not a silence: the convolution still passes the signal.
+    const auto rendered = renderDocument (document, 16, 512, noteThenRelease (60, 8));
+    CHECK (peakOf (rendered) > 0.01);
+}
+
+TEST_CASE ("a factory preset's convolution renders with its FLAC impulse", "[plugin][audio][fx][corpus]")
+{
+    // **The real thing**: `808 - Diesel` convolves with `Factory/Coloration/Woody.flac` out of the
+    // reference's own `Impulses/` tree — 109 FLACs in 7 directories, referenced by relative path — which is
+    // the corpus the resolution and the decoder exist for. The comparison is against the same document with
+    // the reference removed, so the difference is the impulse.
+    const juce::File preset (juce::String (corpusRoot()) + "/Presets/Factory/Bass/808/808 - Diesel.SerumPreset");
+
+    if (! preset.existsAsFile())
+        SKIP ("the reference's corpus is not installed at " << corpusRoot().toStdString());
+
+    const auto loaded = xerum::plugin::loadPresetFile (preset);
+    REQUIRE (loaded.ok);
+
+    auto carrying = loaded.document;
+    std::string reference;
+
+    // Which slot names an impulse by file, and what it names. One pass: the erase below is the only other
+    // change to the document, so the two renders differ in nothing else.
+    std::vector<std::string> referencePaths;
+
+    for (const auto& [path, value] : carrying.parameters)
+        if (path.ends_with ("FXConv/relativePathToIR"))
+        {
+            referencePaths.push_back (path);
+
+            if (value.isText())
+                reference = value.text;
+        }
+
+    REQUIRE_FALSE (reference.empty());
+
+    auto withoutReference = carrying;
+
+    for (const auto& path : referencePaths)
+        withoutReference.parameters.erase (path);
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (carrying, {}, 0);
+
+    // The impulse resolved: the reference's own report says which file, and the effect no longer reports a
+    // missing one.
+    const auto named = entriesFor (processor, reference);
+    CHECK (named.empty());                 // found, so nothing to report about it
+    CHECK_FALSE (hasFxConvProblem (processor));
+
+    const auto withImpulse = renderDocument (carrying, 24, 512, noteThenRelease (60, 12));
+    const auto dry = renderDocument (withoutReference, 24, 512, noteThenRelease (60, 12));
+    const auto delta = deltaOf (dry, withImpulse);
+
+    std::fprintf (stderr, "[ir] 808 - Diesel / %s: differing %zu of %zu, residual %.2f dB, peak %.6f -> %.6f\n",
+                  reference.c_str(), delta.differing, dry.size(), delta.differenceDb, delta.peakWithout,
+                  delta.peakWith);
+
+    CHECK (delta.differing > 0);
+    CHECK (peakOf (withImpulse) < 32.0);   // it convolves; it does not run away
+}
+
+

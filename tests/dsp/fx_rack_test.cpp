@@ -9,7 +9,11 @@
 //
 // The convention-dependent parts — where `kParamFreq` maps to hertz, what `kParamTone` does to a
 // convolution — are *not* asserted, because ticket 04 measured the ranges and not the curves. What is
-// asserted is independent of them.
+// asserted is independent of them. **Two exceptions arrived with ticket `62`**, which swept the knob
+// against the reference and fitted it: `kParamLevelOut` (`gain = 4·s²`, unity at the stored `0.5`) and
+// `kParamThresh` (`threshold amplitude = (1−s)³`, `0 dBFS` at the stored `0`). Tests that need a gain or a
+// threshold state it through `levelOutFor` or `threshFor`, so the law is named where it is used rather
+// than spelled as a bare number.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -31,6 +35,23 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kTwoPi = 2.0 * kPi;
 constexpr int kBlock = 512;
+
+/// Ticket 62: the reference's FX `kParamLevelOut` knob is a **squared** taper, unity at the stored
+/// `0.5` — `gain = 4·s²`, measured against the reference (see `fxLevelOutGain`). A test that wants a
+/// given gain states it through this rather than by storing the gain itself.
+double levelOutFor (double gain)
+{
+    return std::sqrt (std::max (gain, 0.0)) * 0.5;
+}
+
+/// The inverse of `fxCompThresholdDb`: the stored `kParamThresh` whose measured threshold is `db`.
+/// Ticket 62 fitted `threshold amplitude = (1−s)³` against the reference, so this is
+/// `1 − cbrt(amplitude)`.
+double threshFor (double db)
+{
+    const double amplitude = std::pow (10.0, db / 20.0);
+    return 1.0 - std::cbrt (std::max (amplitude, 0.0));
+}
 
 std::unique_ptr<FxEffect> make (FxClass cls, double sampleRate = 48000.0)
 {
@@ -401,7 +422,7 @@ TEST_CASE ("distortion changes harmonic content, and does it more as drive rises
     const auto flat = [] (FxEffect& effect)
     {
         set (effect, "kParamWet", 100.0);
-        set (effect, "kParamLevelOut", 1.0);
+        set (effect, "kParamLevelOut", levelOutFor (1.0));   // ticket 62: unity is the stored 0.5
     };
 
     auto clean = make (FxClass::Distortion);
@@ -499,13 +520,13 @@ TEST_CASE ("a compressor reduces measured dynamic range", "[fx]")
 
     auto uncompressed = make (FxClass::Compressor);
     set (*uncompressed, "kParamRatio", 1.0);      // ratio 1 is "do nothing"
-    set (*uncompressed, "kParamThresh", 0.5);
+    set (*uncompressed, "kParamThresh", threshFor (-10.0));
     set (*uncompressed, "kParamWet", 100.0);
     const auto open = measureDynamicRange (*uncompressed, 48000.0, kLoud, kQuiet);
 
     auto compressed = make (FxClass::Compressor);
     set (*compressed, "kParamRatio", 20.0);
-    set (*compressed, "kParamThresh", 20.0 / 120.0);   // the guide's 0…1 scale: -20 dB
+    set (*compressed, "kParamThresh", threshFor (-10.0));   // ticket 62's measured law
     set (*compressed, "kParamAttack", 1.0);
     set (*compressed, "kParamRelease", 100.0);
     set (*compressed, "kParamWet", 100.0);
@@ -520,7 +541,7 @@ TEST_CASE ("a compressor reduces measured dynamic range", "[fx]")
     // Make-up gain lifts both halves; it does not put the dynamics back.
     auto withMakeup = make (FxClass::Compressor);
     set (*withMakeup, "kParamRatio", 20.0);
-    set (*withMakeup, "kParamThresh", 20.0 / 120.0);
+    set (*withMakeup, "kParamThresh", threshFor (-10.0));
     set (*withMakeup, "kParamAttack", 1.0);
     set (*withMakeup, "kParamRelease", 100.0);
     set (*withMakeup, "kParamMakeup", 12.0);
@@ -533,7 +554,7 @@ TEST_CASE ("a compressor reduces measured dynamic range", "[fx]")
     // rather than on a knob axis: compression is monotone in RATIO.
     auto limiter = make (FxClass::Compressor);
     set (*limiter, "kParamRatio", 1000.0);
-    set (*limiter, "kParamThresh", 20.0 / 120.0);
+    set (*limiter, "kParamThresh", threshFor (-10.0));
     set (*limiter, "kParamAttack", 1.0);
     set (*limiter, "kParamRelease", 100.0);
     set (*limiter, "kParamWet", 100.0);
@@ -923,7 +944,7 @@ TEST_CASE ("a rack runs its slots in series", "[fx]")
 
     FxSlot first;
     first.cls = FxClass::Utility;
-    first.numbers = { { "kParamLevelOut", 0.5 }, { "kParamWet", 100.0 } };
+    first.numbers = { { "kParamLevelOut", levelOutFor (0.5) }, { "kParamWet", 100.0 } };
     FxSlot second = first;
 
     rack.setSlots ({ first, second });
@@ -947,9 +968,9 @@ TEST_CASE ("a splitter's bands process independently, measured", "[fx][fx-topolo
     split.numbers = { { "kParamFreq", 1000.0 }, { "kParamModuleCount1", 1.0 }, { "kParamModuleCount2", 1.0 } };
     FxSlot lowBand;
     lowBand.cls = FxClass::Utility;
-    lowBand.numbers = { { "kParamLevelOut", 0.25 }, { "kParamWet", 100.0 } };
+    lowBand.numbers = { { "kParamLevelOut", levelOutFor (0.25) }, { "kParamWet", 100.0 } };
     FxSlot highBand = lowBand;
-    highBand.numbers = { { "kParamLevelOut", 1.0 }, { "kParamWet", 100.0 } };
+    highBand.numbers = { { "kParamLevelOut", levelOutFor (1.0) }, { "kParamWet", 100.0 } };
 
     FxRack rack;
     rack.prepare (kSampleRate, kBlock);
@@ -1013,7 +1034,7 @@ TEST_CASE ("a splitter's bands process independently, measured", "[fx][fx-topolo
     serial.prepare (kSampleRate, kBlock);
     FxSlot quarter;
     quarter.cls = FxClass::Utility;
-    quarter.numbers = { { "kParamLevelOut", 0.25 }, { "kParamWet", 100.0 } };
+    quarter.numbers = { { "kParamLevelOut", levelOutFor (0.25) }, { "kParamWet", 100.0 } };
     serial.setSlots ({ quarter, quarter });
     REQUIRE (serial.nodeCount() == 2);
 
@@ -1135,7 +1156,7 @@ TEST_CASE ("the three racks are wired MAIN, BUS 1 and BUS 2", "[fx]")
 
     FxSlot half;
     half.cls = FxClass::Utility;
-    half.numbers = { { "kParamLevelOut", 0.5 }, { "kParamWet", 100.0 } };
+    half.numbers = { { "kParamLevelOut", levelOutFor (0.5) }, { "kParamWet", 100.0 } };
 
     for (int index = 0; index < FxBank::kRackCount; ++index)
         bank.rack (index).setSlots ({ half });
@@ -1344,4 +1365,29 @@ TEST_CASE ("a delay does not run away at the corpus's own numbers", "[fx][fx-loo
     UNSCOPED_INFO ("rack tail, peak in the last second: " << lastSecondPeak);
     CHECK (std::isfinite (lastSecondPeak));
     CHECK (lastSecondPeak < 2.0);
+}
+
+TEST_CASE ("the level knob is the squared curve measured against the reference", "[fx]")
+{
+    // Ticket 62 swept `kParamLevelOut` against the reference's own audio (a preset differing only in
+    // this leaf, rendered on both sides) and fitted `gain = 4·s²`: `0.25 → 0.25`, `0.5 → 1.0` (which is
+    // why a slot that omits the leaf is unity), `1.0 → 4.0`. Three stored values, three measured gains —
+    // an affine reading of the leaf would fail the middle one and a linear one the ends.
+    const std::pair<double, double> points[] = { { 0.25, 0.25 }, { 0.5, 1.0 }, { 0.75, 2.25 }, { 1.0, 4.0 } };
+
+    for (const auto& [stored, gain] : points)
+    {
+        auto effect = make (FxClass::Utility);
+        set (*effect, "kParamWet", 100.0);
+        set (*effect, "kParamLevelOut", stored);
+        UNSCOPED_INFO ("stored " << stored << " -> gain " << gain);
+
+        CHECK (std::fabs (gainAt (*effect, 1000.0, 48000.0) - gain) < 0.01 * gain);
+    }
+
+    // And the leaf really is the gain rather than a correlate of it: zero is silence.
+    auto silent = make (FxClass::Utility);
+    set (*silent, "kParamWet", 100.0);
+    set (*silent, "kParamLevelOut", 0.0);
+    CHECK (gainAt (*silent, 1000.0, 48000.0) < 1.0e-6);
 }
