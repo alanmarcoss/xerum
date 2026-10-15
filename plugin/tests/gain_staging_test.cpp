@@ -1511,7 +1511,7 @@ TEST_CASE ("the reference's voice and ours, peak and RMS at one voice and at six
 //
 // Every ratio to the `1.0` render is the stored value **squared**, and a preset that omits the leaf
 // renders byte-identically to one storing `0.5` — so the gain is `4·s²` and the knob's middle is unity.
-// `dsp::fxLevelOutGain` is that model; the assertions below hold both sides' ratio curves to it, at
+// `dsp::levelTaperGain` is that model; the assertions below hold both sides' ratio curves to it, at
 // four stored values, which is the counterfactual the ticket asks for.
 //
 // **`FXComp`'s `kParamThresh`, measured.** With the ratio at its limit the compressor pins its output
@@ -1677,7 +1677,14 @@ TEST_CASE ("the FX level and compressor-threshold unit models, swept against the
                                          { compPrefix + "kParamAttack", 0.1 },
                                          { compPrefix + "kParamRelease", 137.6 },
                                          { compPrefix + "kParamMakeup", 0.0 },
-                                         { compPrefix + "kParamThresh", stored } }, error));
+                                         { compPrefix + "kParamThresh", stored },
+                                         // Ticket `65` reads `VoiceFilter{N}/kParamLevelOut`, and this base
+                                         // preset stores `0.298694` — `-10.5 dB` — so both sides are pinned to
+                                         // the leaf's own unity point (`0.5`) here. The case is about the
+                                         // *compressor's* knob and nothing else; leaving the filter's level
+                                         // live would put 10.5 dB of voice-level difference between the two
+                                         // sides' compressor inputs for no reason this case is measuring.
+                                         { "VoiceFilter0/plainParams/kParamLevelOut", 0.5 } }, error));
         INFO (error);
 
         const auto reference = renderReferencePreset (host, root, file, outDir / ("fx-comp-ref.wav"), notes,

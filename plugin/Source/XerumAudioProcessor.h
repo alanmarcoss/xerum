@@ -216,6 +216,7 @@ private:
         struct Filter
         {
             int enable { -1 }, type { -1 }, freq { -1 }, reso { -1 }, drive { -1 }, var { -1 };
+            int levelOut { -1 };   ///< `kParamLevelOut` — "Filter 1 Level", ticket 65
         };
 
         Filter filter[dsp::kFilterSlots];

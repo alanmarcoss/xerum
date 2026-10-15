@@ -96,6 +96,33 @@ const std::vector<FxClass>& deferredFxClasses();   ///< 2 — `FXSplit3`, `FXSpl
 bool fxClassIsSplitter (FxClass cls);
 int fxSplitterBandCount (FxClass cls);
 
+/// **The reference's squared level taper — one law, three leaves.** `gain = 4·s²`, unity at the stored
+/// `0.5`; `0` is silence and `1.0` is `+12 dB`. Measured, not assumed.
+///
+/// * `FXRack{N}/FX[]/*/plainParams/kParamLevelOut` — ticket `62` swept it on `BA - Analog Classics 3`
+///   (one `FXEQ` slot) and the reference's peaks at stored 0.1 / 0.25 / 0.5 / 0.75 / 1.0 were
+///   `0.011244 / 0.070277 / 0.281111 / 0.632546 / 1.124526`: every ratio to the `1.0` render is `s²`,
+///   and a preset that **omits** the leaf renders byte-identically to one storing `0.5`, which fixes the
+///   constant at `4`.
+/// * `Global{N}/plainParams/kParamFXBus{n}Vol` — ticket `65` read the reference's **own display** for
+///   `Bus 1 Vol`, which is the mapping in one line: stored 0.0 / 0.1 / 0.25 / 0.5 / 0.75 / 1.0 display
+///   `0% [-∞ dB] / 10% [-28.0 dB] / 25% [-12.1 dB] / 50% [-0.0 dB] / 75% [7.0 dB] / 100% [12.0 dB]`.
+///   `20·log10 (4·s²)` is `12.04 + 40·log10 (s)`: `-28.0 / -12.0 / 0.0 / +7.0 / +12.0` at those points,
+///   i.e. the law to 0.1 dB at every one, and `0.5` is again the unity the reference displays as its
+///   default.
+/// * `VoiceFilter{N}/plainParams/kParamLevelOut` — ticket `65` swept the reference's own `Filter 1 Level`
+///   parameter the same way, and the display reads `-∞ / -40.0 / -36.5 / -28.0 / -16.0 / -12.1 / -8.9 /
+///   -3.9 / -0.0 / 3.1 / 5.8 / 7.0 / 8.1 / 10.2 / 12.0 dB` at stored
+///   `0 / 0.05 / 0.0614035 / 0.1 / 0.2 / 0.25 / 0.3 / 0.4 / 0.5 / 0.6 / 0.7 / 0.75 / 0.8 / 0.9 / 1.0`
+///   — `4·s²` to 0.1 dB at every point, including `808 - Diesel`'s own stored `0.0614035`, which the
+///   reference displays as `-36.5 dB` against the law's `-36.43`. Rendered, the same law holds exactly:
+///   with `Filter 1` on, stored `0.0` renders silence and the peaks at `0.25 / 0.5 / 0.75 / 1.0` are
+///   `0.007250 / 0.029340 / 0.066135 / 0.117743`, every ratio `(s/0.5)²`.
+///
+/// The bus *send* beside the bus volume is deliberately **not** this law: ticket `64` measured that one
+/// as `n³`. The reference's own displays for the two are different curves.
+double levelTaperGain (double stored);
+
 /// An impulse response for `FXConvolve`, owned by the caller and borrowed here.
 struct ImpulseResponse
 {

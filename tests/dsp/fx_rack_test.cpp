@@ -37,7 +37,7 @@ constexpr double kTwoPi = 2.0 * kPi;
 constexpr int kBlock = 512;
 
 /// Ticket 62: the reference's FX `kParamLevelOut` knob is a **squared** taper, unity at the stored
-/// `0.5` — `gain = 4·s²`, measured against the reference (see `fxLevelOutGain`). A test that wants a
+/// `0.5` — `gain = 4·s²`, measured against the reference (see `levelTaperGain`). A test that wants a
 /// given gain states it through this rather than by storing the gain itself.
 double levelOutFor (double gain)
 {
@@ -518,15 +518,40 @@ TEST_CASE ("a compressor reduces measured dynamic range", "[fx]")
     constexpr double kLoud = 0.5;
     constexpr double kQuiet = 0.05;
 
+    // **The threshold is `-20 dBFS`, and ticket `65` restored it.** Before ticket `62` re-expressed it
+    // through `threshFor`, this case stored the raw `20.0 / 120.0`, which under the *old* `-120·s`
+    // reading was exactly `-20 dB` — the test's own threshold, and the one its assertions were written
+    // for. Ticket `62`'s rewrite wrote `threshFor (-10.0)`, moving the threshold 10 dB *up* while leaving
+    // the expectations where they were, and that is what left this case red: at `-10 dBFS` the loud half
+    // (`-6.02 dBFS`) is only 3.98 dB above the threshold, so the most any compressor can take from it is
+    // `3.98·(1 − 1/ratio)` dB — 3.78 dB at ratio 20 — and the quiet half is 16 dB below the threshold and
+    // untouched, so the 20 dB input keeps **16.02 dB** however the compressor is built.
+    //
+    // Settled on the reference rather than by argument. Its own `FXComp` at `threshFor (-10)` (stored
+    // `0.318687`, the law's `-10.0 dBFS`), ratio at its limit, fed a `0.5` then a `0.05` sine — the same
+    // stimulus this case uses — renders **0.505269 then 0.050527** through its own plugin
+    // (`BA - Analog Classics 2` with one `FXComp` slot, `render-preset.sh`, steady peak from 0.30 s,
+    // input level set by the leaf `Global0/kParamMasterVolume`): **20.00 dB remaining, nothing removed at
+    // all**, because its detector reads RMS and a 0.5-peak sine sits at `-9.0 dBFS` RMS, one dB above a
+    // `-10 dBFS` threshold. So at `-10 dBFS` this case's expectation is not merely stale, it is
+    // unreachable: the old `< 14.0` came from reading stored `0.3187` as `-38.2 dBFS`, which is where the
+    // `-120·s` law put it. At `-20 dBFS` — the threshold the case always meant — the loud half is
+    // 13.98 dB above it, a ratio-20 compressor removes 13.3 dB, and the quiet half is still below and
+    // untouched, so the range lands near 6.7 dB and every assertion below holds as written.
+    //
+    // No assertion and no margin was relaxed to make this pass; the law itself is what ticket `62`
+    // certified against the corpus and `[fx-units]` re-measures against the reference.
+    constexpr double kThresholdDb = -20.0;
+
     auto uncompressed = make (FxClass::Compressor);
     set (*uncompressed, "kParamRatio", 1.0);      // ratio 1 is "do nothing"
-    set (*uncompressed, "kParamThresh", threshFor (-10.0));
+    set (*uncompressed, "kParamThresh", threshFor (kThresholdDb));
     set (*uncompressed, "kParamWet", 100.0);
     const auto open = measureDynamicRange (*uncompressed, 48000.0, kLoud, kQuiet);
 
     auto compressed = make (FxClass::Compressor);
     set (*compressed, "kParamRatio", 20.0);
-    set (*compressed, "kParamThresh", threshFor (-10.0));   // ticket 62's measured law
+    set (*compressed, "kParamThresh", threshFor (kThresholdDb));   // ticket 62's measured law
     set (*compressed, "kParamAttack", 1.0);
     set (*compressed, "kParamRelease", 100.0);
     set (*compressed, "kParamWet", 100.0);
@@ -541,7 +566,7 @@ TEST_CASE ("a compressor reduces measured dynamic range", "[fx]")
     // Make-up gain lifts both halves; it does not put the dynamics back.
     auto withMakeup = make (FxClass::Compressor);
     set (*withMakeup, "kParamRatio", 20.0);
-    set (*withMakeup, "kParamThresh", threshFor (-10.0));
+    set (*withMakeup, "kParamThresh", threshFor (kThresholdDb));
     set (*withMakeup, "kParamAttack", 1.0);
     set (*withMakeup, "kParamRelease", 100.0);
     set (*withMakeup, "kParamMakeup", 12.0);
@@ -554,7 +579,7 @@ TEST_CASE ("a compressor reduces measured dynamic range", "[fx]")
     // rather than on a knob axis: compression is monotone in RATIO.
     auto limiter = make (FxClass::Compressor);
     set (*limiter, "kParamRatio", 1000.0);
-    set (*limiter, "kParamThresh", threshFor (-10.0));
+    set (*limiter, "kParamThresh", threshFor (kThresholdDb));
     set (*limiter, "kParamAttack", 1.0);
     set (*limiter, "kParamRelease", 100.0);
     set (*limiter, "kParamWet", 100.0);

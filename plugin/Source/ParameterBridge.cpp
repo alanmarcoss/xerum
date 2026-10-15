@@ -754,6 +754,11 @@ void ParameterBridge::buildSpecs()
         add (base + "kParamReso", tag + "Resonance (%)", group, ParamType::Float, ChoiceSet::None, 0, 100, 0);
         add (base + "kParamDrive", tag + "Drive (%)", group, ParamType::Float, ChoiceSet::None, 0, 100, 0);
         add (base + "kParamVar", tag + "Variation (%)", group, ParamType::Float, ChoiceSet::None, 0, 100, 0);
+
+        // Ticket `65`. The reference exposes this leaf on its own surface as "Filter 1 Level", displaying
+        // it in dB; its default is the taper's unity point, `0.5`, so a preset that omits it — which is
+        // most of them — is untouched by the law now reading it.
+        add (base + "kParamLevelOut", tag + "Level", group, ParamType::Float, ChoiceSet::None, 0, 1, 0.5);
     }
 
     // --- The amplitude envelope -----------------------------------------------------------------------

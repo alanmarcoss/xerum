@@ -9,6 +9,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "fx_rack.h"
 #include "voice.h"
 #include "wavetable.h"
 
@@ -1209,3 +1210,59 @@ TEST_CASE ("the Filter rows send what leaves the filter, one bus each", "[voice]
     CHECK (firstDifference (on.bus1Left, on.left) == on.left.size());
 }
 
+TEST_CASE ("Filter Level scales what leaves the filter, and a bypassed filter ignores it",
+           "[voice][level]")
+{
+    // **Ticket `65`.** `VoiceFilter{N}/kParamLevelOut` — the reference's "Filter 1 Level" — was read by no
+    // code at all. It is the same squared taper the FX slots' `kParamLevelOut` is (`dsp::levelTaperGain`,
+    // `4·s²`, unity at the stored `0.5`), and the law is measured on the reference's own parameter: its
+    // display reads `-∞ / -40.0 / -28.0 / -12.1 / -0.0 / 7.0 / 12.0 dB` at stored
+    // `0 / 0.05 / 0.1 / 0.25 / 0.5 / 0.75 / 1.0` — `4·s²` to 0.1 dB at every point — and rendered at
+    // `Filter 1 On` it is exact: stored `0.0` is silence and the peaks at `0.25 / 0.5 / 0.75 / 1.0` come
+    // back in the ratios `0.25 / 1 / 2.25 / 4`.
+    const auto table = sineTable();
+
+    const auto peakAt = [&table] (const bool enabled, const double stored)
+    {
+        VoiceSettings settings = sineSettings (&table);
+        settings.filters[0].enabled = enabled;
+        settings.filters[0].cutoff = 0.95;      // open, so this measures the level and not the cutoff
+        settings.filters[0].resonance = 0.0;
+        settings.filters[0].spec = filterSpecFromName ("L12");
+        settings.filters[0].levelOut = stored;
+
+        VoiceEngine engine;
+        engine.prepare (kSampleRate, 128, 8);
+        engine.setSettings (settings);
+        REQUIRE (engine.noteOn (60, 1.0) == 0);
+
+        double peak = 0.0;
+
+        for (const auto sample : render (engine, 8192))
+            peak = std::max (peak, std::abs (static_cast<double> (sample)));
+
+        return peak;
+    };
+
+    // **The default is a no-op at the sample level**: the leaf's own default `0.5` is the taper's unity
+    // point, so a filter that carries no such leaf renders exactly what it rendered before the law was
+    // read — and `1.0 · x` is `x` in float, so this is bit equality, not a tolerance.
+    const auto unity = peakAt (true, 0.5);
+    REQUIRE (unity > 0.01);
+    CHECK (levelTaperGain (0.5) == 1.0);
+    CHECK (peakAt (true, 0.5) == unity);
+
+    // The counterfactual, on the knob's own stored values: every ratio to the unity render is `4·s²`.
+    for (const auto stored : { 0.25, 0.75, 1.0 })
+    {
+        INFO ("stored " << stored);
+        CHECK (peakAt (true, stored) / unity == Catch::Approx (4.0 * stored * stored).epsilon (0.005));
+    }
+
+    // Zero is silence, which is the leaf's own bottom.
+    CHECK (peakAt (true, 0.0) == 0.0);
+
+    // **A bypassed filter ignores it**, which is what the reference does: sweeping `Filter 1 Level` with
+    // `Filter 1 On` off left its own render byte-identical.
+    CHECK (peakAt (false, 0.25) == peakAt (false, 0.5));
+}

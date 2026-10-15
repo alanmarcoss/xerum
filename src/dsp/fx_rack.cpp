@@ -28,29 +28,9 @@ double gainToDb (double gain) { return 20.0 * std::log10 (std::max (gain, 1.0e-3
 
 // -------------------------------------------------------------------------------------------------
 // Ticket 62 — two FX leaves' unit models, established by sweeping the stored value against the
-// reference's own audio rather than by reading a display.
+// reference's own audio rather than by reading a display. `levelTaperGain`, the first of the two, is
+// public because two more leaves obey it — see its declaration in `fx_rack.h`.
 // -------------------------------------------------------------------------------------------------
-
-/// The reference's FX `kParamLevelOut` ("level") knob, as a gain. **Measured, not assumed.**
-///
-/// xerum used to apply the stored value as a linear multiplier (`levelOut_ = value`), which is wrong:
-/// the knob is a **squared** taper whose unity is at the leaf's own default, `0.5`. Swept on
-/// `BA - Analog Classics 3` — one `FXEQ` slot, `kParamLevelOut` added at the stored values below and
-/// rendered on both sides under one stimulus (`render-preset.sh --verify`), the reference's peak was:
-///
-///     stored   0.1       0.25      0.5       0.75      1.0
-///     peak     0.011244  0.070277  0.281111  0.632546  1.124526
-///
-/// Every ratio to the `1.0` render is the stored value **squared** (0.01 / 0.0625 / 0.25 / 0.5625 /
-/// 1.0 to four digits), so the gain is `G·s²`; and a preset that **omits** the leaf renders
-/// byte-identically to one that stores `0.5`, which fixes `G = 4` (`4·0.5² = 1`, unity). Full scale is
-/// therefore `+12 dB` and the knob's middle is `0.0 dB`, which is the reference's own display of its
-/// default ("50% [-0.0 dB]"). `0` is silence.
-double fxLevelOutGain (double stored)
-{
-    const double s = clampd (stored, 0.0, 1.0);
-    return 4.0 * s * s;
-}
 
 /// The reference's `FXComp` `kParamThresh`, as a dBFS threshold. **Measured.**
 ///
@@ -669,7 +649,7 @@ public:
         // The three every effect carries, plus the two the slot carries on top of its class.
         if (name == "kParamEnable")   { enabled_ = value != 0.0; return true; }
         if (name == "kParamWet")      { wet_ = clampd (value * 0.01, 0.0, 1.0); return true; }
-        if (name == "kParamLevelOut") { levelOut_ = fxLevelOutGain (value); return true; }
+        if (name == "kParamLevelOut") { levelOut_ = levelTaperGain (value); return true; }
         if (name == "type")           { return true; }   // the class's numeric mirror, already known
         if (name.starts_with ("kUIParam")) return true;  // a UI-only mirror of wet/gain, see the header
 
@@ -728,7 +708,7 @@ protected:
     bool enabled_ { true };
     double wet_ { 1.0 };
     /// The reference's own default: an FX slot that omits `kParamLevelOut` renders exactly as one that
-    /// stores `0.5`, and `fxLevelOutGain (0.5) == 1.0` (ticket 62).
+    /// stores `0.5`, and `levelTaperGain (0.5) == 1.0` (ticket 62).
     double levelOut_ { 1.0 };
     std::vector<double> dryLeft_ {}, dryRight_ {};
 
@@ -2484,6 +2464,12 @@ private:
 };
 
 } // namespace
+
+double levelTaperGain (double stored)
+{
+    const double s = clampd (stored, 0.0, 1.0);
+    return 4.0 * s * s;
+}
 
 // -------------------------------------------------------------------------------------------------
 // The class table.

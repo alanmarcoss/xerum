@@ -283,6 +283,7 @@ void XerumAudioProcessor::resolveLayout()
         entry.reso = find (filter + "reso");
         entry.drive = find (filter + "drive");
         entry.var = find (filter + "var");
+        entry.levelOut = find (filter + "levelout");
     }
 
     // The two fixed slots (ticket 40). Their ids come from `parameterIdFromPath`'s rule on the model
@@ -521,6 +522,12 @@ void XerumAudioProcessor::refreshSettingsFromParameters() noexcept
         filter.resonance = amount (layout.reso);
         filter.drive = amount (layout.drive);
         filter.morph = amount (layout.var) / 100.0;
+
+        // **`Filter {N} Level`** (ticket `65`). The parameter carries the leaf's stored value and the voice
+        // applies the reference's squared taper (`dsp::levelTaperGain`) to it — *after* the matrix has
+        // moved it, because the leaf is a modulation destination and the presets that store a non-default
+        // one all modulate it. See `kLevelModulationSpan`.
+        filter.levelOut = amount (layout.levelOut);
 
         // The **drawn response**, copied from the off-thread table. A plain member copy: the table is
         // written only while the audio thread is held out (`publishPoleZero`), so this read is safe, and
@@ -2397,8 +2404,22 @@ void XerumAudioProcessor::publishFxRack (const model::PresetDocument& document)
         return found != document.parameters.end() && modelNumber (found->second, value) ? value : 1.0;
     };
 
-    fxBank_.setBusRouting (busNumber ("kParamFXBus1Dest"), busNumber ("kParamFXBus1Vol"),
-                           busNumber ("kParamFXBus2Dest"), busNumber ("kParamFXBus2Vol"));
+    // **The bus volume is a leaf with a unit model, not a linear gain** (ticket `65`). The reference's own
+    // display for `Bus 1 Vol` reads `-28.0 / -12.1 / -0.0 / 7.0 / 12.0 dB` at stored
+    // `0.1 / 0.25 / 0.5 / 0.75 / 1.0`, which is `4·n²` to 0.1 dB — so its `0.5` default is 0 dB, and a
+    // preset that omits the leaf really is unity. The *send* level beside it is deliberately a different
+    // curve: ticket `64` measured that one as `n³`.
+    const auto busVolume = [&] (const std::string& leaf)
+    {
+        double value = 0.0;
+        const auto found = document.parameters.find ("Global0/plainParams/" + leaf);
+        return found != document.parameters.end() && modelNumber (found->second, value)
+                   ? dsp::levelTaperGain (value)
+                   : 1.0;
+    };
+
+    fxBank_.setBusRouting (busNumber ("kParamFXBus1Dest"), busVolume ("kParamFXBus1Vol"),
+                           busNumber ("kParamFXBus2Dest"), busVolume ("kParamFXBus2Vol"));
 
     // **The mixer's sends** (ticket `64`), from the same document and inside the same frozen window: the
     // audio thread reads them through `settings_`, and an array of doubles written underneath a running

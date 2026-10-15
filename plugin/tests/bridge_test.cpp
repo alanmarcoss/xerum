@@ -113,7 +113,11 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
     // 85 rather than 83 since ticket 58: the master ceiling's two — the on/off and the ceiling. They are
     // the table's only parameters the schema does not describe, which is the divergence stated in
     // `isXerumsOwn` above and in `docs/test-strategy.md`.
-    CHECK (bridge.specs().size() == 85);
+    //
+    // 87 rather than 85 since ticket 65: `VoiceFilter0/1/plainParams/kParamLevelOut` — the reference's
+    // "Filter 1 Level" / "Filter 2 Level", on its surface at its own default `0.5` — because the leaf was
+    // read by nothing and a preset that stores one now has somewhere to put it.
+    CHECK (bridge.specs().size() == 87);
     CHECK (schema.leafCount() > bridge.specs().size());
 }
 

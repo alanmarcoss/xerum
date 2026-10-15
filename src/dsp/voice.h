@@ -210,6 +210,16 @@ inline constexpr double kVolumeModulationSpan = 1.0;
 inline constexpr double kCutoffModulationSpan = 1.0;
 inline constexpr double kResonanceModulationSpan = 100.0;
 
+/// **`kParamLevelOut`'s span**, and it is not a new convention: the leaf is stored on `0..1` like
+/// `kParamFreq`, so a row of `kParamAmount` 100 is one unit of that range — the same reading as
+/// `kCutoffModulationSpan`. It matters because every preset that stores a *non-default*
+/// `VoiceFilter{N}/kParamLevelOut` also modulates it (ticket `65`: 12 of the 32 fidelity fixtures set the
+/// leaf and all but one carries a row for it), and 808 - Diesel's is `Velo` at `+51.19`: at the harness's
+/// velocity 100 the level is `0.0614 + 0.512·(100/127) = 0.464`, a gain of `-1.3 dB`, against the
+/// `-2.5 dB` the reference's own render of that preset measures. A `dB`-domain reading would put it at
+/// `-30 dB` and the reference is not there.
+inline constexpr double kLevelModulationSpan = 1.0;
+
 /// Destination addressing, from the compiled enums ticket 03 extracted (arm64 offsets in that ticket).
 namespace voiceDestination
 {
@@ -231,6 +241,9 @@ enum VoiceFilterParam
 {
     kParamFreq = 3,
     kParamReso = 4,
+    /// The reference's own id — `ModSlot4` of `808 - Diesel` targets `(VoiceFilter, 0, 8)` and names it
+    /// `kParamLevelOut`. Ticket `65`.
+    kParamLevelOut = 8,
 };
 } // namespace voiceDestination
 
@@ -316,6 +329,16 @@ struct FilterSettings
     double resonance { 0.0 };   ///< `kParamReso`, percent
     double drive { 0.0 };       ///< `kParamDrive`, percent
     double morph { 0.0 };       ///< `kParamVar`, 0..1
+
+    /// `kParamLevelOut` ("Filter 1 Level"), the leaf's **stored** value — `dsp::levelTaperGain` turns it
+    /// into the gain, which the voice applies to what leaves this filter (ticket `65`). The default `0.5`
+    /// is the taper's unity point, so a preset that omits the leaf behaves exactly as it did before the law
+    /// existed.
+    ///
+    /// The stored value is what is carried rather than the gain because the leaf is a **modulation
+    /// destination** (`kLevelModulationSpan`): a preset that modulates it moves the stored value per block,
+    /// and the taper is then applied to the modulated value.
+    double levelOut { 0.5 };
 
     /// The **drawn response**, for a `PoleZero` spec: the sections a preset inlines under `PZs[]`.
     ///

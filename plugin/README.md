@@ -2156,3 +2156,71 @@ instead of pretending.
 | `[fidelity-corpus]`, stage neutralised (the control) | **all seven rows reproduced their recorded baselines to the printed 0.01 dB** (-25.44, -21.72, -20.79, -19.14, -19.52, -21.06, -18.33 / 10.85, 9.89, 14.76, 15.00, 18.85, 14.60, 14.95) and every assertion passed — so the table above is a before/after of one machine, one build, one control |
 | `[interface]` — **the whole tag this time, not `~[interface]`** | **8,730 assertions / 24 cases — all passed**, the drawn-filter case included (it segfaulted before the `PoleZeroObjectPath` fix: see above) |
 | the rest of the plugin suite (`~[interface]`) | **15,326 of 15,331 assertions passed**; the one failing case is `gain_staging_test.cpp`'s "the reference's voice and ours" (**5 assertions**, ticket 61's file, another session's), whose *reference*-side renders come back empty in this build directory — the file is not touched here and its own report records it green in `build-61`. One case skipped: `[fidelity-stimulus]`, which needs the harness binary in this build directory. Model, content and presets suites untouched by this ticket |
+
+# Ticket `65` — the level leaves that were still unmodelled, and the red test
+
+## The red test was a moved threshold, not a wrong law
+
+`tests/dsp/fx_rack_test.cpp`'s `a compressor reduces measured dynamic range` was left failing on `b0e8d18`, and
+the question on the ticket was which of the two was wrong. It is the test — specifically a 10 dB transcription
+error in the rewrite that introduced `threshFor`. Before ticket `62` the case stored the raw `20.0 / 120.0`,
+which under the `-120·s` reading **was** its threshold: `-20 dBFS`. Ticket `62` re-expressed that as
+`threshFor (-10.0)` — `-10 dBFS` — and left the expectations where they were.
+
+At `-10 dBFS` the expectation is unreachable by any compressor: the stimulus' loud half is `-6.02 dBFS`, only
+3.98 dB above the threshold, so a ratio-20 compressor can take at most `3.98·(1 − 1/20) = 3.78 dB` from it, and
+the quiet half (`-26.02 dBFS`) is 16 dB below the threshold and untouched — leaving **≥ 16.02 dB** of the input's
+20. Measured: xerum `20.0 → 16.49 dB`. Measured on the reference through its own plugin at that same stored
+`kParamThresh` (`BA - Analog Classics 2` with one `FXComp` slot, ratio at its limit, `render-preset.sh`, steady
+peak from 0.30 s, input level set by `Global0/kParamMasterVolume`): a 0.5 then a 0.05 sine render
+**0.505269 then 0.050527** — **20.00 dB remaining, nothing removed at all**, because its detector reads RMS and a
+0.5-peak sine sits at `-9.0 dBFS` RMS, one dB above a `-10 dBFS` threshold.
+
+Restoring `-20 dBFS` — the threshold the case always meant, and the value its assertions were written for —
+puts `open 20.0 dB / squashed 6.99 dB / at ratio 1000 6.32 dB` and every assertion holds as written. No assertion,
+margin or tolerance was moved; the case's threshold is the one it started with.
+
+## `VoiceFilter{N}/kParamLevelOut` — one law, three leaves, and a modulation beside it
+
+The leaf was read by nothing. Its law is the same squared taper the FX slots' `kParamLevelOut` obeys, and it was
+established the way ticket `64` said to: **sweep the reference's own host parameter and read its display
+strings**. `Filter 1 Level` is on the reference's surface, and its display is the mapping in one line —
+`-∞ / -40.0 / -36.5 / -28.0 / -16.0 / -12.1 / -8.9 / -3.9 / -0.0 / 3.1 / 5.8 / 7.0 / 8.1 / 10.2 / 12.0 dB` at
+stored `0 / 0.05 / 0.0614035 / 0.1 / 0.2 / 0.25 / 0.3 / 0.4 / 0.5 / 0.6 / 0.7 / 0.75 / 0.8 / 0.9 / 1.0`. That is
+`20·log10 (4·s²) = 12.04 + 40·log10 (s)` to **0.1 dB at every point**. Rendered, with `Filter 1 On`, it is exact:
+stored `0.0` is silence and the peaks at `0.25 / 0.5 / 0.75 / 1.0` come back `0.007250 / 0.029340 / 0.066135 /
+0.117743` — ratios `(s/0.5)²`. With `Filter 1 On` **off** the knob does nothing at all (the render is
+byte-identical), which is why the gain is gated on `enabled`.
+
+**Cross-checked on presets that actually store one**, read from the reference's own surface: `BA - 303 Die
+Treppe` stores `0.885965` / `0.635965` and displays `9.9 dB` / `4.1 dB` against the law's `9.94` / `4.18`; `ARP -
+Bell Arperium` stores `0.466533` and displays `-1.2 dB` against `-1.20`; `808 - Diesel` stores `0.0614035` and
+displays `-36.5 dB` against `-36.43`.
+
+**Why the corpus moved the wrong way for `808 - Diesel` the first time, and what that turned out to be.** The
+preset stores the leaf at `-36.5 dB`, and applying that alone took its fidelity spectral distance `14.41 → 24.00`
+(ticket `64`'s finding, reproduced). The cause is not the law: **the preset modulates the leaf.** `ModSlot4`
+targets `(VoiceFilter, 0, kParamLevelOut)` from source 16 — `Velo` — at `+51.19`, and the reference's own render
+of that preset is only **2.48 dB** below its render at the leaf's unity point. At the harness's velocity 100 that
+is `0.0614 + 0.512·(100/127) = 0.464`, a gain of `-1.3 dB`, against the `-2.5 dB` measured — so xerum now routes
+modulation to this destination (`kLevelModulationSpan`, the same `0..1` reading `kCutoffModulationSpan` uses).
+That is what the corpus then re-measured: `808 - Diesel` spectral **14.41 → 15.57 dB**, inside its baseline.
+
+## `Global{N}/kParamFXBus{n}Vol` — the bus volume, and it is deliberately not the send's law
+
+The leaf fed `FxBank::setBusVolume` raw. Its law is read from the reference's own display for `Bus 1 Vol`:
+`0% [-∞ dB] / 10% [-28.0 dB] / 25% [-12.1 dB] / 50% [-0.0 dB] / 75% [7.0 dB] / 100% [12.0 dB]` at stored
+`0 / 0.1 / 0.25 / 0.5 / 0.75 / 1.0` — `4·n²` again, unity at the `0.5` its default displays as `-0.0 dB`. The
+**send** beside it is a different curve on purpose: ticket `64` measured that one as `n³`, and the reference's
+two displays are different curves. Both are pinned by test.
+
+## Verified by running it
+
+| | |
+|---|---|
+| `xerum-dsp-tests` | **167 cases / 1,643,077 assertions — all passed**, the compressor case green at its restored `-20 dBFS` threshold (`open 20.0 / squashed 6.99 / at ratio 1000 6.32 dB`) and the new `[level]` case (default byte-identical, `4·s²` counterfactual, silence at `0`, bypass ignored) |
+| `xerum-plugin-tests` | **106 cases / 24,323 assertions — all passed**, `[fidelity]` included, after `gain_staging`'s `[fx-units]` base preset was pinned to the filter leaf's unity point and `bridge_test`'s parameter count moved `85 → 87` for the two new leaves |
+| `[fidelity]` gate rows, re-run with the leaves read | `arp-aardvark -25.50 / 10.83`, `arp-acid101 -22.43 / 10.76`, `ba-funk-me-electric-2 -20.61 / 14.97`, `ba-basist -23.94 / 12.76`, `ba-deep-throat-bass -20.04 / 20.32`, `808-decomposed -16.18 / 15.59`, `808-diesel -18.43 / 15.57` — all inside their recorded baselines plus the untouched 3.0 dB margin. `808-diesel`'s spectral is the row to watch: **24.00 with the leaf applied as a static gain, 15.57 with it modulated**, against a baseline of 14.41 |
+| `xerum-model-tests`, `xerum-content-tests` | **120 cases / 68,496 assertions** and **18 cases / 67 assertions — all passed** |
+| `pluginval --strictness-level 10`, Editor and Editor Automation included | **SUCCESS** (`rc=0`) on `build-65/plugin/xerum_artefacts/Release/VST3/xerum.vst3` |
+| the standalone | launches and stays up |

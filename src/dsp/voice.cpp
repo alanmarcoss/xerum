@@ -1,5 +1,7 @@
 #include "voice.h"
 
+#include "fx_rack.h"   // `levelTaperGain` — the reference's level taper, shared with the FX rack
+
 #include <algorithm>
 #include <cmath>
 
@@ -426,6 +428,7 @@ void Voice::render (float* outLeft, float* outRight, const BusSends& sends, int 
     ModulatedRamp coarseRamp {};
     std::array<ModulatedRamp, kFilterSlots> cutoffRamp {};
     std::array<ModulatedRamp, kFilterSlots> resoRamp {};
+    std::array<ModulatedRamp, kFilterSlots> levelRamp {};
 
     if (modulated)
     {
@@ -448,6 +451,8 @@ void Voice::render (float* outLeft, float* outRight, const BusSends& sends, int 
                                              voiceDestination::kParamFreq);
             resoRamp[f] = matrix->rampFor (voiceDestination::kVoiceFilterClass, f,
                                            voiceDestination::kParamReso);
+            levelRamp[f] = matrix->rampFor (voiceDestination::kVoiceFilterClass, f,
+                                            voiceDestination::kParamLevelOut);
         }
     }
 
@@ -496,7 +501,8 @@ void Voice::render (float* outLeft, float* outRight, const BusSends& sends, int 
 
     for (int f = 0; f < kFilterSlots; ++f)
         if (settings_.filters[f].enabled
-            && (cutoffRamp[f].start != cutoffRamp[f].end || resoRamp[f].start != resoRamp[f].end))
+            && (cutoffRamp[f].start != cutoffRamp[f].end || resoRamp[f].start != resoRamp[f].end
+                || levelRamp[f].start != levelRamp[f].end))
             filterVaries = true;
 
     /// The sub oscillator's frequency, in hertz: the note it is playing, its own octave/coarse/pitch/fine
@@ -794,6 +800,21 @@ void Voice::render (float* outLeft, float* outRight, const BusSends& sends, int 
 
                 left = filters_[f][0].process (left);
                 right = filters_[f][1].process (right);
+
+                // **`Filter {N} Level`** (ticket `65`): the reference's `kParamLevelOut` scales what
+                // *leaves* this filter, which is also what feeds the next one in xerum's series chain and
+                // what this filter's routing row carries below. Gated on `enabled` because the reference's
+                // knob does nothing to a bypassed slot (measured); the leaf's own default is the unity
+                // point, so a preset that omits it renders exactly as it did before this existed.
+                //
+                // The stored value is modulated (it is a matrix destination in its own right), so the
+                // taper is applied to the modulated value rather than to the constant settings carried.
+                const auto levelGain = levelTaperGain (
+                    clampDouble (fs.levelOut + levelRamp[f].at (frame, frames) * kLevelModulationSpan,
+                                 0.0, 1.0));
+
+                left = static_cast<float> (static_cast<double> (left) * levelGain);
+                right = static_cast<float> (static_cast<double> (right) * levelGain);
 
                 // `Filter 1`/`Filter 2` as modulation sources: the signal leaving that filter. Filter 2's
                 // input is filter 1's output, so the two sources are what the chain actually produces.

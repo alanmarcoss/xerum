@@ -188,6 +188,21 @@ which is exact, rather than a peak that would be asserting the reference's detec
 each model against the reference and each output against the other side's at four stored values, so a
 model fitted to two points could not pass.
 
+**Ticket `65` extended the taper to the two leaves the host surface *does* carry, and read them off it.**
+`VoiceFilter{N}/kParamLevelOut` ("Filter 1 Level") and `Global{N}/kParamFXBus{n}Vol` ("Bus 1/2 Vol") were
+read by nothing / fed raw; both are the same `4·s²` family, and both were established the way ticket `64`
+recommended — sweep the reference's own **host parameter** and read its **display strings**, which is the
+whole stored↔dB relation in one pass rather than a curve fitted to a proxy. The `Filter 1 Level` display reads
+`-∞ / -40.0 / -36.5 / -28.0 / -16.0 / -12.1 / -8.9 / -3.9 / -0.0 / 3.1 / 5.8 / 7.0 / 8.1 / 10.2 / 12.0 dB` at
+stored `0 / 0.05 / 0.0614035 / 0.1 / 0.2 / 0.25 / 0.3 / 0.4 / 0.5 / 0.6 / 0.7 / 0.75 / 0.8 / 0.9 / 1.0`, and
+`Bus 1 Vol`'s is `-∞ / -28.0 / -12.1 / -0.0 / 7.0 / 12.0 dB` at `0 / 0.1 / 0.25 / 0.5 / 0.75 / 1.0` — `4·s²` to
+0.1 dB at every point of both. Each is cross-checked on **presets that actually store one** (`BA - 303 Die
+Treppe` `9.9` / `4.1 dB` against the law's `9.94` / `4.18`; `ARP - Bell Arperium` `-1.2` against `-1.20`; `808 -
+Diesel` `-36.5` against `-36.43`), which is the check that caught a law fitted to a default. The filter leaf is
+also a **modulation destination** — every preset that stores a non-default one modulates it, and `808 - Diesel`'s
+`Velo` row at `+51.19` is why the leaf cannot be applied as a static gain — so `kLevelModulationSpan` is the
+span, read the same way `kCutoffModulationSpan` reads a `0..1` destination.
+
 ## Where fixtures live
 
 Outside the repository, in a documented location (`~/.xerum-fixtures/`), covered by `.gitignore`.

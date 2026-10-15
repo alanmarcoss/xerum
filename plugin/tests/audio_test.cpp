@@ -519,6 +519,63 @@ std::vector<xerum::model::ReportEntry> fxEntries (const XerumAudioProcessor& pro
 
 } // namespace
 
+TEST_CASE ("a preset's Filter Level leaf scales what leaves the voice filter, and its default is a no-op",
+           "[plugin][audio][level]")
+{
+    // **Ticket `65`.** `VoiceFilter{N}/plainParams/kParamLevelOut` — the reference's "Filter 1 Level" — was
+    // read by no code at all. The law is measured on the reference's own parameter of that name: its
+    // display reads `-∞ / -40.0 / -28.0 / -12.1 / -0.0 / 7.0 / 12.0 dB` at stored
+    // `0 / 0.05 / 0.1 / 0.25 / 0.5 / 0.75 / 1.0` — the same `4·s²` taper the FX leaves obey, unity at the
+    // `0.5` the reference displays as its default — and rendered with `Filter 1 On` the law is exact:
+    // stored `0.0` is silence and the peaks at `0.25 / 0.5 / 0.75 / 1.0` come back in the ratios
+    // `0.25 / 1 / 2.25 / 4`. Read on presets that actually store one, the reference's own display agrees
+    // again: `BA - 303 Die Treppe` stores `0.885965` / `0.635965` and displays `9.9 dB` / `4.1 dB` against
+    // the law's `9.94` / `4.18`, and `ARP - Bell Arperium` stores `0.466533` and displays `-1.2 dB`
+    // against `-1.20`.
+    //
+    // The document is `fxDocument`'s shape — ceiling off, `Main Vol` pinned — so the ratio is the law's and
+    // not the limiter's, and the filter is left at its default `L12` wide open, so this measures the level
+    // and not the cutoff. The leaf is written the way a preset writes it, through `applyDocument`.
+    const auto levelOf = [&] (const bool setLeaf, const double stored)
+    {
+        auto document = fxDocument();
+        document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (1.0);
+
+        if (setLeaf)
+            document.parameters["VoiceFilter0/plainParams/kParamLevelOut"] = number (stored);
+
+        return rmsOf (renderDocument (document, 24, 512, noteThenRelease (60, 12)));
+    };
+
+    const auto unity = levelOf (true, 0.5);
+    REQUIRE (unity > 0.01);
+
+    for (const auto stored : { 0.25, 0.75, 1.0 })
+    {
+        INFO ("Filter 1 Level stored " << stored);
+        CHECK (levelOf (true, stored) / unity == Catch::Approx (4.0 * stored * stored).epsilon (0.01));
+    }
+
+    // The bottom of the knob is silence, which is the reference's `[-∞ dB]`.
+    CHECK (levelOf (true, 0.0) == 0.0);
+
+    // **The leaf's own default is the unity point**, so a preset that omits it renders exactly what the
+    // filter rendered before this law was applied — not merely "a sensible value close to unity".
+    CHECK (levelOf (false, 0.0) == unity);
+
+    // And a filter that is off ignores the leaf entirely, which is what the reference does: sweeping
+    // `Filter 1 Level` with `Filter 1 On` off left its own render byte-identical.
+    const auto disabledWith = [&] (const double stored)
+    {
+        auto document = fxDocument();
+        document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (0.0);
+        document.parameters["VoiceFilter0/plainParams/kParamLevelOut"] = number (stored);
+        return renderDocument (document, 24, 512, noteThenRelease (60, 12));
+    };
+
+    CHECK (deltaOf (disabledWith (0.25), disabledWith (0.5)).differing == 0);
+}
+
 TEST_CASE ("a preset's FX reach the output: the render with the slots differs from the render without them",
            "[plugin][audio][fx]")
 {
@@ -1118,6 +1175,78 @@ TEST_CASE ("a send's level is the preset's percent cubed, which is the reference
     const auto at25 = busRmsAt (25.0);
     CHECK (at25 - none < at50 - none);
     CHECK (at50 - none < unity);
+}
+
+TEST_CASE ("a bus's volume leaf is the reference's squared taper, not the stored value",
+           "[plugin][audio][fx]")
+{
+    // **Ticket `65`.** `Global{N}/plainParams/kParamFXBus{n}Vol` was handed to `FxBank::setBusVolume`
+    // **raw**, so a preset's bus came out at its stored value where the reference's own display for
+    // `Bus 1 Vol` reads `0% [-∞ dB] / 10% [-28.0 dB] / 25% [-12.1 dB] / 50% [-0.0 dB] / 75% [7.0 dB] /
+    // 100% [12.0 dB]` at stored `0 / 0.1 / 0.25 / 0.5 / 0.75 / 1.0`. `20·log10 (4·n²)` is
+    // `12.04 + 40·log10 (n)`, which is `-28.0 / -12.0 / 0.0 / +7.0 / +12.0` at those points: the squared
+    // taper, unity at the `0.5` the reference displays as its default. The *send* law beside it is
+    // deliberately different — the case above pins `n³`, ticket `64`'s measurement.
+    //
+    // Measured by difference, and on the bus's own contribution only. BUS 1 sits at the default
+    // destination (summed into MAIN's *input*) and MAIN's rack is empty here, so a render is
+    // `dry + volume·bus` exactly; subtracting the dry render leaves `volume·bus`, whose rms is
+    // proportional to the volume. That is what makes this a statement about the mapping and not about how
+    // correlated signals sum.
+    const auto clip = std::vector<std::pair<std::string, xerum::model::Value>> {
+        { "kParamMode", text ("kSoftClip") }, { "kParamDrive", number (30.0) }, { "kParamWet", number (100.0) }
+    };
+
+    auto document = fxDocument();
+    addFxSlot (document, 0, xerum::dsp::FxClass::Distortion, clip, 1);
+    document.parameters["RoutingSlot0/plainParams/kParamFXBus1Level"] = number (100.0);   // full send
+
+    const auto dry = renderDocument (fxDocument(), 16, 512, noteThenRelease (60, 8));
+
+    const auto busLevel = [&] (const double storedVolume)
+    {
+        auto with = document;
+        with.parameters["Global0/plainParams/kParamFXBus1Vol"] = number (storedVolume);
+        const auto rendered = renderDocument (with, 16, 512, noteThenRelease (60, 8));
+
+        REQUIRE (rendered.size() == dry.size());
+        REQUIRE (rendered.size() > 0);
+
+        double energy = 0.0;
+
+        for (std::size_t i = 0; i < rendered.size(); ++i)
+        {
+            const auto contribution = static_cast<double> (rendered[i]) - static_cast<double> (dry[i]);
+            energy += contribution * contribution;
+        }
+
+        return std::sqrt (energy / static_cast<double> (rendered.size()));
+    };
+
+    const auto unity = busLevel (0.5);   // the leaf's own default, and the taper's unity point
+    REQUIRE (unity > 1.0e-4);
+
+    CHECK (xerum::dsp::levelTaperGain (0.5) == 1.0);
+
+    for (const auto stored : { 0.25, 0.75, 1.0 })
+    {
+        INFO ("Bus 1 Vol stored " << stored);
+        CHECK (busLevel (stored) / unity == Catch::Approx (4.0 * stored * stored).epsilon (0.01));
+    }
+
+    // The bottom of the knob removes the bus entirely, which is the reference's `[-∞ dB]`.
+    CHECK (busLevel (0.0) == 0.0);
+
+    // Omitting the leaf is the reference's default, and the default is unity — not "smaller than 0.5".
+    auto withoutLeaf = document;
+    withoutLeaf.parameters.erase ("Global0/plainParams/kParamFXBus1Vol");
+
+    auto atHalf = document;
+    atHalf.parameters["Global0/plainParams/kParamFXBus1Vol"] = number (0.5);
+
+    const auto absent = renderDocument (withoutLeaf, 16, 512, noteThenRelease (60, 8));
+    const auto half = renderDocument (atHalf, 16, 512, noteThenRelease (60, 8));
+    CHECK (deltaOf (absent, half).differing == 0);
 }
 
 TEST_CASE ("a factory preset's own routing sends change its render", "[plugin][audio][fx][corpus]")
