@@ -41,6 +41,7 @@
 #include "InterfaceLook.h"
 #include "ParameterBridge.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -170,6 +171,13 @@ constexpr int kWavetableHeadHeight = 22;
 constexpr int kInlineDisplayMinWidth = 190;
 constexpr int kInlineDisplayMinHeight = 150;
 
+/// The height the amplitude envelope's drawn curve will not go below: **the design system's own display
+/// height** — its `filter-viz` is 68 at a 900×600 window — which is also exactly what the panel's one row
+/// of 68px knobs and its chrome already are, so the graph costs the page no height at all (ticket `59`).
+/// Ticket `57` measured that the envelope's band held air; this is the drawing that fills it without
+/// making the page taller.
+constexpr int kEnvelopeGraphMinHeight = 68;
+
 //==============================================================================
 // The composition.
 
@@ -192,10 +200,12 @@ enum class SectionKind
 /// one row, in this list's order. That is how the design's `bottom-row` — the effects cards and the macro
 /// strip — is expressed, and it is the reason the two are one row rather than two.
 ///
-/// `flexible` is the design's **`1fr`** — the grid row that takes the window's slack — as a fact about a
-/// section rather than about a section *kind* (ticket `57`): the design's grid names a row, not a widget,
-/// and which row it is has changed since ticket `53` without the composition's shape changing at all.
-/// At most one entry sets it; the page's slack goes to that section and to nothing else.
+/// **`flexible` is gone, and this is why** (ticket `59`). Ticket `53` made one section the design's `1fr`
+/// — the grid row that takes the window's slack — and ticket `57` moved that job from the matrix to the
+/// amplitude envelope. A row that grows when the window does is a section **re-flowing**, which is what
+/// the dev has now asked the interface to stop doing: the composition is laid out at one size
+/// (`CompositionView::layout (width)`) and the whole of it is scaled into the window, so the page has no
+/// slack at any size and a flag for who takes it would have no reader at all.
 struct SectionSpec
 {
     std::string id;                  ///< the design's own name: `osc-row`, `filter-section`, `mod-panel`, …
@@ -203,7 +213,6 @@ struct SectionSpec
     SectionKind kind { SectionKind::Panels };
     std::vector<std::string> holds;  ///< the groups it claims; empty means "whatever is left"
     std::string band;                ///< sections sharing a band sit side by side
-    bool flexible { false };         ///< the design's `1fr`: this section takes the window's slack
 };
 
 /// The design's composition, in its order: `osc-row` → `noise-sub-row` → `env-section` → `filter-section` →
@@ -220,8 +229,8 @@ struct SectionSpec
 ///     before the filters — with its panel at full width, so the four controls a player touches on every
 ///     patch are the design's largest knobs (`KnobSize::Default`, 44px) in a band of their own rather
 ///     than a half-width panel sharing the least prominent row on the page;
-///   * the **modulation matrix** gives up the flexible row (that is `flexible` below, which is now the
-///     envelope's), shows four of its 64 rows instead of eight, and moves to the **end** of the
+///   * the **modulation matrix** gives up the flexible row (ticket `59` removed that concept: nothing
+///     takes slack any more), shows four of its 64 rows instead of eight, and moves to the **end** of the
 ///     composition, after the macros — the place the design's own grid has no `1fr` at all. Its `N / 64`
 ///     tag is unchanged and still reports the geometry, because the tag is how a compact matrix says what
 ///     it is not showing.
@@ -233,6 +242,25 @@ std::vector<SectionSpec> designedComposition();
 /// control the model has. `planInterface` finds it by this leaf, so a table without it gets a head with no
 /// arrows rather than arrows that write nothing.
 inline constexpr const char* kTablePositionLeaf = "kParamTablePos";
+
+/// The four stages of an amplitude envelope, in the order an envelope is drawn.
+///
+/// Ticket `59`. The envelope's graph is composed from the plan's own `ParamSpec`s — the same specs the
+/// controls are built from, and the same `modelPath` the knob arcs are keyed on — so the picture and the
+/// arcs can never address different parameters.
+enum class EnvelopeStage
+{
+    Attack,
+    Decay,
+    Sustain,
+    Release
+};
+
+/// The stage a model path names, or nothing. Recognised by the **leaf** of `ParamSpec::modelPath` — the
+/// model's own names, `kParamAttack` … `kParamRelease` — the way `planInterface` finds an oscillator head's
+/// stepper by `kTablePositionLeaf` rather than by a written-down parameter id. The caller asks it of the
+/// panel it is drawing the graph on, so a leaf the table carries somewhere else is not claimed here.
+std::optional<EnvelopeStage> envelopeStageForModelPath (const std::string& modelPath);
 
 /// One panel: a group's title, the model module its parameters live in, its parameters in table order,
 /// and the two model slots whose *drawn* surfaces belong to this panel rather than to a page of their own.
@@ -260,17 +288,12 @@ struct PanelPlan
 /// One resolved section: the composition entry, the panels it holds (indices into `InterfacePlan::panels`,
 /// in the table's order), and nothing else. Resolved — a section whose `holds` matched no group is not in
 /// the plan at all, because a section with no panels would be an empty box rather than an arrangement.
-///
-/// `flexible` is the composition entry's own flag carried through: the layout cannot ask the *data* which
-/// section takes the window's slack, because by the time it lays anything out the composition is these
-/// resolved sections and the `SectionSpec` list is gone.
 struct SectionPlan
 {
     std::string id;
     std::string title;
     SectionKind kind { SectionKind::Panels };
     std::string band;
-    bool flexible { false };
     std::vector<int> panels;
 };
 

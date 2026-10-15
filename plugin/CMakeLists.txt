@@ -32,6 +32,7 @@ set(XERUM_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/InterfaceLook.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/InterfacePlan.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ParameterPanels.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/EnvelopeCurve.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/SectionStrip.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ImportReportView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ModulationMatrixView.cpp

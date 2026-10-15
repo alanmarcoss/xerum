@@ -313,16 +313,15 @@ cover it; and the real-time invariant.
   top of that surface — pages of panels, the matrix, the pole/zero plane, the report bar and drawer —
   and ticket `52` arranged the panels the way the design's own screen arranges them: one composed page
   of sections. Those are the sections at the end of this file.
-* **The composed page needs a window about 1128 logical pixels tall at its default width**, and ticket
-  `53` opens the editor at exactly that size, because the whole instrument on one screen is the point of
-  the design's composition and a scroll bar is not. The page is 1038 tall at 1080 wide (967 at 1400) and
-  every one of those pixels is a control the table has: the oscillator row alone is 344 for three panels
-  of thirteen controls each. On a display shorter than that the window is resized by the user (or by the
-  host) and the strip scrolls the page as ticket `52` had it — legible, not clipped, but not all at once.
-  A smaller instrument screen would need a decision this build has not taken: a section behind the strip,
-  or smaller knobs than the design draws. Ticket `53`'s section below has the arithmetic, and ticket `57`'s
-  has the numbers as they stand since the amplitude envelope took the flexible row (1108/1018 then,
-  1128/1038 now).
+* **The interface is one fixed ratio, scaled into the window** (ticket `59`), and that replaced the
+  "resized window re-flows" behaviour this file used to describe. The composition is laid out **once**, at
+  the design's baseline width (1080) with the page's own height at it, and the whole of it is scaled into
+  whatever window the host gives — so every section's rectangle is a constant and one number changes with
+  the window, which is what `plugin/tests/interface_test.cpp` measures as *the rectangles are equal at every
+  scale* rather than as a proportion. The ratio is therefore the composition's own: **1080×1128**, 0.957
+  wide per tall, derived from the content and not written down. See the ticket `59` section below for the
+  arithmetic, for what the design mock's own 1082×668 ratio would cost (42 % of its width empty), and for
+  the amplitude envelope's drawn curve — the display ticket `57` reported the band was missing.
 
 ## JUCE observations worth keeping
 
@@ -804,9 +803,11 @@ the middle, the matrix under them, the effects and macros side by side at the bo
 `ui::designedComposition()` is now an ordered list of `ui::SectionSpec` — `osc-row`, `noise-sub-row`,
 `env-section`, `filter-section`, `bottom-row` (its two halves sharing a `band`, which is how "side by side"
 is expressed), the **default section**, and `mod-panel` — each naming the groups it holds (`Osc` claims
-`Osc A`…`Osc C` by prefix, `Macro` claims the eight) and how they arrange (`Panels`, `Strip`, `Matrix`),
-and each declaring whether it is the composition's flexible row (`SectionSpec::flexible`, the design's
-`1fr`). The first four entries and the flexible flag are ticket `57`'s; the rest is ticket `52`'s.
+`Osc A`…`Osc C` by prefix, `Macro` claims the eight) and how they arrange (`Panels`, `Strip`, `Matrix`).
+The first four entries are ticket `57`'s; the rest is ticket `52`'s. **The flexible flag is gone** (ticket
+`53` gave the design's `1fr` to the matrix, ticket `57` moved it to the amplitude envelope, and ticket `59`
+removed it): a row that grows when the window does is a section re-flowing, and the layout is now given a
+width and nothing else.
 
 `ui::planInterface` resolves that over the table: panels are still one per group in the table's order,
 every panel lands in exactly one section, and **a group no section names falls through to the default
@@ -819,16 +820,20 @@ The binding did not move. Every control is still built from its `ParamSpec` by m
 editor still cannot be constructed eagerly. What moved is the arrangement:
 
 * **`ui::CompositionView`** arranges whole sections on **one page**, in the design's order, with the
-  design's grid (6px between panels, 3px between rows, 10px of side padding) — and the editor puts that
-  page in a viewport. Ticket `52` had the page taller than every window and the **strip scroll it**;
-  ticket `53` packs the page so that it fits the window it opens at (below), so the strip scrolls it only
-  when the window is smaller than the instrument. `SectionStrip` (the renamed `DeviceStrip`) names the
-  sections and carries each section's severity dot; the model module left the tab because a section now
+  design's grid (6px between panels, 3px between rows, 10px of side padding) — and **the page is not in a
+  viewport any more** (ticket `59`): it is laid out at exactly the size of the space it is given and the
+  whole canvas is scaled with the window, so it can never scroll and the strip no longer scrolls it. Ticket
+  `52` had the page taller than every window and the strip scroll it; ticket `53` packed the page so that it
+  fitted the window it opened at and left the scroll for a window smaller than the instrument; ticket `59`
+  removed the smaller-than-the-instrument case altogether, because a window off the ratio is letterboxed
+  rather than allowed to show a clipped or scrolling page. `SectionStrip` (the renamed `DeviceStrip`) names
+  the sections and carries each section's severity dot; the model module left the tab because a section now
   holds several (`Filter` is `VoiceFilter0` **and** `VoiceFilter1`) and the design's tabs are labels.
 * **`ui::ParameterPanel`** lays its own controls out, from their model types: the design's grammar is a row
   of knobs, then the pickers, then the pills at the bottom, and NOISE/SUB — the design's one compact band —
   put their knobs and their option buttons on one line (`--gap-inline`). A panel's height is derived at the
-  width it is given (`preferredHeight`), so a narrower window re-flows rather than clips.
+  width it is given (`preferredHeight`) — and since ticket `59` that width is the nominal one at every
+  window, so a panel's rows are decided once for the whole product rather than per window size.
 * **A choice whose vocabulary is short is drawn as the design's option row** (`ui::ChoiceButtons`, the
   `btn-opt` pill bound through `juce::ParameterAttachment`): NOISE's four colours and SUB's six waveforms,
   which is exactly where the design draws buttons. The filter's **83-value** vocabulary cannot be a row of
@@ -1760,3 +1765,123 @@ release does not pump, that the attack does not dull transients, or that the res
 would have done to the same signal — this is a limiter with the reference's *defaults and shape*, not a model
 of its internals. Release, lookahead and the link are the reference's; the attack ramp, the detector and the
 release curve are xerum's, and the dev's ears decide whether that is good enough.
+
+# Ticket 59 — one fixed ratio, and the amplitude envelope drawn
+
+Two requests from the dev, which belong together because both are about the envelope's section and the
+editor's geometry: **the interface should stop re-flowing and take a fixed ratio**, and **the amp envelope
+should be a graph rather than only four knobs**.
+
+## 1. The ratio is the composition's own, and the layout is given no window
+
+Ticket `57` had measured the re-flow exactly — widening the window by 320 px let the page need 71 px less,
+and the amplitude envelope took those pixels. That is what is gone: `CompositionView::layout` now takes a
+**width and nothing else**, the page is laid out **once**, and the whole interface is one `Canvas` component
+that is **scaled** into whatever window the host gives.
+
+`ui::XerumAudioProcessorEditor::Canvas` is the only component whose transform is ever set, and that is not a
+preference: `juce_AudioProcessorEditor.cpp` asserts `getTransform() == hostScaleTransform` and its own
+comment names this remedy ("put the component you want to transform in a child of the editor and transform
+that instead"), because a host must be able to rescale the editor itself. Every component the editor shows —
+the page, the strip, the report bar and its drawer, the browser, the header's field and buttons — is a child
+of the canvas, and **every rectangle in that tree is a nominal one**, which is what makes ticket `51`'s
+"the design's sizes bind at the nominal size" a statement rather than an assumption.
+
+| | |
+|---|---|
+| nominal size | **1080×1128**, derived in the constructor: the design's baseline width and the page's own height (1038) plus the design's chrome (38 + 30 + 22) |
+| the ratio | **0.957447** wide per tall — the composition's own proportions |
+| the page's own proportions | 1060×1038 = 1.021195 (the chrome is what makes the editor's ratio differ from the page's) |
+| the resize limits | scales of the nominal: **900×940** (the design's baseline *width*, 900, ticket `51`'s own size) to **2160×2256** (2×), enforced as a **fixed aspect ratio** on the constrainer — which is also the constrainer JUCE's standalone window asks for its own sizes |
+| a window off the ratio | letterboxed: uniform scale (the smaller of the two), centred, never stretched. A non-uniform scale draws circles as ellipses, which is a second defect rather than a smaller one |
+
+**What the design mock's own ratio would cost**, measured on the editor at its own size rather than argued:
+at **1082×668** (1.62 wide per tall) the canvas is scaled by its height, **0.5922**, so the page is drawn
+**628×615** and **58.0 % of the window's width is used — 42.0 % of it is background**. Scaled to fill that
+width instead (1.0019) the same composition would need **1130 px of height, 462 more than the mock has**.
+The mock's ratio is available by changing one derived number, but it is not this content's shape.
+
+**The page still fits at every size, and it cannot scroll at all.** The page is laid out at exactly the size
+of the space it is given and that space is scaled with it, so there is no slack and no fold: the
+`juce::Viewport` around the composition, its scroll bars and the four-pass fixed-point search that existed
+only because a bar's visibility changes a viewport's visible size are all **deleted**. The strip's click is
+now a selection rather than a scroll — which is all it ever was at a window the page fitted.
+
+**The three assertions this re-scopes rather than breaks**, each replaced with its reason in
+`plugin/tests/interface_test.cpp`:
+
+* **ticket `51`'s "no control got smaller"** — the design's sizes bind **at the nominal size**, and the ratio
+  scales everything from there. The 44/28/26 px assertions still read those numbers because every rectangle
+  in the tree is a nominal one; what the user sees at the minimum is 44 px × 0.8333 = 36.67 px, and the fit
+  case *prints* the type sizes at that scale (9 px → 7.50, 8 px → 6.67, 7 px → 5.83) rather than asserting
+  legibility, which is the dev's call;
+* **ticket `53`'s fit** — there is no viewport height to compare a page height against, so the fit is
+  asserted where it can be seen: every section's rectangle **on screen** is inside the editor's, at the
+  nominal size, at 1.25×, at the minimum and at a size a host has forced off the ratio. Ticket `53`'s and
+  `51`'s control chain (every panel inside its section, every control non-empty, bound and inside its panel)
+  is walked at all four;
+* **ticket `57`'s slack measurement** — at a fixed ratio the envelope does not grow *by the slack*; it grows
+  **proportionally**, like every other section, and its share of the page is a constant. Both readings are
+  asserted: the rectangles are *equal* at every scale (the layout never sees a window), and every on-screen
+  rectangle is the nominal one times `interfaceScale()`. `SectionSpec::flexible` — the design's `1fr` — is
+  deleted, because a row that grows when the window does is a section re-flowing and there is no window in
+  the layout call to grow against.
+
+## 2. The envelope's curve, derived from the same four parameters the knobs are
+
+Ticket `57` was told not to invent an envelope graphic and to report if prominence needed one; the dev has
+now asked for it, so `ui::EnvelopeCurve` is that drawing — **an invention, in the design system's own
+language** rather than a second dialect: the tokens (`bg`, `border`, `accent`, `accentDim`, `fg`, `fgMuted`,
+`accentBg`), the panel radius, the monospaced face for the four times, and the accent for the curve.
+
+* **It displays; the knobs control.** It is a **read-out inside the envelope's own panel** — the design's
+  inline-display column (`filter-viz`), the place the pole/zero plane sits in the filter panels — and it
+  takes no click: `setInterceptsMouseClicks (false, false)`, asserted with `hitTest`. **Dragging the curve
+  is out of scope**, and this is the honest form of saying so: the picture *does* look draggable, and a
+  component that swallowed the click would look draggable without being it. If it is to become an editor
+  that is a ticket with its own gesture rules.
+* **Derived, not decorative.** The graph is wired from the plan's own `ParamSpec::modelPath` — the same
+  specs the controls are built from, found by the model's leaf names
+  (`ui::envelopeStageForModelPath`, the mechanism `planInterface` already uses for the oscillator head's
+  stepper) — and it reads the **knobs**: the curve's shape is a function of
+  `Slider::valueToProportionOfLength`, the very number the knob's value arc is drawn from, and the legend
+  prints `Slider::getTextFromValue`, the string the knob's readout prints. The **second curve** is the
+  matrix's own rows through `updateModulationArcs`'s `depth` map — the same map the arcs are set from — so a
+  row that moves the attack moves the picture's first segment by exactly the amount the knob's second arc
+  sweeps.
+* **It costs the page no height.** Its minimum is the design's own display height (68), which is what the
+  panel's one row of 68 px knobs and its chrome already are — so ticket `57`'s measured air is now the
+  display, and the page's own height is unchanged at 1038.
+* **The time axis is logarithmic in seconds**, and that is a finding rather than a flourish: the three time
+  knobs are **linear over 0..32 s** (`ParameterBridge`), so a musical 5 ms attack is 0.016 % of its range and
+  a picture drawn in proportion would be a box at every setting a player uses. Each stage's width is a
+  monotone function of its own value from 1 ms (a stage at or below it is the vertical edge an instant stage
+  is) to the knobs' own maximum, and the legend prints the values in full, so the shape is read as a shape
+  and the times as times. The hold is a **level**, not a duration, and keeps a fixed share of the width
+  written as the width a 200 ms stage would take; the four shares are normalised to the plot, so the display
+  always fills. The one consequence of that normalisation, stated rather than hidden: scaling attack, decay
+  and release *together* leaves the proportions alone — the picture is the shape, the legend is the time.
+
+The assertions are counterfactuals against the values, not snapshots compared with themselves: attack at its
+default, at its maximum and at nought give a rise that is positive, then wider, then **nought wide**; sustain
+at 0 and 1 puts the plateau on the baseline and on the top of the plot; the graph's stage proportion *equals*
+the knob's `valueToProportionOfLength`; and a document whose matrix row addresses `Env0/kParamAttack` reaches
+the graph's second curve and the knob's arc as **the same number**.
+
+## Verified by running it
+
+| | |
+|---|---|
+| `[interface]` | **8,730 assertions / 24 cases — all passed** (ticket `57`'s build had 7,210/23; the fit, ratio and envelope cases are new and the re-scoped ones are rewritten in place) |
+| full suite, `ctest --test-dir build-59` | **382/382 passed** (179 s) — 381 before this ticket, because one new case is in it |
+| `pluginval --strictness-level 10` | **SUCCESS**, its `Editor`, `Open editor whilst processing` and `Editor Automation` tests included — the ones a geometry change has to survive |
+| the captures | `createComponentSnapshot` over the editor's whole window at **1080×1128, 1350×1410 and 900×940**, written to `interface-evidence/ticket-59-scale-{100,125,83}.png` — the same composition at three scales |
+| the rectangles at those three scales | `osc-row` 1060×344, `noise-sub-row` 1060×144, `env-section` 1060×105, `filter-section` 1060×172, `macro-section` 314×130, `default-section` 740×130, `mod-panel` 1060×128 — **the same seven rectangles at every scale**, and on screen they are those × 1.0 / 1.25 / 0.8333 (the envelope's band is 105, 131.2 and 87.5 px) |
+| the palette's shares at the three scales | `surface` 56.664 / 56.176 / 54.970 %, `bg` 26.835 / 26.038 / 25.173 %, `surface2` 2.951 / 2.992 / 2.890 %, `accent` 0.208 / 0.243 / 0.181 % — the filled areas agree to well inside a point, which a re-flow would not do (it moves them by tens). `border` is printed and not compared: a 1 px hairline drawn at 0.83× is anti-aliased into its neighbours (3.167 % → 0.436 % of *exact* colour), which is a fact about pixels and not about the layout |
+| the envelope's curve | 418×68 inside its 1060×93 panel; the rise is **65.97 px** at the attack's default (5 ms), **214.79** at its maximum (32 s) and **0.00** at nought, on a 406 px plot; with the fixture's matrix row (+0.4) the modulated rise is **206.22** against 173.75 unmodulated; its own render has `bg` 16,808 px, `border` 1,176, `accent` 420, the accent's wash under the curve 9,018 and 604 px of legend ink |
+
+**What nobody here could judge**, and the dev's call rather than this session's: whether the drawn curve
+**reads as an envelope** (a 418×68 display beside four 44 px knobs, wide and short like the design's own
+response display), whether 0.957 wide-per-tall **feels right** for an instrument window against the mock's
+1.62, and whether the four monospaced times under the curve are information or repetition of the knob
+readouts beside them. This session has rectangles, heights, scales and colour shares — no eyes.

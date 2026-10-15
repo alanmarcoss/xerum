@@ -265,24 +265,19 @@ TEST_CASE ("the composition is the design's, and every parameter lands in one pa
     CHECK (bandOf ("fx-section") == bandOf ("macro-section"));
     CHECK (bandOf ("osc-row") != bandOf ("noise-sub-row"));
 
-    // Ticket `57`: the design's **flexible row** is the amplitude envelope's, and the matrix — which ticket
-    // `53` had given it to — has none. Exactly one entry carries it, which is what the layout's single
-    // slack block assumes.
-    const auto flexible = [&composition] (const std::string& id)
-    {
-        for (const auto& spec : composition)
-            if (spec.id == id)
-                return spec.flexible;
-
-        return false;
-    };
-
-    CHECK (flexible ("env-section"));
-    CHECK_FALSE (flexible ("mod-panel"));
-    CHECK_FALSE (flexible ("osc-row"));
-    CHECK (std::count_if (composition.begin(), composition.end(),
-                          [] (const SectionSpec& spec) { return spec.flexible; })
-           == 1);
+    // Ticket `57` gave the design's **flexible row** — its `1fr` — to the amplitude envelope, and ticket
+    // `53` had given it to the matrix before that. **Ticket `59` removed it from the data entirely**, and
+    // this is where that is stated rather than left as an absence: a row that grows when the window does is
+    // a section *re-flowing*, and the interface is laid out at one size now and scaled into the window. So
+    // the struct has no such field — a compile error is the assertion — and what replaces this block's
+    // measurements is the layout's own: `the composition holds one ratio, and resizing it re-flows nothing`
+    // requires every section's rectangle to be *equal* at every scale, which is a stronger claim than "the
+    // slack goes to the envelope".
+    //
+    // What is still asserted here is the half that did not move: the composition is one ordered list of
+    // sections, and the bands still express side-by-side.
+    CHECK (bandOf ("env-section") != bandOf ("mod-panel"));
+    CHECK (bandOf ("env-section") != bandOf ("osc-row"));
 
     // **The FX holder matches nothing in this table**: xerum's bridge exposes no effect parameters, so the
     // section resolves to no panels and is not drawn. It stays in the composition — the bottom row
@@ -795,36 +790,25 @@ TEST_CASE ("the strip names every section of the composition, and each section h
     CHECK (editor->sectionForModule ("ModSlot") == 6);
     CHECK (editor->sectionForModule ("NoSuchModule") < 0);
 
-    // A tab click locates its section on the one page, and **whether that is a scroll is the window's
-    // business, not the strip's**: at a window the composition fits (ticket `53`, the default) there is
-    // nothing to scroll and the offset stays at nought; at a window smaller than the instrument there is,
-    // and the tab scrolls the page — so the strip is a map at both sizes and never a menu of hidden pages.
+    // A tab locates its section on the one page. **It no longer scrolls** (ticket `59`): the page is laid
+    // out at exactly the size of the space it is given and the whole canvas is scaled into the window, so
+    // the instrument is on screen whole at every size and there is nothing off-screen to scroll to. What a
+    // click still does — and all it ever was, at a window the page fitted — is say where you are.
+    //
+    // Ticket `53`'s version of this block asserted the *other* case: at 900×600 there was more instrument
+    // than window, so a tab scrolled it. That window no longer exists — a fixed ratio has no 900×600 in it —
+    // and the size it had has no scroll in it either, which is what the fixed ratio buys. The page's fit is
+    // measured at every size in `the composition holds one ratio, and resizing re-flows nothing`.
     {
         const auto last = editor->sectionCount() - 1;
 
-        editor->scrollToSection (last);
+        editor->selectSection (last);
         CHECK (editor->currentSection() == last);
         CHECK (strip.selected() == last);
-        CHECK (editor->compositionScrollY() == 0);                       // the page fits the default window
-        CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
 
-        editor->scrollToSection (0);
+        editor->selectSection (0);
         CHECK (editor->currentSection() == 0);
         CHECK (strip.selected() == 0);
-    }
-
-    {
-        editor->setSize (900, 600);   // the window's minimum: smaller than the instrument
-
-        const auto last = editor->sectionCount() - 1;
-
-        editor->scrollToSection (last);
-        CHECK (editor->compositionScrollY() > 0);
-        CHECK (editor->compositionHeight() > editor->compositionScrollY());
-        CHECK (editor->compositionHeight() > editor->compositionViewportHeight());
-
-        editor->scrollToSection (0);
-        CHECK (editor->compositionScrollY() == 0);
     }
 
     // Every group the table has is a panel of the composition, and every panel is one group's — the
@@ -1089,7 +1073,7 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
     // header's gradient is `surface2` and the interface's own accent is on screen. Ticket `51` renamed
     // every one of these to the design system's role — `background`/`panelFill`/`barFill` no longer exist,
     // and the colours are the design's own.
-    editor->scrollToSection (0);
+    editor->selectSection (0);
     const auto pageImage = editor->createComponentSnapshot (editor->getLocalBounds());
 
     REQUIRE_FALSE (pageImage.isNull());
@@ -1101,7 +1085,7 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
     // The matrix: the column titles' bar, 64 rows of cells drawn, and the amount column in the accent
     // colour — the one cell the view colours specially, because an amount is the row's whole point when it
     // has one. Text is anti-aliased, so it is counted with a tolerance rather than by exact colour.
-    editor->scrollToSection (editor->sectionForModule ("ModSlot"));
+    editor->selectSection (editor->sectionForModule ("ModSlot"));
     CHECK (editor->sectionIsMatrix (editor->currentSection()));
 
     const auto matrixImage = editor->matrixView().createComponentSnapshot (
@@ -1151,7 +1135,7 @@ TEST_CASE ("the interface draws xerum's own identity, and the pages draw", "[int
     REQUIRE (filterSection >= 0);
     CHECK (editor->sectionId (filterSection) == "filter-section");
     CHECK (editor->sectionForModule ("VoiceFilter1") == filterSection);
-    editor->scrollToSection (filterSection);
+    editor->selectSection (filterSection);
 
     const auto filterImage = editor->createComponentSnapshot (editor->getLocalBounds());
     CHECK (count (filterImage, ui::look::surface, 8) > 100);   // the panels and the plane's own frame
@@ -1191,20 +1175,21 @@ TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own mod
     REQUIRE (editor != nullptr);
 
     // Ticket `52` changed what "on screen" means for a measurement like this one: the composition is **one
-    // page**, laid out whole, and the strip scrolls it — so every panel, including the ones below the fold,
-    // has its real rectangle at all times. The scroll is kept because the question is still about what the
-    // user is looking at.
-    const auto scrollToModule = [&editor] (const juce::String& module)
+    // page**, laid out whole, so every panel — including the ones below the fold of a small window — has its
+    // real rectangle at all times. Ticket `59` removed the scrolling as well as the fold: the whole page is
+    // scaled into the window, so "which section the user is looking at" is a strip selection rather than a
+    // scroll position, and the rectangles below are the ones on screen at every size.
+    const auto selectModule = [&editor] (const juce::String& module)
     {
         const auto section = editor->sectionForModule (module);
 
         if (section >= 0)
-            editor->scrollToSection (section);
+            editor->selectSection (section);
 
         return section >= 0;
     };
 
-    REQUIRE (scrollToModule ("Oscillator0"));
+    REQUIRE (selectModule ("Oscillator0"));
 
     auto* volume = editor->controlFor ("oscillator0.volume");
     REQUIRE (volume != nullptr);
@@ -1227,10 +1212,10 @@ TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own mod
     REQUIRE (noiseLevel->knob() != nullptr);
     CHECK (noiseLevel->knob()->size() == KnobSize::Small);
 
-    REQUIRE (scrollToModule ("Oscillator3"));
+    REQUIRE (selectModule ("Oscillator3"));
     CHECK (noiseLevel->knob()->getWidth() == ui::look::knobSmallDiameter);
 
-    REQUIRE (scrollToModule ("Oscillator0"));   // back to the section the knob snapshot is taken on
+    REQUIRE (selectModule ("Oscillator0"));   // back to the section the knob snapshot is taken on
 
     // The arc, through the geometry the painter uses: both ends are below the centre — 7 o'clock and 5
     // o'clock — the start is left of the middle and the end is right of it, and the middle of the sweep is
@@ -1298,25 +1283,36 @@ TEST_CASE ("a slider is a drawn knob, and its second arc is the preset's own mod
 //==============================================================================
 namespace
 {
-/// The evidence table ticket `53`'s acceptance is read from: the composed page's height against the
-/// viewport's, every section's rectangle, and every control's rectangle in the order the plan holds them.
-/// Printed rather than only asserted, the way the fidelity suite prints its measurements, because "it
-/// fits" is a pair of numbers and the reader should be able to check them.
+/// The evidence table ticket `53`'s acceptance is read from — extended by ticket `59` with the two numbers
+/// the fixed ratio is made of. Every section's rectangle **in the page's own coordinates** (which is the
+/// same at every window, and is the whole point), its rectangle **on screen** (the same rectangle times the
+/// scale), and every control's rectangle in the order the plan holds them. Printed rather than only
+/// asserted, the way the fidelity suite prints its measurements, because "it fits" and "it does not move"
+/// are numbers and the reader should be able to check them.
 void printComposition (const char* what, XerumAudioProcessorEditor& editor)
 {
-    std::fprintf (stderr, "\n[interface] %s: window %dx%d, viewport %dx%d, page %d\n", what,
-                  editor.getWidth(), editor.getHeight(), editor.compositionViewportWidth(),
-                  editor.compositionViewportHeight(), editor.compositionHeight());
+    const auto nominal = editor.nominalSize();
+    const auto page = editor.pageBoundsOnScreen();
+
+    std::fprintf (stderr,
+                  "\n[interface] %s: window %dx%d (aspect %.4f), nominal %dx%d (aspect %.4f), scale %.4f, "
+                  "page %d tall; on screen the page is %.0fx%.0f at %.0f,%.0f\n",
+                  what, editor.getWidth(), editor.getHeight(),
+                  static_cast<double> (editor.getWidth()) / static_cast<double> (editor.getHeight()),
+                  nominal.x, nominal.y, editor.aspectRatio(), editor.interfaceScale(),
+                  editor.compositionHeight(), page.getWidth(), page.getHeight(), page.getX(), page.getY());
 
     for (int index = 0; index < editor.sectionCount(); ++index)
     {
         const auto bounds = editor.composition().sectionBounds (index);
+        const auto onScreen = editor.sectionBoundsOnScreen (index);
         const auto* plan = editor.sectionPlan (index);
 
-        std::fprintf (stderr, "[interface]   section %-16s %4dx%4d @%4d,%-4d panels=%d\n",
+        std::fprintf (stderr, "[interface]   section %-16s %4dx%4d @%4d,%-4d panels=%d | on screen %6.1fx%6.1f @%6.1f,%-6.1f\n",
                       editor.sectionId (index).toRawUTF8(), bounds.getWidth(), bounds.getHeight(),
                       bounds.getX(), bounds.getY(),
-                      plan == nullptr ? 0 : static_cast<int> (plan->panels.size()));
+                      plan == nullptr ? 0 : static_cast<int> (plan->panels.size()),
+                      onScreen.getWidth(), onScreen.getHeight(), onScreen.getX(), onScreen.getY());
 
         if (plan == nullptr)
             continue;
@@ -1539,22 +1535,30 @@ TEST_CASE ("every colour a drawn surface resolves is a token", "[interface][ui]"
     CHECK (blue == 0);
 }
 
-TEST_CASE ("the composed page fits the window it opens at, and stays legible at 900x600",
+TEST_CASE ("the composed page fits every window it is given, and stays legible at the minimum",
            "[interface][ui]")
 {
-    // Ticket `53`'s acceptance, as two measurements:
+    // Ticket `53`'s acceptance, re-scoped by ticket `59` from *the window it opens at* to *every window it
+    // is given*:
     //
-    //   1. **the whole instrument is visible at once at the window's default size.** The composed page's
-    //      height against the viewport's — the number that says it fits — with no scroll bar shown, and
-    //      every section's rectangle above the fold;
-    //   2. **and it stays legible at the window's minimum.** Ticket `51`'s assertion is kept and extended
-    //      rather than replaced: at 900×600 every control of every panel is non-empty and inside its
-    //      panel, every panel inside its section, every section inside the composed page — a layout that
-    //      clipped or dropped a control fails here, at the size that clips soonest.
+    //   1. **the whole instrument is visible at once, at every size.** Ticket `53` measured the page's
+    //      height against a viewport's and required that no scroll bar be shown. There is no scroll bar to
+    //      require any more — the page is not inside a viewport at all, and it is laid out at exactly the
+    //      size of the space it is given — so the fit is asserted where it can be *seen*: every section's
+    //      rectangle **on screen** is inside the editor's own, at the nominal size, at 1.25×, at the
+    //      minimum, and at a size a host has forced off the ratio (where the canvas is letterboxed);
+    //   2. **and it stays legible at the minimum.** Ticket `51`'s assertion is kept and extended rather than
+    //      replaced: at the minimum scale every control of every panel is non-empty and inside its panel,
+    //      every panel inside its section, every section inside the composed page — a layout that clipped or
+    //      dropped a control fails here, at the size that clips soonest. What that scale does to the
+    //      *type* is printed rather than asserted, because "legible" is the dev's call and "fits" is not a
+    //      claim a type size makes.
     //
-    // Ticket `52`'s version of this case asserted the same chain at both fixed sizes and said nothing about
-    // whether the page fitted either of them, which is the defect ticket `53` is about. It is replaced,
-    // not weakened: what it asserted still holds here, at the minimum, and the fit is asserted on top.
+    // Ticket `52`'s version of this case asserted the same chain at two fixed sizes and said nothing about
+    // whether the page fitted either of them, which is the defect ticket `53` is about. Ticket `59`'s
+    // version keeps every one of those assertions and makes the *sizes* scales of one nominal size rather
+    // than two windows that happen to be supported — 900×600 is not a size this editor can be, because a
+    // ratio has no 900×600 in it.
     //
     // This session has no eyes and the standalone could not be resized by hand — driving another app's
     // window needs Assistive access this machine does not grant `osascript` — so the measurement is made
@@ -1566,52 +1570,97 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
     REQUIRE (editor != nullptr);
 
     const auto compositionBounds = [&editor] { return editor->composition().getLocalBounds(); };
+    const auto editorBounds = [&editor] { return editor->getLocalBounds(); };
 
-    // The editor's own default size, as the constructor left it: a later block measures the page again
-    // after a preset load, and it has to be the same window.
-    const auto defaultSize = juce::Point<int> (editor->getWidth(), editor->getHeight());
+    const auto nominal = juce::Point<int> (editor->getWidth(), editor->getHeight());
 
-    // **1. The window it opens at.** The editor's own default size is the one this case is about, because a
-    // host that never resizes it is the ordinary case; `resized` is what laid the page out, so the numbers
-    // below are the ones a user sees.
+    // The sizes this case measures, all derived from the editor's own nominal size and its own resize
+    // limits rather than written down here: the nominal one, 1.25×, the **minimum the editor allows**, and
+    // a window a host has forced off the ratio (wider than the composition's, and short).
+    const auto* constrainer = editor->getConstrainer();
+
+    REQUIRE (constrainer != nullptr);
+
+    const auto minimum = juce::Point<int> (constrainer->getMinimumWidth(), constrainer->getMinimumHeight());
+    const auto maximum = juce::Point<int> (constrainer->getMaximumWidth(), constrainer->getMaximumHeight());
+
+    std::fprintf (stderr,
+                  "\n[interface] the limits the editor's own resize is held to: %dx%d … %dx%d, aspect %.6f "
+                  "(the editor's is %.6f)\n",
+                  minimum.x, minimum.y, maximum.x, maximum.y, constrainer->getFixedAspectRatio(),
+                  editor->aspectRatio());
+
+    // The floor is the **design's own baseline width** (ticket `51`'s 900), and the height that goes with
+    // it is the ratio's rather than a second decision.
+    CHECK (minimum.x == 900);
+    CHECK (minimum.y == juce::roundToInt (static_cast<double> (minimum.x) * nominal.y / nominal.x));
+    CHECK (constrainer->getFixedAspectRatio() == Catch::Approx (editor->aspectRatio()));
+
+    // **1. The window it opens at**, which is the nominal size at scale 1.
     {
-        printComposition ("default window", *editor);
+        printComposition ("nominal window", *editor);
 
+        CHECK (nominal == editor->nominalSize());
+        CHECK (editor->interfaceScale() == Catch::Approx (1.0f));
+        CHECK (editor->interfaceOrigin() == juce::Point<int> (0, 0));
         CHECK (editor->getWidth() == 1080);
-        CHECK (editor->compositionHeight() > 0);
-        CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
-        CHECK_FALSE (editor->compositionScrolls());
-        CHECK (editor->compositionScrollY() == 0);
+        CHECK (editor->aspectRatio()
+               == Catch::Approx (static_cast<double> (nominal.x) / static_cast<double> (nominal.y)));
+
+        // The page is exactly the space it was laid out for, which is how its height *is* the nominal
+        // height less the chrome rather than a number that has to fit.
+        CHECK (editor->compositionHeight() == editor->compositionArea().getHeight());
         CHECK (editor->sectionCount() > 0);
 
         for (int index = 0; index < editor->sectionCount(); ++index)
         {
             const auto bounds = editor->composition().sectionBounds (index);
 
-            INFO ("default window, section " << index << ": " << editor->sectionId (index).toStdString());
+            INFO ("nominal window, section " << index << ": " << editor->sectionId (index).toStdString());
 
             CHECK (bounds.getWidth() > 0);
             CHECK (bounds.getHeight() > 0);
             CHECK (compositionBounds().contains (bounds));
-
-            // Above the fold, with nothing to scroll to reach it: the viewport's own window is the page.
-            CHECK (bounds.getBottom() <= editor->compositionViewportHeight());
         }
     }
 
-    // **2. The window's minimum.** Everything is laid out and inside its parents at 900×600; the page is
-    // taller than that window, so the strip scrolls it, and that is a fact about the window rather than
-    // about a clipped section.
-    for (const auto size : { juce::Point<int> (1082, 668), juce::Point<int> (900, 600) })
+    // **2. Every size it can be given.** A size at the ratio is filled exactly by the scaled canvas; a size
+    // off it is letterboxed. Both are inside the window, and at each size `51`/`53`'s control chain is
+    // walked again: every panel inside its section, every control non-empty and inside its panel.
+    for (const auto size : { nominal,
+                             juce::Point<int> (juce::roundToInt (static_cast<float> (nominal.x) * 1.25f),
+                                               juce::roundToInt (static_cast<float> (nominal.y) * 1.25f)),
+                             minimum,
+                             juce::Point<int> (1400, 600) })
     {
         editor->setSize (size.x, size.y);
         CHECK (editor->getWidth() == size.x);
         CHECK (editor->getHeight() == size.y);
 
+        const auto expectedScale = juce::jmin (static_cast<float> (size.x) / static_cast<float> (nominal.x),
+                                               static_cast<float> (size.y) / static_cast<float> (nominal.y));
+
         printComposition ("measured size", *editor);
 
         REQUIRE (editor->sectionCount() > 0);
         CHECK (editor->compositionHeight() > 0);
+        CHECK (editor->interfaceScale() == Catch::Approx (expectedScale).epsilon (0.0001));
+
+        // **The fit, on screen**: every section is inside the window it is being drawn in. This is the
+        // assertion ticket `53`'s "the page fits the viewport" became — the page cannot be taller than the
+        // space it is given (it is laid out *at* that size), so what has to be true is that the scaled page
+        // is inside the window, and that is what is measured here.
+        for (int index = 0; index < editor->sectionCount(); ++index)
+        {
+            const auto onScreen = editor->sectionBoundsOnScreen (index);
+
+            INFO ("size " << size.x << "x" << size.y << ", section " << index << ": "
+                          << editor->sectionId (index).toStdString());
+
+            CHECK (editorBounds().toFloat().contains (onScreen));
+        }
+
+        CHECK (editorBounds().toFloat().contains (editor->pageBoundsOnScreen()));
 
         for (int index = 0; index < editor->sectionCount(); ++index)
         {
@@ -1635,10 +1684,10 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
                 CHECK (editor->matrixView().getHeight() > bounds.getHeight());
 
                 // Ticket `53`'s assertion here was "at least" the constant, because the matrix took the
-                // window's slack and a taller window showed more rows. Ticket `57` gives that slack to the
-                // envelope, so the compact matrix shows **exactly** its own four rows at every size — which
-                // is the whole of "the matrix no longer absorbs the slack", asserted at both sizes this
-                // case measures.
+                // window's slack and a taller window showed more rows. Ticket `57` gave that slack to the
+                // envelope and ticket `59` removed it altogether, so the compact matrix shows **exactly**
+                // its own four rows at every size — which is the whole of "the matrix never absorbs the
+                // window", asserted at every size this case measures.
                 CHECK (editor->composition().matrixVisibleRows()
                        == (int) ui::CompositionView::kMatrixVisibleRows);
                 continue;
@@ -1682,10 +1731,29 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
         }
     }
 
-    // And it draws at that size: the palette is present in a snapshot of the baseline window, so this is
-    // \"the composition was painted\" as well as \"it was laid out\".
-    editor->setSize (900, 600);
-    editor->scrollToSection (0);
+    // **What the minimum does to the design's own type.** Reported, not asserted: at the minimum scale a
+    // design size and what is actually drawn are two different numbers, and the second is the one a reader
+    // needs. Ticket `51`'s "the design's sizes" bind at the nominal size — which is what the 44 px knob
+    // assertions elsewhere still measure, because every rectangle in the editor's tree is a nominal one.
+    {
+        editor->setSize (minimum.x, minimum.y);
+
+        std::fprintf (stderr,
+                      "[interface] at the minimum %dx%d (scale %.4f): the design's 9px section titles draw at "
+                      "%.2f px, its 8px labels at %.2f px, its 7px tags at %.2f px, and a 44px knob at %.2f px\n",
+                      minimum.x, minimum.y, editor->interfaceScale(),
+                      ui::look::type::section * editor->interfaceScale(),
+                      ui::look::type::label * editor->interfaceScale(),
+                      ui::look::type::tag * editor->interfaceScale(),
+                      ui::look::knobDiameter * editor->interfaceScale());
+
+        CHECK (editor->interfaceScale() < 1.0f);
+    }
+
+    // And it draws at a smaller size: the palette is present in the editor's own render at the minimum, so
+    // this is \"the composition was painted\" as well as \"it was laid out\".
+    editor->setSize (minimum.x, minimum.y);
+    editor->selectSection (0);
 
     const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
 
@@ -1706,10 +1774,10 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
 
     // **A real preset, when this machine has the reference's bank.** The page's geometry is a function of
     // the parameter table and not of what is loaded — that is the binding rule — but the *contents* are the
-    // preset's, so the same window is measured again with a factory preset loaded: the fit has to be the
-    // same number, and the wavetable heads and the modulation arcs have to be the preset's own.
+    // preset's, so the same window is measured again with a factory preset loaded: the page's height has to
+    // be the same number, and the wavetable heads and the modulation arcs have to be the preset's own.
     {
-        editor->setSize (defaultSize.x, defaultSize.y);
+        editor->setSize (nominal.x, nominal.y);
 
         const auto pageWithoutPreset = editor->compositionHeight();
         const auto preset = firstFactoryPreset (processor);
@@ -1729,8 +1797,8 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
                           editor->compositionHeight(), pageWithoutPreset);
 
             CHECK (editor->compositionHeight() == pageWithoutPreset);
-            CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
-            CHECK_FALSE (editor->compositionScrolls());
+            CHECK (editor->compositionHeight() == editor->compositionArea().getHeight());
+            CHECK (editor->interfaceScale() == Catch::Approx (1.0f));
 
             for (const auto& panelPlan : editor->plan().panels)
             {
@@ -1753,32 +1821,31 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
 }
 
 //==============================================================================
-TEST_CASE ("the composition's slack is the envelope's, and the compact matrix takes none",
+TEST_CASE ("the composition holds one ratio, and resizing it re-flows nothing",
            "[interface][ui]")
 {
-    // Ticket `57`'s acceptance, as one measurement: **who absorbs the window's slack**. Ticket `53` gave it
-    // to the matrix — so a window with room to spare showed more matrix rows and nothing else moved —
-    // and the composition gives it to the amplitude envelope now (`SectionSpec::flexible`), so the
-    // envelope's section is the one that grows and the matrix's is the one that stays put.
+    // Ticket `59`'s acceptance, as one measurement: **the composition is the same composition at every
+    // size.** Ticket `57`'s version of this case asked who absorbed the window's slack — the envelope, was
+    // the answer — and that question no longer has a subject: the layout is given a width and nothing else,
+    // the page is laid out once, and the whole canvas is scaled into whatever the window is.
     //
-    // Four sizes, and why they are these four:
+    // What replaces it, measured on the editor itself:
     //
-    //   * **the default window** — the size the editor opens at. Ticket `53` derives that height from the
-    //     page itself (`composition_.totalHeight()` in the constructor), so at this size the page and the
-    //     viewport are the same number and whatever slack there is is at most a few pixels broad. The
-    //     envelope's section at this size is printed, and the *natural* size below is what says how much of
-    //     it is the window's;
-    //   * **1080×640** — deliberately smaller than the page, where the slack is nought by construction:
-    //     the page is taller than the window and scrolls, so every section is exactly what it asked for.
-    //     The envelope's height there **is** its natural height, which is what makes the default window's
-    //     own slack a measured number rather than an assumption;
-    //   * **900×600** — the window's minimum, where the page is again taller than the window: nothing to
-    //     hand out, and neither of the two sections moves;
-    //   * **the default window 300 px taller** — the only size here with a slack in it. The envelope's
-    //     section grows by exactly those 300 px, the matrix's does not change at all, and every section
-    //     below the envelope moves down by the same 300.
+    //   * **the rectangles never move.** The nominal rectangles are captured once, and at 1.25×, at the
+    //     minimum the editor's own constrainer allows, and at its ceiling they are **equal** — the same
+    //     integers in the page's own coordinates. That is "it re-flows nothing", stated as an equality;
+    //   * **what changes is one number.** Every on-screen rectangle is the nominal one times
+    //     `interfaceScale()`, translated by where the page is drawn — so no section's position relative to
+    //     another's can change, because both are the same constant times the same factor;
+    //   * **ticket `57`'s slack measurement, re-scoped rather than dropped.** At a fixed ratio the envelope
+    //     does not grow *by the slack*; it grows **proportionally**, like every other section, and its share
+    //     of the page is a constant at every size. Both readings are asserted below — the re-scoped one here,
+    //     and (in `the composed page fits every window it is given`) the sizes themselves;
+    //   * **the design mock's own ratio, costed.** `docs/design/xerum-direction-warm.html` is 1082×668 and
+    //     the dev may prefer that shape; measured here rather than argued, that window leaves most of its
+    //     width empty, because this composition's content is nearly square.
     //
-    // The numbers are printed rather than only asserted, because "who takes the slack" is a pair of
+    // The numbers are printed rather than only asserted, because "it does not move" is a pair of
     // measurements. This session has no eyes; it has these rectangles.
     const juce::ScopedJuceInitialiser_GUI gui;
 
@@ -1809,7 +1876,7 @@ TEST_CASE ("the composition's slack is the envelope's, and the compact matrix ta
         for (int index = 0; index < editor->sectionCount(); ++index)
             titles.push_back (editor->sectionTitle (index));
 
-        std::fprintf (stderr, "\n[interface] the composition, in order (default window):\n");
+        std::fprintf (stderr, "\n[interface] the composition, in order (nominal coordinates):\n");
 
         for (int index = 0; index < editor->sectionCount(); ++index)
         {
@@ -1834,6 +1901,14 @@ TEST_CASE ("the composition's slack is the envelope's, and the compact matrix ta
     // envelope's four knobs at the design's largest diameter, and a matrix cell — which is not a dial at
     // all, but the compact numeric field inside a 22px row. This is the "knob sizes in each of the two
     // sections" half of the acceptance.
+    //
+    // **Ticket `51`'s rule, re-scoped by ticket `59` rather than deleted.** `51` asserted "no control got
+    // smaller" against the design system's sizes, and at a fixed ratio that sentence needs its scope said
+    // out loud: **the design's sizes bind at the nominal size**, and the ratio scales everything from there.
+    // So these assertions still read 44 px — because every rectangle in this tree is a *nominal* one — and
+    // what they measure now is the design's own size at the size it was designed at. What the user sees at a
+    // window smaller than nominal is 44 px times `interfaceScale()`, which the fit case prints alongside the
+    // type sizes rather than asserting, because how small is too small is the dev's call.
     {
         const auto* envPlan = editor->sectionPlan (envSection);
         REQUIRE (envPlan != nullptr);
@@ -1882,9 +1957,9 @@ TEST_CASE ("the composition's slack is the envelope's, and the compact matrix ta
         CHECK (amount->knob()->getHeight() <= ModulationMatrixView::kRowHeight);
     }
 
-    // --- 1. the default window -----------------------------------------------------------------------
-    const auto defaultSize = juce::Point<int> (editor->getWidth(), editor->getHeight());
-    const auto rectsAtDefault = [&editor]
+    // The nominal rectangles, captured **once**, before anything is resized: every size below is compared
+    // against these, and the claim is that they never change.
+    const auto rectsAtNominal = [&editor]
     {
         std::vector<juce::Rectangle<int>> rects;
 
@@ -1894,159 +1969,473 @@ TEST_CASE ("the composition's slack is the envelope's, and the compact matrix ta
         return rects;
     }();
 
-    std::vector<int> heightsAtDefault;
-    std::vector<int> yAtDefault;
+    const auto nominal = juce::Point<int> (editor->getWidth(), editor->getHeight());
+    const auto area = editor->compositionArea();
 
-    for (const auto& rect : rectsAtDefault)
+    std::fprintf (stderr,
+                  "\n[interface] the ratio: nominal %dx%d, aspect %.6f; the page is %d of those %d pixels "
+                  "(aspect %.6f), the design's chrome the rest\n",
+                  nominal.x, nominal.y, editor->aspectRatio(), editor->compositionHeight(), nominal.y,
+                  static_cast<double> (area.getWidth()) / static_cast<double> (editor->compositionHeight()));
+
+    CHECK (nominal == editor->nominalSize());
+    CHECK (editor->interfaceScale() == Catch::Approx (1.0f));
+    CHECK (editor->compositionHeight() == area.getHeight());
+
+    // The sizes this measurement is made at, all **scales of the one nominal size**: 1×, 1.25×, the floor the
+    // editor's own constrainer holds a drag to, and its ceiling. Read from the constrainer rather than
+    // written down, so this measures the ratio the editor actually enforces.
+    const auto* constrainer = editor->getConstrainer();
+    REQUIRE (constrainer != nullptr);
+
+    const auto minScale = static_cast<float> (constrainer->getMinimumWidth()) / static_cast<float> (nominal.x);
+    const auto maxScale = static_cast<float> (constrainer->getMaximumWidth()) / static_cast<float> (nominal.x);
+
+    for (const auto scale : { 1.0f, 1.25f, minScale, maxScale })
     {
-        heightsAtDefault.push_back (rect.getHeight());
-        yAtDefault.push_back (rect.getY());
+        const auto size = juce::Point<int> (juce::roundToInt (static_cast<float> (nominal.x) * scale),
+                                            juce::roundToInt (static_cast<float> (nominal.y) * scale));
+        editor->setSize (size.x, size.y);
+
+        printComposition ("scaled", *editor);
+
+        // **The window's aspect is the ratio**, which is what `setFixedAspectRatio` buys: the size a user
+        // drags to is a scale of the nominal size and nothing else.
+        CHECK (editor->getWidth() == size.x);
+        CHECK (editor->getHeight() == size.y);
+        CHECK (static_cast<double> (editor->getWidth()) / static_cast<double> (editor->getHeight())
+               == Catch::Approx (editor->aspectRatio()).epsilon (0.002));
+        CHECK (editor->interfaceScale() == Catch::Approx (scale).epsilon (0.002));
+
+        // **(a) The rectangles are the nominal ones**, in the page's own coordinates. This is "it re-flows
+        // nothing", and it is an equality rather than a proportion: the layout is not given a window.
+        for (int index = 0; index < editor->sectionCount(); ++index)
+        {
+            INFO ("scale " << scale << ", section " << index << ": "
+                           << editor->sectionId (index).toStdString());
+
+            CHECK (editor->composition().sectionBounds (index)
+                   == rectsAtNominal[static_cast<std::size_t> (index)]);
+        }
+
+        // **(b) And on screen they are those rectangles times one number** — `interfaceScale()` — translated
+        // by where the page is drawn. Nothing else enters: no section's position relative to another's can
+        // change, because both are the same constant times the same factor.
+        const auto page = editor->pageBoundsOnScreen();
+
+        CHECK (page.getWidth() == Catch::Approx (area.getWidth() * editor->interfaceScale()).epsilon (0.01));
+        CHECK (page.getHeight() == Catch::Approx (area.getHeight() * editor->interfaceScale()).epsilon (0.01));
+
+        for (int index = 0; index < editor->sectionCount(); ++index)
+        {
+            const auto nominalRect = rectsAtNominal[static_cast<std::size_t> (index)];
+            const auto onScreen = editor->sectionBoundsOnScreen (index);
+
+            INFO ("scale " << scale << ", section " << index << ": "
+                           << editor->sectionId (index).toStdString());
+
+            CHECK (onScreen.getWidth()
+                   == Catch::Approx (nominalRect.getWidth() * editor->interfaceScale()).epsilon (0.01));
+            CHECK (onScreen.getHeight()
+                   == Catch::Approx (nominalRect.getHeight() * editor->interfaceScale()).epsilon (0.01));
+            CHECK (onScreen.getX()
+                   == Catch::Approx (page.getX() + nominalRect.getX() * editor->interfaceScale()).epsilon (0.01));
+            CHECK (onScreen.getY()
+                   == Catch::Approx (page.getY() + nominalRect.getY() * editor->interfaceScale()).epsilon (0.01));
+
+            // And it is inside the window: the fit, at every one of these sizes.
+            CHECK (editor->getLocalBounds().toFloat().contains (onScreen));
+        }
+
+        // **(c) The envelope and the matrix, the pair ticket `57` measured against each other.** Ticket `57`
+        // asked who absorbs the window's slack and answered, correctly for a layout that re-flows, "the
+        // envelope, by exactly the slack, and the matrix by none". At a fixed ratio there is no slack and the
+        // question changes shape: both sections grow **proportionally**, by the same factor, and the
+        // envelope's share of the page is a constant. Stated this way rather than dropped, because the old
+        // measurement is still true of a *layout*, and no longer true of this one.
+        {
+            const auto env = editor->sectionBoundsOnScreen (envSection);
+            const auto matrix = editor->sectionBoundsOnScreen (matrixSection);
+
+            CHECK (env.getHeight()
+                   == Catch::Approx (rectsAtNominal[static_cast<std::size_t> (envSection)].getHeight()
+                                         * editor->interfaceScale())
+                          .epsilon (0.01));
+            CHECK (matrix.getHeight()
+                   == Catch::Approx (rectsAtNominal[static_cast<std::size_t> (matrixSection)].getHeight()
+                                         * editor->interfaceScale())
+                          .epsilon (0.01));
+            CHECK (env.getHeight() / page.getHeight()
+                   == Catch::Approx (static_cast<float> (rectsAtNominal[static_cast<std::size_t> (envSection)].getHeight())
+                                         / static_cast<float> (area.getHeight()))
+                          .epsilon (0.01));
+
+            // The compact matrix still shows exactly its four rows: `57`'s other half, unchanged.
+            CHECK (editor->composition().matrixVisibleRows()
+                   == static_cast<int> (CompositionView::kMatrixVisibleRows));
+        }
     }
 
-    const auto envAtDefault = editor->composition().sectionBounds (envSection);
-    const auto matrixAtDefault = editor->composition().sectionBounds (matrixSection);
-
-    std::fprintf (stderr, "[interface] default window %dx%d: viewport %d, page %d; envelope %d, matrix %d, "
-                          "matrix rows %d\n",
-                  editor->getWidth(), editor->getHeight(), editor->compositionViewportHeight(),
-                  editor->compositionHeight(), envAtDefault.getHeight(), matrixAtDefault.getHeight(),
-                  editor->composition().matrixVisibleRows());
-
-    CHECK (editor->getWidth() == 1080);
-    CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
-    CHECK_FALSE (editor->compositionScrolls());
-
-    // --- 2. smaller than the page: the sections' own heights, with nothing to hand out -----------------
-    editor->setSize (1080, 640);
-
-    const auto envNatural = editor->composition().sectionBounds (envSection).getHeight();
-
-    std::fprintf (stderr, "[interface] 1080x640 (the page scrolls): envelope %d — its natural height; "
-                          "matrix %d, rows %d\n",
-                  envNatural, editor->composition().sectionBounds (matrixSection).getHeight(),
-                  editor->composition().matrixVisibleRows());
-
-    CHECK (editor->compositionHeight() > editor->compositionViewportHeight());
-
-    // The default window's slack, measured: what the envelope has there over what it needs. Since ticket
-    // `53` the default height *is* the page's own need, so this is nought in this build — and it is a
-    // number rather than an assumption, which is what the ticket asks for at this size.
-    std::fprintf (stderr, "[interface] the default window's slack, as the envelope measures it: %d px\n",
-                  envAtDefault.getHeight() - envNatural);
-
-    // --- 3. the window's minimum ----------------------------------------------------------------------
-    editor->setSize (900, 600);
-
-    std::fprintf (stderr, "[interface] 900x600: viewport %d, page %d; envelope %d, matrix %d, rows %d\n",
-                  editor->compositionViewportHeight(), editor->compositionHeight(),
-                  editor->composition().sectionBounds (envSection).getHeight(),
-                  editor->composition().sectionBounds (matrixSection).getHeight(),
-                  editor->composition().matrixVisibleRows());
-
-    CHECK (editor->composition().sectionBounds (envSection).getHeight() == envNatural);
-    CHECK (editor->composition().sectionBounds (matrixSection).getHeight() == matrixAtDefault.getHeight());
-    CHECK (editor->composition().matrixVisibleRows()
-           == static_cast<int> (CompositionView::kMatrixVisibleRows));
-
-    // --- 4. a window with slack in it ------------------------------------------------------------------
-    constexpr int kSlack = 300;
-
-    editor->setSize (defaultSize.x, defaultSize.y + kSlack);
-
-    const auto envAtTall = editor->composition().sectionBounds (envSection);
-    const auto matrixAtTall = editor->composition().sectionBounds (matrixSection);
-
-    std::fprintf (stderr, "[interface] %dx%d: viewport %d, page %d; envelope %d (+%d), matrix %d (+%d), "
-                          "rows %d\n",
-                  editor->getWidth(), editor->getHeight(), editor->compositionViewportHeight(),
-                  editor->compositionHeight(), envAtTall.getHeight(),
-                  envAtTall.getHeight() - envAtDefault.getHeight(), matrixAtTall.getHeight(),
-                  matrixAtTall.getHeight() - matrixAtDefault.getHeight(),
-                  editor->composition().matrixVisibleRows());
-
-    // **The change, in one measurement**: the window's 300 extra pixels are the envelope's and nothing
-    // else's.
-    CHECK (envAtTall.getHeight() == envAtDefault.getHeight() + kSlack);
-    CHECK (matrixAtTall.getHeight() == matrixAtDefault.getHeight());
-    CHECK (editor->composition().matrixVisibleRows()
-           == static_cast<int> (CompositionView::kMatrixVisibleRows));
-
-    // Every other section is exactly the height it was, and everything *after* the envelope's band moved
-    // down by the slack and no further: the space went to one section, not to the page. The envelope itself
-    // keeps its y — it grows downwards from the same place, which is what a section taking slack looks like.
-    // (The bands are placed in order, so a section after the envelope's index sits below it;
-    // `default-section` shares its band with the macro strip and is therefore *beside* the section before
-    // it rather than below it, which is why this is a y-comparison against the window's other size and not
-    // a stacking test.)
-    for (int index = 0; index < editor->sectionCount(); ++index)
+    // **What the design mock's own ratio would cost.** `docs/design/xerum-direction-warm.html` is 1082×668 —
+    // 1.62 wide per tall, against this composition's 0.96 — and the dev may prefer it. Measured rather than
+    // argued: at that window the canvas is scaled by its *height* (the width has room to spare), so the
+    // composition occupies part of the window and the rest is background, and the same composition one
+    // millimetre taller would be clipped if it were scaled to the width instead.
     {
-        const auto bounds = editor->composition().sectionBounds (index);
+        const auto mock = juce::Point<int> (1082, 668);
+        editor->setSize (mock.x, mock.y);
 
-        INFO ("section " << index << ": " << editor->sectionId (index).toStdString());
+        const auto page = editor->pageBoundsOnScreen();
+        const auto used = page.getWidth() / static_cast<float> (mock.x);
+        const auto byWidth = static_cast<float> (mock.x) / static_cast<float> (nominal.x);
 
-        CHECK (bounds.getHeight()
-               == heightsAtDefault[static_cast<std::size_t> (index)] + (index == envSection ? kSlack : 0));
-        CHECK (bounds.getY()
-               == yAtDefault[static_cast<std::size_t> (index)] + (index > envSection ? kSlack : 0));
+        std::fprintf (stderr,
+                      "[interface] the mock's ratio %dx%d (%.4f): scale %.4f, the composition %.0fx%.0f, "
+                      "%.1f %% of the window's width used (%.1f %% empty); scaled to the width instead "
+                      "(%.4f) it would need %d px of height, %d more than the mock has\n",
+                      mock.x, mock.y, static_cast<double> (mock.x) / mock.y, editor->interfaceScale(),
+                      page.getWidth(), page.getHeight(), 100.0f * used, 100.0f * (1.0f - used), byWidth,
+                      juce::roundToInt (static_cast<float> (nominal.y) * byWidth),
+                      juce::roundToInt (static_cast<float> (nominal.y) * byWidth) - mock.y);
+
+        CHECK (used < 0.75f);   // the width is substantially unused at that ratio
+        CHECK (editor->getLocalBounds().toFloat().contains (page));
     }
 
-    // The page still fits the window it was given, so the slack was absorbed rather than pushed out.
-    CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
-    CHECK_FALSE (editor->compositionScrolls());
-
-    // **What the envelope's slack is.** The envelope's content is one row of four knobs — a fixed height —
-    // so the pixels above its natural height are air: the design system has no envelope content that uses
-    // height, and this ticket does not draw one. Stated as a measurement here rather than left for a reader
-    // to discover, because it is the one part of "prominence is the space it occupies" that geometry cannot
-    // settle.
-    std::fprintf (stderr, "[interface] of the envelope's %d px at %dx%d, %d are its own content and %d are "
-                          "air (the knob row is %d)\n",
-                  envAtTall.getHeight(), editor->getWidth(), editor->getHeight(), envNatural,
-                  envAtTall.getHeight() - envNatural, ui::kKnobRowHeight);
-
-    // **A wider window is the other gesture that produces slack** — the panels re-flow into fewer rows, so
-    // the page needs less height and the window the user already has has room the composition never asked
-    // for. That room is the envelope's as well: the same rule, reached the way a user actually reaches it.
-    editor->setSize (1400, defaultSize.y);
-
-    std::fprintf (stderr, "[interface] 1400x%d: viewport %d, page %d; envelope %d, matrix %d, rows %d\n",
-                  editor->getHeight(), editor->compositionViewportHeight(), editor->compositionHeight(),
-                  editor->composition().sectionBounds (envSection).getHeight(),
-                  editor->composition().sectionBounds (matrixSection).getHeight(),
-                  editor->composition().matrixVisibleRows());
-
-    CHECK (editor->composition().sectionBounds (matrixSection).getHeight() == matrixAtDefault.getHeight());
-    CHECK (editor->composition().sectionBounds (envSection).getHeight() >= envAtDefault.getHeight());
-    CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
-    CHECK_FALSE (editor->compositionScrolls());
-
-    // **The capture.** The editor's own render at the window it opens at — `createComponentSnapshot`, the
-    // method tickets `52` and `53` measure with — written to the build directory as a PNG, because "does
-    // the envelope now read as the centre of the instrument" is the dev's call and looking at it is how
-    // that call is made. What this session can do instead is measure the same render: the palette shares
-    // and the non-token blue are asserted in
-    // `every colour a drawn surface resolves is a token`, which renders the editor at exactly this size.
+    // **The captures.** The editor's own render at three sizes — `createComponentSnapshot` over the
+    // editor's whole window, which is the method tickets `52`, `53` and `57` measure with and the only
+    // capture this machine allows (`screencapture` is refused by Screen Recording here). At each size the
+    // composition is the same composition drawn bigger or smaller, and the palette's own shares of the
+    // window are measured as well as written out: a layout that re-flowed would move those shares by tens
+    // of points; a layout that scales moves them by tenths, which is the anti-aliasing of its own edges.
     {
-        editor->setSize (defaultSize.x, defaultSize.y);
-
-        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
-
         auto directory = juce::File (juce::String (XERUM_BUILD_DIR)).getChildFile ("interface-evidence");
         directory.createDirectory();
 
-        const auto png = directory.getChildFile ("ticket-57-default-window.png");
         juce::PNGImageFormat format;
+        std::vector<std::pair<juce::String, std::map<juce::String, double>>> measured;
 
-        if (auto stream = std::unique_ptr<juce::FileOutputStream> (png.createOutputStream()))
-            format.writeImageToStream (image, *stream);
+        for (const auto scale : { 1.0f, 1.25f, minScale })
+        {
+            const auto size = juce::Point<int> (juce::roundToInt (static_cast<float> (nominal.x) * scale),
+                                                juce::roundToInt (static_cast<float> (nominal.y) * scale));
+            editor->setSize (size.x, size.y);
+            editor->selectSection (0);
 
-        std::fprintf (stderr, "[interface] the composed page at %dx%d rendered to %s\n", image.getWidth(),
-                      image.getHeight(), png.getFullPathName().toRawUTF8());
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
 
-        CHECK (image.getWidth() == editor->getWidth());
-        CHECK (image.getHeight() == editor->getHeight());
-        CHECK (png.getSize() > 0);
+            REQUIRE_FALSE (image.isNull());
+
+            const auto label = "ticket-59-scale-" + juce::String (juce::roundToInt (scale * 100.0f)) + ".png";
+            const auto png = directory.getChildFile (label);
+
+            if (auto stream = std::unique_ptr<juce::FileOutputStream> (png.createOutputStream()))
+                format.writeImageToStream (image, *stream);
+
+            // The palette's own share of this render. Exact colours only, the way the token walk counts
+            // them, so this is "the surfaces are where they were" rather than a blend of two tokens.
+            std::map<juce::String, double> shares;
+            const auto total = static_cast<double> (image.getWidth()) * static_cast<double> (image.getHeight());
+
+            for (const auto& [name, colour] : std::vector<std::pair<const char*, juce::Colour>> {
+                     { "bg", ui::look::bg },       { "surface", ui::look::surface },
+                     { "surface2", ui::look::surface2 }, { "border", ui::look::border },
+                     { "accent", ui::look::accent } })
+            {
+                auto count = 0;
+
+                for (int y = 0; y < image.getHeight(); ++y)
+                    for (int x = 0; x < image.getWidth(); ++x)
+                        if (image.getPixelAt (x, y) == colour)
+                            ++count;
+
+                shares[name] = 100.0 * count / total;
+            }
+
+            std::fprintf (stderr, "[interface] %s: %dx%d — bg %.3f %%, surface %.3f %%, surface2 %.3f %%, "
+                                  "border %.3f %%, accent %.3f %%\n",
+                          label.toRawUTF8(), image.getWidth(), image.getHeight(), shares["bg"], shares["surface"],
+                          shares["surface2"], shares["border"], shares["accent"]);
+
+            CHECK (image.getWidth() == editor->getWidth());
+            CHECK (image.getHeight() == editor->getHeight());
+            CHECK (png.getSize() > 0);
+
+            measured.emplace_back (label, std::move (shares));
+        }
+
+        REQUIRE (measured.size() == 3);
+
+        // **The same composition, at three scales.** The **filled areas**' shares of the window agree with
+        // the nominal render's to well inside a point: the panels are the same fraction of the page, the page
+        // the same fraction of the window, at every size — which is what "scaled, not re-flowed" looks like as
+        // a number. Two points is a wide bound deliberately: it is a claim about *no re-flow*, and a re-flow
+        // moves these by tens.
+        //
+        // `border` is printed and deliberately **not** compared, which is a fact about pixels rather than
+        // about the layout: a 1 px hairline drawn at 0.83× is anti-aliased into its neighbours, so its
+        // exact-colour share falls with the scale (3.17 % at 1×, 0.44 % at 0.83×) while the panels it frames
+        // do not move at all. The shares that would move if the composition re-flowed are the big ones.
+        for (const auto& [label, shares] : measured)
+        {
+            INFO ("render " << label.toStdString());
+
+            for (const auto* name : { "bg", "surface", "surface2", "accent" })
+                CHECK (std::abs (shares.at (name) - measured.front().second.at (name)) < 2.0);
+        }
     }
+}
+
+//==============================================================================
+TEST_CASE ("the amplitude envelope is drawn from its own four parameters, and shows the matrix's rows",
+           "[interface][ui]")
+{
+    // Ticket `59`'s second half. Ticket `57` was told not to invent an envelope graphic and to report if
+    // prominence needed one; the dev has now asked for the picture directly, so the deliverable is a drawing
+    // **in the design system's language** that is **derived from the parameters** rather than decorative —
+    // and the way to assert "derived" without eyes is the counterfactual the last three tickets used: change
+    // a parameter and require the picture to change, in the segment that parameter owns.
+    //
+    // Everything here is read from `ui::EnvelopeCurve::geometry()` — the five corners the paint routine
+    // draws — rather than from pixels, except in the two places where pixels *are* the claim: that it draws
+    // at all, and that it draws nothing where a parameter is not bound.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    // A document whose matrix addresses **the envelope's own attack** — the row the graph has to show when
+    // the matrix has one, through the same `modelPath` the knob's second arc is keyed on.
+    model::PresetDocument document;
+    document.name = "envelope fixture";
+    document.schemaVersion = "4.0";
+    document.parameters["ModSlot0/source[0]"] = number (1.0);
+    document.parameters["ModSlot0/plainParams/kParamAmount"] = number (40.0);
+    document.parameters["ModSlot0/plainParams/kParamBypass"] = number (0.0);
+    document.parameters["ModSlot0/destModuleTypeString"] = text ("Env");
+    document.parameters["ModSlot0/destModuleID"] = number (0.0);
+    document.parameters["ModSlot0/destModuleParamName"] = text ("kParamAttack");
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (document, {}, 0);
+
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    auto& graph = editor->envelopeCurve();
+
+    // The panel it is in: the composition's envelope section, whose group is the amplitude envelope's.
+    const auto envSection = editor->sectionForModule ("Env0");
+    REQUIRE (envSection >= 0);
+
+    const auto* envPlan = editor->sectionPlan (envSection);
+    REQUIRE (envPlan != nullptr);
+    REQUIRE (envPlan->panels.size() == 1);
+
+    auto* panel = editor->panelForGroup (
+        editor->plan().panels[static_cast<std::size_t> (envPlan->panels[0])].title);
+    REQUIRE (panel != nullptr);
+    REQUIRE (panel->title() == "Amp Envelope");
+
+    // **The graph is the envelope panel's inline display** — the design's `filter-viz` column, the place the
+    // filter's response display sits — and not a page, a window or a panel of its own.
+    CHECK (graph.getParentComponent() == static_cast<const juce::Component*> (panel));
+    CHECK (panel->inlineDisplay() == &graph);
+    CHECK (panel->getLocalBounds().contains (graph.getBounds()));
+    CHECK (graph.getWidth() > 0);
+    CHECK (graph.getHeight() > 0);
+    REQUIRE (graph.isBound());
+
+    std::fprintf (stderr, "\n[interface] the envelope graph: %dx%d inside a %dx%d panel\n", graph.getWidth(),
+                  graph.getHeight(), panel->getWidth(), panel->getHeight());
+
+    // **The four stages are the panel's four controls**, found by the `modelPath` the controls were built
+    // from — not a second list of parameter ids, and not a value read out of the document.
+    const auto knobFor = [&] (const EnvelopeStage stage) -> Knob*
+    {
+        for (const auto* spec : editor->plan().panels[static_cast<std::size_t> (envPlan->panels[0])].specs)
+            if (envelopeStageForModelPath (spec->modelPath) == stage)
+                if (auto* control = editor->controlFor (spec->id))
+                    return control->knob();
+
+        return nullptr;
+    };
+
+    for (const auto stage : { EnvelopeStage::Attack, EnvelopeStage::Decay, EnvelopeStage::Sustain,
+                              EnvelopeStage::Release })
+    {
+        REQUIRE (knobFor (stage) != nullptr);
+        CHECK (graph.stageKnob (stage) == knobFor (stage));
+
+        // **The graph and the arcs are the same number.** The curve's shape is a function of
+        // `valueToProportionOfLength` — the proportion the knob's value arc is drawn from — and the legend
+        // prints `getTextFromValue`, the string the knob's own readout prints. Neither is a second opinion.
+        auto* knob = knobFor (stage);
+
+        CHECK (graph.stageValue (stage) == knob->getValue());
+        CHECK (graph.stageProportion (stage)
+               == Catch::Approx (knob->valueToProportionOfLength (knob->getValue())));
+        CHECK (graph.stageText (stage) == knob->getTextFromValue (knob->getValue()));
+    }
+
+    // **The counterfactual, part 1: attack owns the rise.** At the parameter's own default the rise is a real
+    // segment; at the top of its range it is wider still; at nought it is nought wide, which is an instant
+    // attack drawn as the vertical edge it is.
+    auto* attack = knobFor (EnvelopeStage::Attack);
+    REQUIRE (attack != nullptr);
+
+    const auto rise = [&graph] { return graph.geometry().attackPeak.x - graph.geometry().start.x; };
+
+    const auto riseAtDefault = rise();
+
+    CHECK (riseAtDefault > 0.0f);
+
+    attack->setValue (attack->getMaximum(), juce::sendNotificationSync);
+    const auto riseAtMaximum = rise();
+
+    attack->setValue (0.0, juce::sendNotificationSync);
+    const auto riseAtZero = rise();
+
+    std::fprintf (stderr, "[interface] the rise: %.2f px at the default, %.2f at the maximum, %.2f at nought "
+                          "(plot %.0f wide)\n",
+                  riseAtDefault, riseAtMaximum, riseAtZero, graph.geometry().plot.getWidth());
+
+    CHECK (riseAtMaximum > riseAtDefault);
+    CHECK (riseAtZero == 0.0f);
+
+    // And the shape is an envelope's whatever the times are: the rise peaks at the top of the plot, the
+    // release ends on the baseline at the plot's right edge.
+    CHECK (graph.geometry().attackPeak.y == graph.geometry().plot.getY());
+    CHECK (graph.geometry().releaseEnd.y == graph.geometry().plot.getBottom());
+    CHECK (graph.geometry().releaseEnd.x == Catch::Approx (graph.geometry().plot.getRight()).epsilon (0.01));
+
+    // **The counterfactual, part 2: sustain is a level**, and it is the plateau's height and nothing else.
+    auto* sustain = knobFor (EnvelopeStage::Sustain);
+    REQUIRE (sustain != nullptr);
+
+    sustain->setValue (0.0, juce::sendNotificationSync);
+    CHECK (graph.geometry().decayEnd.y == graph.geometry().plot.getBottom());
+    CHECK (graph.geometry().sustainEnd.y == graph.geometry().plot.getBottom());
+
+    sustain->setValue (1.0, juce::sendNotificationSync);
+    CHECK (graph.geometry().decayEnd.y == graph.geometry().plot.getY());
+    CHECK (graph.geometry().sustainEnd.y == graph.geometry().plot.getY());
+
+    // **The second curve is the matrix's row**, through the path the knob's arc is drawn from: the fixture's
+    // 40 % on the attack reaches both, as the same number.
+    CHECK (graph.stageModulation (EnvelopeStage::Attack) == Catch::Approx (0.4));
+    CHECK (attack->modulationDepth() == Catch::Approx (0.4));
+    CHECK (graph.stageModulation (EnvelopeStage::Attack) == Catch::Approx (attack->modulationDepth()));
+    CHECK (graph.isModulated());
+
+    // With a value that leaves the attack room to move, the modulated rise is the longer one — drawn from
+    // `proportion + depth`, which is exactly what the arc sweeps.
+    attack->setValue (1.0, juce::sendNotificationSync);
+
+    const auto plain = graph.geometry (false);
+    const auto modulated = graph.geometry (true);
+
+    std::fprintf (stderr, "[interface] with +0.4 on the attack: the rise is %.2f px unmodulated and %.2f px "
+                          "modulated\n",
+                  plain.attackPeak.x - plain.start.x, modulated.attackPeak.x - modulated.start.x);
+
+    CHECK (modulated.attackPeak.x > plain.attackPeak.x);
+
+    // And no row, no second curve: the state the design calls "a control with no modulated state is not
+    // finished", answered with a fact rather than a stub.
+    graph.setStageModulation (EnvelopeStage::Attack, 0.0);
+    CHECK_FALSE (graph.isModulated());
+    CHECK (graph.geometry (true).attackPeak.x == graph.geometry (false).attackPeak.x);
+
+    // **It draws, in the design's own colours.** The graph's own snapshot, counted: the display's `bg` with
+    // its `border`, the accent on the curve, the accent's 10 % wash under it, and ink where the monospaced
+    // legend is — the four stages' letters and the four values.
+    {
+        attack->setValue (0.5, juce::sendNotificationSync);
+        knobFor (EnvelopeStage::Decay)->setValue (1.0, juce::sendNotificationSync);
+        sustain->setValue (0.5, juce::sendNotificationSync);
+        knobFor (EnvelopeStage::Release)->setValue (1.0, juce::sendNotificationSync);
+
+        const auto image = graph.createComponentSnapshot (graph.getLocalBounds());
+
+        REQUIRE_FALSE (image.isNull());
+
+        const auto countNear = [&image] (const juce::Colour colour, const int tolerance)
+        {
+            auto found = 0;
+
+            for (int y = 0; y < image.getHeight(); ++y)
+                for (int x = 0; x < image.getWidth(); ++x)
+                {
+                    const auto pixel = image.getPixelAt (x, y);
+
+                    if (std::abs (static_cast<int> (pixel.getRed()) - static_cast<int> (colour.getRed())) <= tolerance
+                        && std::abs (static_cast<int> (pixel.getGreen()) - static_cast<int> (colour.getGreen())) <= tolerance
+                        && std::abs (static_cast<int> (pixel.getBlue()) - static_cast<int> (colour.getBlue())) <= tolerance)
+                        ++found;
+                }
+
+            return found;
+        };
+
+        // The legend's row: ink is anything brighter than the display's own background, which is what a
+        // thread of 8px monospaced type is without counting anti-aliased pixels as a colour.
+        auto legendInk = 0;
+        const auto legendTop = image.getHeight() - 11;
+
+        for (int y = legendTop; y < image.getHeight(); ++y)
+            for (int x = 0; x < image.getWidth(); ++x)
+                if (image.getPixelAt (x, y).getBrightness() > ui::look::bg.getBrightness() + 0.1f)
+                    ++legendInk;
+
+        // **The wash under the curve.** `accentBg` is the accent at **10 % alpha**, so what reaches the
+        // framebuffer is that colour *over* the display's own background — a dim brownish blend whose red
+        // channel leads — and counting the source colour exactly would be counting a colour that was never
+        // composited. The band is the fill's area; the curve itself is above it (red 232, and excluded by the
+        // bound), and every neutral token has red ≈ green so it cannot be counted.
+        auto wash = 0;
+
+        for (int y = 0; y < image.getHeight(); ++y)
+            for (int x = 0; x < image.getWidth(); ++x)
+            {
+                const auto pixel = image.getPixelAt (x, y);
+
+                if (pixel.getRed() > pixel.getGreen() + 5 && pixel.getRed() < 140)
+                    ++wash;
+            }
+
+        std::fprintf (stderr,
+                      "[interface] the graph's own render %dx%d: bg %d, border %d, accent %d, accent-bg %d "
+                      "exact, the wash under the curve %d px, legend ink %d px\n",
+                      image.getWidth(), image.getHeight(), countNear (ui::look::bg, 0),
+                      countNear (ui::look::border, 8), countNear (ui::look::accent, 40),
+                      countNear (ui::look::accentBg, 0), wash, legendInk);
+
+        CHECK (countNear (ui::look::bg, 0) > 50);         // the display's own frame
+        CHECK (countNear (ui::look::border, 8) > 20);     // its radius
+        CHECK (countNear (ui::look::accent, 40) > 10);    // the curve itself
+        CHECK (wash > 1000);                              // the accent's wash, under it
+        CHECK (legendInk > 5);                            // the four letters and the four times
+    }
+
+    // **Nothing was lost by adding it.** The four controls are still the panel's controls, still bound, still
+    // a `juce::Slider` a host can automate, at the design's diameter, and the graph's column does not overlap
+    // any of them — the arrangement the filter's response display has.
+    for (int row = 0; row < panel->rows(); ++row)
+    {
+        auto* control = panel->controlAtRow (row);
+
+        REQUIRE (control != nullptr);
+        CHECK (control->isBound());
+        CHECK (dynamic_cast<juce::Slider*> (&control->widget()) != nullptr);
+        CHECK (control->knob() != nullptr);
+        CHECK (control->knob()->getWidth() == ui::look::knobDiameter);
+        CHECK (control->getRight() <= graph.getX());
+    }
+
+    // And it is a **read-out**: a click at its centre reaches the panel behind it rather than being swallowed
+    // by a component that does nothing with it. Dragging the curve is out of this ticket's scope, and a
+    // component that took the click would look draggable without being it — so it takes none, and this is
+    // where that is measured rather than implied.
+    CHECK_FALSE (graph.hitTest (graph.getWidth() / 2, graph.getHeight() / 2));
 }
 
 //==============================================================================
@@ -2064,7 +2453,9 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
     auto editor = openEditor (processor);
     REQUIRE (editor != nullptr);
 
-    editor->setSize (1082, 668);
+    // The geometry below is in the page's own coordinates, which are the same at every window (ticket `59`),
+    // so this is the size the editor opened at — its nominal size — rather than a second size chosen here.
+    editor->setSize (editor->nominalSize().x, editor->nominalSize().y);
 
     const auto& composition = editor->composition();
 
@@ -2350,9 +2741,15 @@ TEST_CASE ("the import report is a bar plus a drawer, never a modal", "[interfac
 
     // The bar is the surface that is always there, and the drawer starts shut. Both are **components of
     // this window** — the measurable form of "never a modal" — and neither is a dialog in front of it.
+    //
+    // Since ticket `59` the interface's components hang from the editor's **canvas** (the one component that
+    // is scaled into the window) rather than directly from the editor, so the direct parent is the canvas
+    // and the **top-level** is still the editor. The top-level is the claim that matters — it is the one a
+    // modal cannot make — and the canvas is asserted alongside it so the chain is stated rather than assumed.
     CHECK (editor->reportView().getTopLevelComponent() == editor.get());
     CHECK (bar.getTopLevelComponent() == editor.get());
-    CHECK (bar.getParentComponent() == editor.get());
+    CHECK (bar.getParentComponent() == &editor->interfaceCanvas());
+    CHECK (editor->interfaceCanvas().isParentOf (&editor->reportView()));
     CHECK (editor->reportView().getParentComponent() != nullptr);
     CHECK_FALSE (editor->reportDrawerOpen());
 
@@ -2789,10 +3186,11 @@ TEST_CASE ("the pole/zero plane's edits reach the engine, and a drawn response i
     REQUIRE (editor != nullptr);
 
     // The plane lives inside its filter's panel on the composed page (ticket `52`), so it has its rectangle
-    // as soon as the editor is laid out; the scroll puts the section the user is working in on screen.
+    // as soon as the editor is laid out; the selection is what puts the section the user is working in on
+    // the strip (ticket `59`: the whole page is on screen at every size, so there is no scroll to it).
     const auto filterSection = editor->sectionForModule ("VoiceFilter0");
     REQUIRE (filterSection >= 0);
-    editor->scrollToSection (filterSection);
+    editor->selectSection (filterSection);
 
     auto& plane = editor->poleZeroPlane (0);
     REQUIRE (plane.sectionCount() == 8);
@@ -3294,9 +3692,9 @@ TEST_CASE ("the bank browses by category, by step and by search, and the keyboar
     { return juce::String (catalog.presets[static_cast<std::size_t> (index)].name); };
     const auto loaded = [&processor] { return juce::String (processor.document().name); };
 
-    // The window the host opens: the page fits, and the browser does not change that.
+    // The window the host opens: the page fits it, and the browser does not change that.
     CHECK (editor->getWidth() == 1080);
-    CHECK_FALSE (editor->compositionScrolls());
+    CHECK (editor->compositionHeight() == editor->compositionArea().getHeight());
 
     const auto pageClosed = editor->compositionHeight();
 
@@ -3305,9 +3703,11 @@ TEST_CASE ("the bank browses by category, by step and by search, and the keyboar
     REQUIRE (browser.getWidth() > 0);
 
     // **Counterfactual: the fit.** The browser is a surface over the page, so the page is exactly as tall
-    // with it open as with it shut — at both sizes, and measured **at each size** rather than across them:
-    // the minimum window is the one ticket `53` records as scrolling, and that is a fact about the window
-    // and the page, not about the browser.
+    // with it open as with it shut — at both sizes, and measured **at each size** rather than across them.
+    // Ticket `53` named the minimum window as the one that scrolled; ticket `59` removed scrolling entirely
+    // (the page is laid out at the size of the space it is given and scaled with it), so what this block
+    // measures now is the page's *height* being untouched by the browser at each size — which is the claim
+    // the ticket is about, and the one the overlay's own cost depends on.
     {
         const auto pageAtDefaultOpen = editor->compositionHeight();
         editor->setBrowserOpen (false);
@@ -3316,10 +3716,11 @@ TEST_CASE ("the bank browses by category, by step and by search, and the keyboar
 
         CHECK (pageAtDefaultOpen == pageAtDefaultShut);
         CHECK (pageAtDefaultOpen == pageClosed);
-        CHECK_FALSE (editor->compositionScrolls());
 
         const auto size = juce::Point<int> (editor->getWidth(), editor->getHeight());
 
+        // A window a host has forced off the ratio: the canvas is letterboxed, and the page's own height —
+        // and the browser's effect on it — is the same fact as at the ratio.
         editor->setSize (900, 600);
         const auto pageAtMinimumOpen = editor->compositionHeight();
         editor->setBrowserOpen (false);
@@ -3329,9 +3730,9 @@ TEST_CASE ("the bank browses by category, by step and by search, and the keyboar
         editor->setSize (size.x, size.y);
 
         std::fprintf (stderr,
-                      "\n[browser] the composed page: %d at 1080x1108 and %d at 900x600, each measured with "
+                      "\n[browser] the composed page: %d at %dx%d and %d at 900x600, each measured with "
                       "the browser open and with it shut\n",
-                      pageAtDefaultOpen, pageAtMinimumOpen);
+                      pageAtDefaultOpen, size.x, size.y, pageAtMinimumOpen);
 
         CHECK (pageAtMinimumOpen == pageAtMinimumShut);
         CHECK (editor->compositionHeight() == pageClosed);
@@ -3614,7 +4015,7 @@ TEST_CASE ("the bank browses by category, by step and by search, and the keyboar
     // summarised, because this session has no eyes and the drawing is the part of the acceptance that
     // cannot be asserted in numbers alone.
     {
-        editor->setSize (1080, 1108);
+        editor->setSize (editor->nominalSize().x, editor->nominalSize().y);
         editor->setBrowserOpen (true);
         browser.setCategoryIndex (-1);
         browser.setSearch ({});

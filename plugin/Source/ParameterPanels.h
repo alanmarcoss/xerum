@@ -298,7 +298,13 @@ public:
 
     /// A drawn surface the panel carries **inside itself**, beside its controls — the design's
     /// `filter-viz`, which is the filter's response display. Not owned: the editor owns the plane.
-    void setInlineDisplay (juce::Component* display);
+    ///
+    /// `minimumHeight` is the height the panel will not go below for it, and it is the caller's because the
+    /// two surfaces that use this are not the same size: a pole/zero plane needs room to be dragged in
+    /// (`kInlineDisplayMinHeight`), and the amplitude envelope's curve is the design's own display height
+    /// (`kEnvelopeGraphMinHeight`, 68) — which is what its panel's one row of 68px knobs already is, so the
+    /// graph adds no height to the page.
+    void setInlineDisplay (juce::Component* display, int minimumHeight);
     juce::Component* inlineDisplay() const { return display_; }
 
     /// A strip item (a macro in the bottom row): no panel chrome, and the title under the control, which
@@ -348,6 +354,7 @@ private:
     juce::OwnedArray<ParameterControl> controls_;
     std::unique_ptr<WavetableSlot> wavetable_;
     juce::Component* display_ { nullptr };
+    int displayMinHeight_ { 0 };
     bool compact_ { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ParameterPanel)
@@ -368,25 +375,24 @@ private:
 /// ## Ticket `53`: the page is packed to fit, and one section takes the slack
 ///
 /// The design's own content box is a grid whose fourth row is `1fr` and it fits a 900×600 window with no
-/// scroll at all. The composition here is packed the same way: the sections' own heights are measured, and
-/// the difference between what they need and what the window has is given to the composition's **flexible
-/// section** — `SectionSpec::flexible`, the design's `1fr` — which shows as much of itself as fits and says
-/// how much it is showing. Below its natural height the page is taller than the window and scrolls; it
-/// never shrinks a section to hide it.
+/// scroll at all. Ticket `53` packed the composition the same way and handed the difference between what
+/// the sections need and what the window has to one **flexible** section, the design's `1fr`.
 ///
-/// ## Ticket `57`: the flexible section is the amplitude envelope's, and the matrix is compact
+/// ## Ticket `57`: the flexible section was the amplitude envelope's, and the matrix is compact
 ///
-/// Ticket `53` handed the slack to the **matrix**, on the argument that a grid of 64 rows is the one
-/// section a taller window can usefully give more of. The dev's editorial call is the other way round: the
-/// amplitude envelope is the control a player touches on every patch, and the matrix is the one that was
-/// occupying the page. So the matrix gives the flexible row up (it is the envelope's in the data now), the
-/// compact matrix shows `kMatrixVisibleRows` rows and moves to the **end** of the composition, and the
-/// envelope's own band — early, at full width, with the design's largest knobs — is the section a taller
-/// window grows.
+/// Ticket `53` handed that slack to the **matrix**, on the argument that a grid of 64 rows is the one
+/// section a taller window can usefully give more of. The dev's editorial call was the other way round, so
+/// the matrix gave the flexible row up (it was the envelope's), shows `kMatrixVisibleRows` rows, and moved
+/// to the **end** of the composition. The matrix's band, its four rows and its `N / 64` tag are all
+/// unchanged by ticket `59`; what `59` removed is the slack itself.
 ///
-/// What the envelope's slack *is* is air: the row of four knobs is a fixed 68px and the design system has
-/// no envelope content that uses height. That is stated in `plugin/tests/interface_test.cpp` as a
-/// measurement rather than hidden, because it is the one part of this ticket the geometry cannot settle.
+/// ## Ticket `59`: the page is laid out at one size, and the size is the page's own
+///
+/// The flexible row is **gone** (see `SectionSpec`), and so is the second argument that used to be a
+/// window: `layout` takes a width and returns the height the page's own content needs at it. The page is
+/// therefore the same rectangles at every window size — the editor lays it out once, at the nominal width,
+/// and scales the whole canvas into the window — which is what "the composition must never re-flow" means
+/// as a property of this function rather than as a promise about its callers.
 class CompositionView final : public juce::Component
 {
 public:
@@ -408,12 +414,10 @@ public:
     /// in the heading and the grid on screen cannot disagree.
     static constexpr int kMatrixVisibleRows = 4;
 
-    /// Arrange the whole page for this width and this much window height, and return the height it needs.
-    /// The height is what the sections themselves need: when the sections fit inside `windowHeight`, the
-    /// **flexible** section (the data's `1fr`) grows into the difference and the page is exactly
-    /// `windowHeight`; when they do not, the page is taller than the window and the editor scrolls it —
-    /// never a clipped section.
-    int layout (int width, int windowHeight);
+    /// Arrange the whole page at this width, and return the height it needs. The height is the page's own:
+    /// the sum of what its sections need at this width. There is no second input and no slack to hand out
+    /// — the page is laid out at exactly one size (ticket `59`) and the caller scales it into the window.
+    int layout (int width);
 
     /// The resolved composition, in the design's order, and where each section landed in the page's own
     /// coordinates.

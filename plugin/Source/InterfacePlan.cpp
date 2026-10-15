@@ -142,17 +142,12 @@ std::vector<SectionSpec> designedComposition()
     // own order — three oscillators, noise and sub, the amplitude envelope's own band, the two filters, the
     // bottom row of macros beside the fall-through, and the matrix at the end — and the entry that names no
     // group is the fall-through itself, which is where the groups the composition does not name land.
-    // Ticket `57` moved two things and added one; every other entry, and every section's identity, is
-    // `52`'s.
-    //
-    // The **flexible** row is the design's `1fr`, and since ticket `57` it is the amplitude envelope's
-    // rather than the matrix's: the design's own grid names four fixed rows (`auto`) above the flexible
-    // one, and the section that takes the window's slack is the section the instrument should be read
-    // from. The envelope's band is its own, so the slack it takes lands inside it and nowhere else.
+    // Ticket `57` moved two things and added one; ticket `59` removed the design's `1fr` from the data,
+    // because there is no window slack for a section to take any more (see `SectionSpec`).
     return {
         { "osc-row", "Oscillators", SectionKind::Panels, { "Osc" }, "osc" },
         { "noise-sub-row", "Noise + Sub", SectionKind::Panels, { "Noise", "Sub Osc" }, "noiseSub" },
-        { "env-section", "Amp Envelope", SectionKind::Panels, { "Amp Envelope" }, "env", true },
+        { "env-section", "Amp Envelope", SectionKind::Panels, { "Amp Envelope" }, "env" },
         { "filter-section", "Filter", SectionKind::Panels, { "Filter" }, "filter" },
         { "fx-section", "Effects Chain", SectionKind::Strip, { "FX" }, "bottom" },
         { "macro-section", "Macros", SectionKind::Strip, { "Macro" }, "bottom" },
@@ -164,6 +159,25 @@ std::vector<SectionSpec> designedComposition()
         // grid is twelve columns wide and does not share a row with a panel or a strip.
         { "mod-panel", "Mod Matrix", SectionKind::Matrix, {}, "matrix" },
     };
+}
+
+std::optional<EnvelopeStage> envelopeStageForModelPath (const std::string& modelPath)
+{
+    const auto leaf = leafOf (modelPath);
+
+    if (leaf == "kParamAttack")
+        return EnvelopeStage::Attack;
+
+    if (leaf == "kParamDecay")
+        return EnvelopeStage::Decay;
+
+    if (leaf == "kParamSustain")
+        return EnvelopeStage::Sustain;
+
+    if (leaf == "kParamRelease")
+        return EnvelopeStage::Release;
+
+    return std::nullopt;
 }
 
 std::vector<std::string> InterfacePlan::ids() const
@@ -293,7 +307,6 @@ InterfacePlan planInterface (const std::vector<ParamSpec>& specs,
         section.title = spec.title;
         section.kind = spec.kind;
         section.band = spec.band;
-        section.flexible = spec.flexible;
 
         for (int panel = 0; panel < static_cast<int> (plan.panels.size()); ++panel)
             if (sectionForPanel[static_cast<std::size_t> (panel)] == index)

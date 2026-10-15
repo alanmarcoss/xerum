@@ -26,12 +26,26 @@ constexpr int kWordmarkWidth = 84;
 constexpr int kImportWidth = 168;
 constexpr int kStatusWidth = 260;
 
-constexpr int kMinWidth = 900;
-constexpr int kMinHeight = 600;
-constexpr int kDefaultWidth = 1080;
-constexpr int kDefaultHeight = 640;
-constexpr int kMaxWidth = 2400;
-constexpr int kMaxHeight = 1600;
+// Ticket `59`: the interface's own size, and the range of scales it is drawn at.
+//
+// `kNominalWidth` is the design's baseline window width — ticket `53`'s default, kept — and the **nominal
+// height is derived** from the composition in the constructor. That is what makes the ratio the
+// composition's own: the page's height at this width plus the design's chrome (`kHeaderHeight +
+// kStripHeight + kReportBarHeight`) *is* the canvas, and the ratio is those two numbers over each other.
+// The design mock's own ratio is much wider (`docs/design/xerum-direction-warm.html` is 1082×668, 1.62
+// wide-per-tall, against this composition's 0.96): a window at that ratio would be letterboxed, its width
+// 41 % empty, and `plugin/tests/interface_test.cpp` measures exactly that rather than arguing it.
+constexpr int kNominalWidth = 1080;
+
+/// The page is the nominal width less the composition's side margins, and `layout` is asked for exactly
+/// this width — once, at construction, and again in `resized()` for a rectangle of the same size.
+constexpr int kNominalPageWidth = kNominalWidth - 2 * kMargin;
+
+/// The scale range the editor's own resize is held to, and therefore the windows a user can drag it to: the
+/// design's baseline **width** (900 — ticket `51`'s own size) at the bottom, twice the nominal at the top.
+/// Each size's height follows from the ratio, which is the whole point of the ratio.
+constexpr float kMinScale = 900.0f / static_cast<float> (kNominalWidth);
+constexpr float kMaxScale = 2.0f;
 } // namespace
 
 std::atomic<int> XerumAudioProcessorEditor::created_ { 0 };
@@ -44,13 +58,22 @@ int XerumAudioProcessorEditor::instancesAlive() { return alive_.load (std::memor
 XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& processor)
     : AudioProcessorEditor (&processor),
       processor_ (processor),
-      plan_ (ui::planInterface (processor.bridge().specs(), ui::designedComposition()))
+      plan_ (ui::planInterface (processor.bridge().specs(), ui::designedComposition())),
+      // The canvas is the whole interface's parent, so it is built with the editor it draws for.
+      canvas_ (*this)
 {
     // The interface's own existence, counted. A host opening the interface is the only thing that moves
     // these, and `plugin/tests/interface_test.cpp` asserts it.
     // The design system's colours, for everything JUCE draws that this interface does not: the first thing
     // the constructor does, because a component built below reads its look-and-feel when it paints.
     setLookAndFeel (&lookAndFeel_);
+
+    // Ticket `59`: **one canvas, and every component the editor shows is its child.** It carries the whole
+    // interface at the nominal size and is the only component whose transform is ever set, so every
+    // rectangle in the tree below is a nominal one and the window never reaches the layout. Added first, so
+    // it is the bottom-most child — the only other direct child is JUCE's own resize corner, which
+    // `AudioProcessorEditor` keeps on top.
+    addAndMakeVisible (canvas_);
 
     created_.fetch_add (1, std::memory_order_relaxed);
     alive_.fetch_add (1, std::memory_order_relaxed);
@@ -91,7 +114,7 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
             panel->setWavetableSlot (std::move (slot));
         }
 
-        addChildComponent (*panel);
+        canvas_.addChildComponent (*panel);
     }
 
     // A voice filter's panel carries the filter's **drawn response inside itself**, beside its knobs —
@@ -109,7 +132,33 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
         for (int index = 0; index < static_cast<int> (plan_.panels.size()); ++index)
             if (plan_.panels[static_cast<std::size_t> (index)].module == module)
-                panels_[index]->setInlineDisplay (plane);
+                panels_[index]->setInlineDisplay (plane, ui::kInlineDisplayMinHeight);
+    }
+
+    // The amplitude envelope, **drawn** (ticket `59`). The four stage knobs are found the way the
+    // modulation arcs are keyed: by the `ParamSpec::modelPath` the control was built from, through the
+    // model's own leaf names (`ui::envelopeStageForModelPath`), so the graph and the controls are the same
+    // four parameters by construction and there is no second source of truth to drift. The graph is the
+    // **envelope panel's inline display** — the design's `filter-viz` column, beside the knobs rather than
+    // under them — and the panel that completes the four is the one that gets it, so no group name is
+    // written down here.
+    //
+    // It costs the page no height: the display's minimum is the design's own display height (68), which is
+    // what the panel's one row of 68px knobs and its chrome already are, so the graph fills air the band
+    // already had (ticket `57` measured it) instead of making the page taller.
+    for (int index = 0; index < static_cast<int> (plan_.panels.size()); ++index)
+    {
+        for (const auto* spec : plan_.panels[static_cast<std::size_t> (index)].specs)
+            if (const auto stage = ui::envelopeStageForModelPath (spec->modelPath))
+                if (auto* control = panels_[index]->controlFor (spec->id))
+                    if (auto* knob = control->knob())
+                        envelopeCurve_.setStage (*stage, knob);
+
+        if (envelopeCurve_.isBound())
+        {
+            panels_[index]->setInlineDisplay (&envelopeCurve_, ui::kEnvelopeGraphMinHeight);
+            break;
+        }
     }
 
     // The matrix. **The one section the table does not derive**: ticket `45` gave the bridge a modulation
@@ -132,9 +181,12 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
     composition_.setComposition (plan_.sections, panelPointers);
     composition_.setMatrix (&matrixViewport_);
-    compositionViewport_.setViewedComponent (&composition_, false);
-    compositionViewport_.setScrollBarsShown (true, false);
-    addAndMakeVisible (compositionViewport_);
+
+    // The page is a child of the canvas, and there is **no viewport around it**: the page is laid out at
+    // exactly the size of the space it is given (ticket `59`), so a scroll container around it is machinery
+    // that could never act — and its absence is what makes "the page never scrolls" a fact about the
+    // construction rather than an assertion about a scroll bar.
+    canvas_.addAndMakeVisible (composition_);
 
     // A strip item — a macro in the bottom row — is drawn the way the design draws one: a bare knob with
     // its label, no panel around it. The section's kind is what says so.
@@ -168,16 +220,16 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
         strip_.setSections (std::move (titles));
     }
 
-    strip_.onSelect = [this] (const int index) { scrollToSection (index); };
-    addAndMakeVisible (strip_);
+    strip_.onSelect = [this] (const int index) { selectSection (index); };
+    canvas_.addAndMakeVisible (strip_);
 
     // The report surface: the drawer first, so it is *under* the bar it opens from and over the page.
     reportViewport_.setScrollBarsShown (true, false);
     reportViewport_.setViewedComponent (&reportView_, false);
-    addChildComponent (reportViewport_);
+    canvas_.addChildComponent (reportViewport_);
 
     reportBar_.onToggleRequested = [this] { setReportDrawerOpen (! reportBar_.drawerOpen()); };
-    addAndMakeVisible (reportBar_);
+    canvas_.addAndMakeVisible (reportBar_);
 
     import_.setButtonText ("Import .SerumPreset…");
 
@@ -189,12 +241,12 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
     import_.setColour (juce::TextButton::buttonColourId, ui::look::surface2);
     import_.setColour (juce::TextButton::textColourOffId, ui::look::fgDim);
     import_.setColour (juce::TextButton::textColourOnId, ui::look::fg);
-    addAndMakeVisible (import_);
+    canvas_.addAndMakeVisible (import_);
 
     status_.setJustificationType (juce::Justification::centredRight);
     status_.setFont (ui::look::monoFont (ui::look::type::readoutSm));
     status_.setColour (juce::Label::textColourId, ui::look::fgMuted);
-    addAndMakeVisible (status_);
+    canvas_.addAndMakeVisible (status_);
 
     //==============================================================================
     // Ticket `55`: the bank, the field that is the way into it, and the browser itself.
@@ -212,7 +264,7 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
     presetField_.onStep = [this] (const int step) { stepPreset (step); };
     presetField_.onOpen = [this] { setBrowserOpen (! browser_.isVisible()); };
-    addAndMakeVisible (presetField_);
+    canvas_.addAndMakeVisible (presetField_);
 
     browser_.setCatalog (catalog_);
 
@@ -224,27 +276,40 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
     browser_.onClose = [this] { setBrowserOpen (false); };
 
     // Added last, so it is the topmost child: a surface over the page, not a window over the application.
-    addChildComponent (browser_);
+    canvas_.addChildComponent (browser_);
+
+    //==============================================================================
+    // Ticket `59`: the nominal size, the ratio, and the one `setSize` that follows from them.
+    //
+    // The page is laid out **once**, at the nominal width, and its own height at that width plus the design's
+    // chrome *is* the interface's nominal size — the composition's own proportions, derived exactly as
+    // ticket `53` derived the window rather than written down, so a table that grows moves the ratio instead
+    // of clipping. `layout` is given a width and nothing else: there is no window in this call for the
+    // composition to re-flow against, which is what makes "it never re-flows" a property of the code rather
+    // than a promise.
+    composition_.layout (kNominalPageWidth);
+    nominalSize_ = { kNominalWidth, composition_.totalHeight() + kHeaderHeight + kStripHeight + kReportBarHeight };
 
     setResizable (true, true);
-    setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
 
-    // Ticket `53`: the window opens at the size the composed page **actually needs** at the default width,
-    // so that "the whole instrument, at once, with nothing to scroll" is a property of the window rather
-    // than of a scroll position. The number is the layout's own — the same total `resized` computes, not a
-    // second estimate that could drift from it — and it is clamped to the resize limits, so a table that
-    // outgrows the screen opens a maximum-size window that scrolls rather than one off the screen.
-    //
-    // The first `setSize` is what lays the page out at all (`resized` is what calls `layout`), and it also
-    // keeps the old behaviour for a composition that is *shorter* than the default window: the page then
-    // fills the window, and the window stays the default.
-    setSize (kDefaultWidth, kDefaultHeight);
-    setSize (kDefaultWidth, juce::jlimit (kMinHeight, kMaxHeight,
-                                          composition_.totalHeight() + kHeaderHeight + kStripHeight
-                                              + kReportBarHeight));
+    // The limits are **scales of the nominal size**, because that is the only family of sizes this editor
+    // can draw: at the ratio the canvas fills the window exactly, and at any other size it is letterboxed.
+    // The constrainer holds the editor's own corner to it, and the standalone's window with it — JUCE's
+    // `StandaloneFilterWindow` asks the editor's constrainer for the sizes it is allowed to have.
+    setResizeLimits (juce::roundToInt (static_cast<float> (nominalSize_.x) * kMinScale),
+                     juce::roundToInt (static_cast<float> (nominalSize_.y) * kMinScale),
+                     juce::roundToInt (static_cast<float> (nominalSize_.x) * kMaxScale),
+                     juce::roundToInt (static_cast<float> (nominalSize_.y) * kMaxScale));
+
+    if (auto* constrainer = getConstrainer())
+        constrainer->setFixedAspectRatio (aspectRatio());
+
+    // One `setSize`, at the ratio: `resized()` is what lays the interface out at all, and the size it is
+    // given is the nominal one, so the canvas lands at scale 1 and the editor opens exactly as designed.
+    setSize (nominalSize_.x, nominalSize_.y);
 
     processor_.addChangeListener (this);
-    scrollToSection (0);
+    selectSection (0);
     refreshReport();
 }
 
@@ -359,19 +424,35 @@ ui::PoleZeroPlane& XerumAudioProcessorEditor::poleZeroPlane (const int filterSlo
     return *planes_[filterSlot];
 }
 
-void XerumAudioProcessorEditor::scrollToSection (const int index)
+void XerumAudioProcessorEditor::selectSection (const int index)
 {
     if (index < 0 || index >= sectionCount())
         return;
 
     currentSection_ = index;
     strip_.setSelected (index);
-
-    // The one page is taller than the window, so a tab is a scroll: the section's own top, which is what
-    // makes the strip a map of the composition rather than a menu of hidden pages.
-    const auto bounds = composition_.sectionBounds (index);
-    compositionViewport_.setViewPosition (0, juce::jmax (0, bounds.getY()));
     repaint();
+}
+
+double XerumAudioProcessorEditor::aspectRatio() const
+{
+    return nominalSize_.y > 0 ? static_cast<double> (nominalSize_.x) / static_cast<double> (nominalSize_.y) : 0.0;
+}
+
+juce::Rectangle<float> XerumAudioProcessorEditor::pageBoundsOnScreen() const
+{
+    return composition_.getBounds().toFloat().transformedBy (canvas_.getTransform());
+}
+
+juce::Rectangle<float> XerumAudioProcessorEditor::sectionBoundsOnScreen (const int index) const
+{
+    // The page's own coordinates into the canvas's, then the canvas's into the window's. Both steps are the
+    // same for every section, which is the whole of "the relative geometry is constant": one number,
+    // `interfaceScale()`, is the only thing that varies with the window.
+    return composition_.sectionBounds (index)
+        .translated (composition_.getX(), composition_.getY())
+        .toFloat()
+        .transformedBy (canvas_.getTransform());
 }
 
 void XerumAudioProcessorEditor::setReportDrawerOpen (const bool open)
@@ -517,7 +598,16 @@ void XerumAudioProcessorEditor::updateModulationArcs()
             if (auto* knob = control->knob())
             {
                 const auto found = depth.find (spec->modelPath);
-                knob->setModulationDepth (found == depth.end() ? 0.0 : found->second);
+                const auto amount = found == depth.end() ? 0.0 : found->second;
+
+                knob->setModulationDepth (amount);
+
+                // Ticket `59`: the envelope's graph is drawn from **the same rows through the same path**,
+                // so a row that moves the attack moves the picture's first segment exactly as far as it
+                // moves the knob's second arc. The two are the same `modelPath` and the same number, which
+                // is what "the graph shows it the way the arcs do" means here.
+                if (const auto stage = ui::envelopeStageForModelPath (spec->modelPath))
+                    envelopeCurve_.setStageModulation (*stage, amount);
             }
         }
     }
@@ -762,11 +852,44 @@ void XerumAudioProcessorEditor::importPreset()
 
 void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
 {
+    // The window behind the canvas. At the fixed ratio the canvas covers the whole of it, so this is only
+    // ever seen at the edges of a window a host forced off the ratio — and it is the design's own window
+    // background rather than a stretched or a clipped instrument (ticket `59`).
+    graphics.fillAll (ui::look::bg);
+}
+
+XerumAudioProcessorEditor::Canvas::Canvas (XerumAudioProcessorEditor& editor)
+    : editor_ (editor)
+{
+}
+
+void XerumAudioProcessorEditor::Canvas::paint (juce::Graphics& graphics)
+{
+    editor_.paintInterface (graphics);
+}
+
+void XerumAudioProcessorEditor::Canvas::setScale (const float scale, const juce::Point<int> origin)
+{
+    scale_ = scale;
+    origin_ = origin;
+
+    // The canvas *is* the nominal size; the transform is the whole of its relationship with the window, and
+    // it is the only transform this interface ever sets (the editor's own belongs to the host — see the
+    // class comment in the header).
+    setBounds (0, 0, editor_.nominalSize_.x, editor_.nominalSize_.y);
+    setTransform (juce::AffineTransform::scale (scale).translated (static_cast<float> (origin.x),
+                                                                  static_cast<float> (origin.y)));
+}
+
+void XerumAudioProcessorEditor::paintInterface (juce::Graphics& graphics)
+{
+    // Everything below is in **nominal** coordinates — the canvas's own — so this paint is identical at
+    // every window size and the transform above is what makes it bigger or smaller.
     graphics.fillAll (ui::look::bg);
 
     // The header: the design's gradient from `surface2` to `surface`, closed by the border.
     {
-        auto header = getLocalBounds().removeFromTop (kHeaderHeight);
+        auto header = nominalBounds().removeFromTop (kHeaderHeight);
 
         graphics.setGradientFill (juce::ColourGradient (ui::look::surface2, 0.0f,
                                                         static_cast<float> (header.getY()),
@@ -777,7 +900,7 @@ void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
         graphics.fillRect (header.removeFromBottom (1));
     }
 
-    auto header = getLocalBounds().removeFromTop (kHeaderHeight).reduced (kMargin, 0);
+    auto header = nominalBounds().removeFromTop (kHeaderHeight).reduced (kMargin, 0);
 
     // The wordmark: the design's logo mark — the accent, bold, letter-spaced.
     graphics.setColour (ui::look::accent);
@@ -810,7 +933,22 @@ void XerumAudioProcessorEditor::paint (juce::Graphics& graphics)
 
 void XerumAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds();
+    // Ticket `59`: the window in, the nominal canvas out. A window at the fixed ratio is filled **exactly**
+    // by the scaled canvas; a window a host forces off the ratio is letterboxed — the smaller of the two
+    // ratios, centred — rather than stretched, because a non-uniform scale draws circles as ellipses and
+    // that is a second defect rather than a smaller one. Either way nothing is clipped and the page fits.
+    const auto scale = juce::jmin (static_cast<float> (getWidth()) / static_cast<float> (nominalSize_.x),
+                                   static_cast<float> (getHeight()) / static_cast<float> (nominalSize_.y));
+    const auto origin = juce::Point<int> (
+        (getWidth() - juce::roundToInt (static_cast<float> (nominalSize_.x) * scale)) / 2,
+        (getHeight() - juce::roundToInt (static_cast<float> (nominalSize_.y) * scale)) / 2);
+
+    canvas_.setScale (scale, origin);
+
+    // Everything from here on is laid out inside the **nominal** rectangle, which has the same size at every
+    // window: that is what makes the composition's rectangles constants. `getLocalBounds()` is deliberately
+    // not read — it is the *window's* size, and reading it is how a layout starts depending on one.
+    auto area = nominalBounds();
 
     auto header = area.removeFromTop (kHeaderHeight).reduced (kMargin, 8);
 
@@ -855,29 +993,13 @@ void XerumAudioProcessorEditor::resized()
 
     area = area.reduced (kMargin, 0);
 
-    // The composed page. It is one page — the design's whole instrument — and ticket `53` packs it so that
-    // it fits this window at the default size. The layout is given the viewport's **visible** size, and
-    // both of those numbers depend on whether the scroll bars are showing, so it runs to a fixed point
-    // rather than assuming either.
-    compositionViewport_.setBounds (area);
-
-    auto composeWidth = compositionViewport_.getMaximumVisibleWidth();
-    auto composeHeight = compositionViewport_.getMaximumVisibleHeight();
-
-    for (int pass = 0; pass < 4; ++pass)
-    {
-        composition_.layout (composeWidth, composeHeight);
-
-        const auto visibleWidth = compositionViewport_.getMaximumVisibleWidth();
-        const auto visibleHeight = compositionViewport_.getMaximumVisibleHeight();
-
-        if (visibleWidth <= 0 || visibleHeight <= 0
-            || (visibleWidth == composeWidth && visibleHeight == composeHeight))
-            break;
-
-        composeWidth = visibleWidth;
-        composeHeight = visibleHeight;
-    }
+    // The composed page. It is one page — the design's whole instrument — laid out at the nominal width,
+    // which is the width this area has at **every** window size, and exactly as tall as the area: the
+    // nominal size was derived from this very call in the constructor. There is no viewport and no
+    // fixed-point search for one, because nothing about this layout depends on whether a scroll bar is
+    // showing — and nothing can scroll, since the page is the size of the space it was given.
+    composition_.setBounds (area);
+    composition_.layout (area.getWidth());
 
     // The drawer: the lower part of the page, over whatever the page is showing and above the bar. It is a
     // component of this window rather than a dialog, which is what "never a modal" means in practice.
