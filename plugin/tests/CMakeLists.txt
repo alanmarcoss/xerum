@@ -20,7 +20,8 @@ add_executable(xerum-plugin-tests
     third_party_test.cpp
     mod_sources_test.cpp
     fidelity_test.cpp
-    bank_test.cpp)
+    bank_test.cpp
+    content_gate_test.cpp)
 
 target_sources(xerum-plugin-tests PRIVATE ${XERUM_PLUGIN_SOURCES})
 

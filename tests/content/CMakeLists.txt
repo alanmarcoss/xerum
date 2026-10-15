@@ -1,4 +1,5 @@
 add_executable(xerum-content-tests
+    off_thread_work_test.cpp
     table_library_test.cpp)
 
 target_link_libraries(xerum-content-tests PRIVATE

@@ -7,6 +7,8 @@
 
 #include <catch2/catch_approx.hpp>
 
+#include <cstdio>
+
 using namespace xerum::plugin;
 using namespace xerum::plugin::tests;
 
@@ -103,8 +105,13 @@ TEST_CASE ("automation reaches the audio thread mid-render", "[plugin][audio]")
                                            processor.setParameterValue ("Oscillator0/plainParams/kParamVolume", 0.25);
                                    });
 
-    const auto early = std::vector<float> (automated.begin(), automated.begin() + 20 * 512);
-    const auto late = std::vector<float> (automated.begin() + 20 * 512, automated.end());
+    // **The boundary is the plugin's own latency** (ticket `58`). Block 20 is handed its parameters at host
+    // time `20 x 512`, and the master ceiling delays what it passes by `getLatencySamples()`, so the change
+    // reaches the *output* that many samples later. Slicing at the raw block edge would put 72 samples of
+    // the old, louder level inside `late` and measure the declared latency instead of the automation.
+    const auto boundary = 20 * 512 + processor.getLatencySamples();
+    const auto early = std::vector<float> (automated.begin(), automated.begin() + boundary);
+    const auto late = std::vector<float> (automated.begin() + boundary, automated.end());
 
     // The note is held throughout, so the drop is the automation and nothing else.
     CHECK (peakOf (early) > 0.1);
@@ -208,4 +215,188 @@ TEST_CASE ("a bus layout other than stereo or mono is refused", "[plugin][audio]
     outputs.outputBuses.clear();
     outputs.outputBuses.add (juce::AudioChannelSet::create5point1());
     CHECK_FALSE (processor.isBusesLayoutSupported (outputs));
+}
+
+//==============================================================================
+// Ticket `58` — the master ceiling.
+
+namespace
+{
+
+/// `voices` notes struck together at the first block and held until `releaseBlock`. The dev's report is
+/// "the audio turns red when more than one key is held", so the stimulus is chordal, not a single note.
+std::function<void (juce::MidiBuffer&, int)> chord (const int voices, const int releaseBlock)
+{
+    return [voices, releaseBlock] (juce::MidiBuffer& events, const int block)
+    {
+        if (block == 0)
+            for (int voice = 0; voice < voices; ++voice)
+                events.addEvent (juce::MidiMessage::noteOn (1, 36 + 3 * voice, static_cast<juce::uint8> (127)), 0);
+
+        if (block == releaseBlock)
+            for (int voice = 0; voice < voices; ++voice)
+                events.addEvent (juce::MidiMessage::noteOff (1, 36 + 3 * voice), 0);
+    };
+}
+
+/// The default ceiling as a linear amplitude, computed from the documented figure rather than read out of
+/// the limiter the test is checking.
+double ceilingLinear()
+{
+    return std::pow (10.0, xerum::dsp::kMasterCeilingDb / 20.0);
+}
+
+/// Render a processor under a stimulus and return the peak across **both** channels. The ceiling is a
+/// stereo-linked master stage, so a one-channel peak would not establish anything about the other.
+double peakStereo (const int voices)
+{
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+
+    // The ceiling is off: these cases measure the engine's own headroom, not the limiter's.
+    processor.setParameterValue ("Master0/plainParams/kParamLimitOn", 0.0);
+
+    const auto rendered = renderStereo (processor, 24, 512, chord (voices, 20));
+    return std::max (peakOf (rendered.first), peakOf (rendered.second));
+}
+
+} // namespace
+
+TEST_CASE ("the ceiling holds a sixteen-voice chord under full scale, and the chord exceeds it without",
+           "[plugin][audio][limiter]")
+{
+    const auto play = [] (const bool ceilingOn)
+    {
+        XerumAudioProcessor processor;
+        processor.prepareToPlay (48000.0, 512);
+        processor.setParameterValue ("Master0/plainParams/kParamLimitOn", ceilingOn ? 1.0 : 0.0);
+
+        const auto rendered = renderStereo (processor, 32, 512, chord (16, 28));
+        return std::make_pair (peakOf (rendered.first), peakOf (rendered.second));
+    };
+
+    const auto open = play (false);
+    const auto limited = play (true);
+
+    const auto ceiling = ceilingLinear();
+
+    // The measured numbers, in the house style the bank test uses, so a run carries the finding rather
+    // than only a pass.
+    std::fprintf (stderr,
+                  "[limiter] polyphony stress, 16 voices: peak with the ceiling off %.6f / %.6f, "
+                  "with it on %.6f / %.6f\n",
+                  open.first, open.second, limited.first, limited.second);
+
+    // **Red before.** The same sixteen-voice chord with the ceiling off exceeds full scale — the dev's own
+    // report, measured rather than taken on trust. This is the counterfactual that makes the assertion
+    // below bite: it is not describing an already-safe signal.
+    CHECK (open.first > 1.0);
+    CHECK (open.second > 1.0);
+
+    // **Green after.** The ceiling is an absolute maximum at the sample level, on both channels, not a
+    // claim about a meter. The epsilon is float rounding on `ceiling / magnitude * magnitude`.
+    CHECK (limited.first <= ceiling + 1.0e-6);
+    CHECK (limited.second <= ceiling + 1.0e-6);
+
+    // And it did not simply crush the render: the peak still reaches the ceiling.
+    CHECK (limited.first > ceiling * 0.95);
+}
+
+TEST_CASE ("a render that never reaches the ceiling is bit-identical with it on and off",
+           "[plugin][audio][limiter]")
+{
+    const auto make = [] (const bool ceilingOn)
+    {
+        auto processor = std::make_unique<XerumAudioProcessor>();
+        processor->prepareToPlay (48000.0, 512);
+        processor->setParameterValue ("Master0/plainParams/kParamLimitOn", ceilingOn ? 1.0 : 0.0);
+
+        // Quiet enough that the limiter has nothing to do, which is the case this asserts about.
+        processor->setParameterValue ("Global0/plainParams/kParamMasterVolume", 0.4);
+        return processor;
+    };
+
+    auto limited = make (true);
+    auto open = make (false);
+
+    const auto latency = limited->getLatencySamples();
+
+    // **The latency is declared, and it does not move with the switch.** A lookahead limiter delays the
+    // signal by its lookahead; the delay line runs whether the ceiling is enforced or not, so a host that
+    // has compensated for it stays compensated when the parameter moves under automation.
+    CHECK (latency == 72);                                            // 1.5 ms at 48 kHz
+    CHECK (open->getLatencySamples() == latency);
+
+    const auto limitedRender = render (*limited, 24, 512, noteThenRelease (60, 16));
+    const auto openRender = render (*open, 24, 512, noteThenRelease (60, 16));
+
+    const auto ceiling = ceilingLinear();
+
+    REQUIRE (peakOf (openRender) > 0.05);        // it really rendered
+    REQUIRE (peakOf (openRender) < ceiling);     // and never came near the ceiling
+
+    REQUIRE (limitedRender.size() == openRender.size());
+
+    // **Sample for sample, at the same index.** No shift: the delay line runs whether the ceiling is
+    // enforced or not, so both renders carry the same declared latency and the invariant is literally
+    // "these two arrays are equal", not "these two arrays are equal once one is moved". **Exact equality**,
+    // not a tolerance — the whole point is that a preset which already sat below the ceiling is not
+    // rewritten at all.
+    for (std::size_t i = 0; i < openRender.size(); ++i)
+    {
+        if (limitedRender[i] != openRender[i])
+            FAIL ("sample " << i << " was " << limitedRender[i] << " with the ceiling, " << openRender[i] << " without");
+    }
+}
+
+TEST_CASE ("the ceiling is a parameter, saved and restored with the patch", "[plugin][audio][limiter]")
+{
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+
+    // **Default on**, because the dev asked for the red to stop, at the reference's own ceiling.
+    CHECK (processor.parameterValue ("Master0/plainParams/kParamLimitOn") == 1.0);
+    CHECK (processor.parameterValue ("Master0/plainParams/kParamLimitCeiling")
+           == Catch::Approx (xerum::dsp::kMasterCeilingDb));
+
+    // It is a control, not a constant: a user who wants the reference's own output turns it off, and one
+    // who wants a different ceiling moves it.
+    processor.setParameterValue ("Master0/plainParams/kParamLimitOn", 0.0);
+    processor.setParameterValue ("Master0/plainParams/kParamLimitCeiling", -6.0);
+
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    REQUIRE (state.getSize() > 0);
+
+    XerumAudioProcessor restored;
+    restored.prepareToPlay (48000.0, 512);
+    restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+
+    CHECK (restored.parameterValue ("Master0/plainParams/kParamLimitOn") == 0.0);
+    CHECK (restored.parameterValue ("Master0/plainParams/kParamLimitCeiling") == Catch::Approx (-6.0));
+}
+
+TEST_CASE ("the gain-staging finding: the voices sum with no headroom, so the second key clips",
+           "[plugin][audio][limiter]")
+{
+    // This is the report the ticket asks for, measured rather than asserted from reasoning, and it is
+    // deliberately **not** a change to the engine: whether the voices are too hot is a separate decision.
+    const auto one = peakStereo (1);
+    const auto two = peakStereo (2);
+    const auto sixteen = peakStereo (16);
+
+    CHECK (one > 0.05);            // one voice renders
+    CHECK (one < 1.0);             // and does not clip on its own
+    CHECK (two > 1.0);             // **the second voice is the one that goes red**
+
+    std::fprintf (stderr, "[limiter] gain staging, ceiling off: 1 voice %.6f, 2 voices %.6f, 16 voices %.6f\n",
+                  one, two, sixteen);
+
+    // Near-linear summation, sub-linear only because the voices are different notes with different phases:
+    // the voice bus has no per-voice headroom and no mix-bus trim, so N voices are about N times one voice.
+    CHECK (two == Catch::Approx (2.0 * one).epsilon (0.2));
+    CHECK (sixteen > 4.0 * one);
+
+    // The ceiling is what stops that reaching the host's meters, which is the whole of ticket 58's ask.
+    CHECK (sixteen <= 32.0);
 }

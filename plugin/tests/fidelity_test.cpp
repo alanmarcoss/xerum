@@ -1188,6 +1188,27 @@ Stereo renderStimulus (XerumAudioProcessor& processor, const int sampleRate, con
     return out;
 }
 
+/// Drop the first `samples` from each channel.
+///
+/// Ticket `58`: xerum's master ceiling is a lookahead limiter, so the plugin delays its output by exactly
+/// `getLatencySamples()` — which a host compensates for automatically (that is what declaring it buys) and
+/// a render outside a host has to compensate for explicitly, by the same amount. The extra samples are
+/// rendered at the end so that dropping the front leaves a signal of the capture's own length, on the
+/// capture's own clock.
+void dropLeading (Stereo& audio, const int samples)
+{
+    if (samples <= 0)
+        return;
+
+    const auto count = static_cast<std::size_t> (samples);
+
+    if (audio.left.size() > count)
+        audio.left.erase (audio.left.begin(), audio.left.begin() + static_cast<std::ptrdiff_t> (count));
+
+    if (audio.right.size() > count)
+        audio.right.erase (audio.right.begin(), audio.right.begin() + static_cast<std::ptrdiff_t> (count));
+}
+
 /// One render of one fixture at one configuration, in a fresh processor — the way the harness uses a fresh
 /// process per render, so nothing carries between two rows of the sweep.
 struct RenderResult
@@ -1219,11 +1240,44 @@ RenderResult renderFixture (const Corpus& c, const PreparedFixture& prepared,
     if (! applyAndVerify (processor, prepared, result.error))
         return result;
 
-    result.audio = renderStimulus (processor, sampleRate, blockSize, c.captureSeconds, c.captureNote, c.capturePreRoll);
+    // **Ticket `58`: this layer bypasses the master ceiling, and compensates its latency.**
+    //
+    // *Bypassed*, because the golden is a capture of the **reference**, which has no such stage — the
+    // reference's schema has no limiter leaf at all. Comparing a limited render against an unlimited
+    // golden would measure the limiter rather than the engine, which is the one thing this layer must not
+    // do. The alternative the ticket offers — regenerating the corpus with the ceiling on — would bake
+    // xerum's divergence into the reference's side of the comparison, and the divergence would stop being
+    // measurable. So: off, stated here and in `docs/test-strategy.md`.
+    //
+    // The ceiling is set **after** the document is applied, because `applyDocument` writes every
+    // parameter — and a reference preset carries no `Master0` leaf, so it resolves the ceiling back to
+    // its default, which is on.
+    //
+    // *Compensated*, because the stage delays by its lookahead whether the ceiling is enforced or not:
+    // the delay line is what makes the declared latency constant, which is what a host's delay
+    // compensation can rely on. So the render is taken `latency` samples long and its front is dropped,
+    // putting xerum's output on the stimulus's own clock.
+    processor.setParameterValue ("Master0/plainParams/kParamLimitOn", 0.0);
+
+    const auto latency = processor.getLatencySamples();
+    const auto captureLength = static_cast<juce::int64> (c.captureSeconds * sampleRate);
+
+    // A block of slack on the end, so the front-drop cannot leave the render a sample short of the golden.
+    const auto extended = static_cast<double> (captureLength + latency + blockSize) / static_cast<double> (sampleRate);
+
+    result.audio = renderStimulus (processor, sampleRate, blockSize, extended, c.captureNote, c.capturePreRoll);
+    dropLeading (result.audio, latency);
+
+    // Exactly the capture's own length. The extra block above is there so the front-drop cannot leave the
+    // render short; it is trimmed off here, because the comparison requires the two signals to be the same
+    // length *and* on the same clock, and a render a few samples long reads as a length mismatch rather
+    // than as the alignment it is.
+    result.audio.left.resize (static_cast<std::size_t> (captureLength));
+    result.audio.right.resize (static_cast<std::size_t> (captureLength));
+
     result.ok = true;
     return result;
 }
-
 /// One (fixture, rate, block) measurement.
 struct Measurement
 {

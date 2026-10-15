@@ -191,6 +191,11 @@ enum class SectionKind
 /// `band` is the composition row the section sits in: sections sharing a band are laid out side by side in
 /// one row, in this list's order. That is how the design's `bottom-row` — the effects cards and the macro
 /// strip — is expressed, and it is the reason the two are one row rather than two.
+///
+/// `flexible` is the design's **`1fr`** — the grid row that takes the window's slack — as a fact about a
+/// section rather than about a section *kind* (ticket `57`): the design's grid names a row, not a widget,
+/// and which row it is has changed since ticket `53` without the composition's shape changing at all.
+/// At most one entry sets it; the page's slack goes to that section and to nothing else.
 struct SectionSpec
 {
     std::string id;                  ///< the design's own name: `osc-row`, `filter-section`, `mod-panel`, …
@@ -198,12 +203,28 @@ struct SectionSpec
     SectionKind kind { SectionKind::Panels };
     std::vector<std::string> holds;  ///< the groups it claims; empty means "whatever is left"
     std::string band;                ///< sections sharing a band sit side by side
+    bool flexible { false };         ///< the design's `1fr`: this section takes the window's slack
 };
 
-/// The design's composition, in its order: `osc-row` → `noise-sub-row` → `filter-section` → `mod-panel` →
-/// `bottom-row` (the effects cards beside the macro strip) → the default section. The FX section claims a
-/// group this table does not have — xerum's bridge exposes no effect parameters — so it resolves to no
-/// panels and is not drawn; it stays in the data so the row completes itself the day the table has one.
+/// The design's composition, in its order: `osc-row` → `noise-sub-row` → `env-section` → `filter-section` →
+/// `bottom-row` (the effects cards beside the macro strip and the fall-through) → `mod-panel`. The FX
+/// section claims a group this table does not have — xerum's bridge exposes no effect parameters — so it
+/// resolves to no panels and is not drawn; it stays in the data so the row completes itself the day the
+/// table has one.
+///
+/// ## Ticket `57`: the amplitude envelope's own section, and the matrix at the end
+///
+/// Two editorial changes to the same data, and no change to the plan's rules:
+///
+///   * the **amplitude envelope** gets its own section, early — directly after the noise/sub row and
+///     before the filters — with its panel at full width, so the four controls a player touches on every
+///     patch are the design's largest knobs (`KnobSize::Default`, 44px) in a band of their own rather
+///     than a half-width panel sharing the least prominent row on the page;
+///   * the **modulation matrix** gives up the flexible row (that is `flexible` below, which is now the
+///     envelope's), shows four of its 64 rows instead of eight, and moves to the **end** of the
+///     composition, after the macros — the place the design's own grid has no `1fr` at all. Its `N / 64`
+///     tag is unchanged and still reports the geometry, because the tag is how a compact matrix says what
+///     it is not showing.
 std::vector<SectionSpec> designedComposition();
 
 /// The leaf name of a container slot's frame position. Named here because the oscillator head's arrows
@@ -239,12 +260,17 @@ struct PanelPlan
 /// One resolved section: the composition entry, the panels it holds (indices into `InterfacePlan::panels`,
 /// in the table's order), and nothing else. Resolved — a section whose `holds` matched no group is not in
 /// the plan at all, because a section with no panels would be an empty box rather than an arrangement.
+///
+/// `flexible` is the composition entry's own flag carried through: the layout cannot ask the *data* which
+/// section takes the window's slack, because by the time it lays anything out the composition is these
+/// resolved sections and the `SectionSpec` list is gone.
 struct SectionPlan
 {
     std::string id;
     std::string title;
     SectionKind kind { SectionKind::Panels };
     std::string band;
+    bool flexible { false };
     std::vector<int> panels;
 };
 

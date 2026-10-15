@@ -8,6 +8,7 @@ add_executable(xerum-dsp-tests
     noise_osc_test.cpp
     sub_osc_test.cpp
     fx_rack_test.cpp
+    limiter_test.cpp
     wavetable_write_test.cpp
     spectral_morph_test.cpp)
 

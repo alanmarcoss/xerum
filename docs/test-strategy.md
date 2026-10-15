@@ -132,6 +132,20 @@ Two limitations are recorded rather than left implicit. The manifest's `uncovere
 can cover them: three of the sixteen FX classes are unexercised by this layer. And a golden exists only at
 48 kHz / block 512, so every other configuration is a measurement *through* the resampler.
 
+**Ticket `58`'s master ceiling is bypassed here, and its latency is compensated.** This layer is the one
+place the divergence had to be decided, because the golden is a capture of the **reference**, which has no
+such stage — the reference's schema has no limiter leaf at all. So each render sets `Master Limiter` to off
+*after* the fixture's document is applied (a reference preset carries no `Master0` leaf, so applying one
+resolves the ceiling back to its on default), and then compensates the plugin's declared latency: the plugin
+is a lookahead limiter and delays its output by `getLatencySamples()` whether the ceiling is enforced or not,
+so the render is taken that many samples long and its front is dropped, putting xerum's output on the
+stimulus's own clock. The other option the ticket offered — regenerating the corpus with the ceiling on —
+would bake xerum's divergence into the reference's side of the comparison, and the divergence would stop
+being measurable; bypassing keeps this layer measuring the *engine*, which is what it exists for. The
+`[fidelity-stimulus]` case is untouched by the compensation and still requires byte-identity, because both of
+its sides render through the same plugin with the same declared latency. The stage itself, its defaults and
+their sources, and the measured numbers are in `plugin/README.md` under ticket `58`.
+
 The whole report is written to `~/.xerum-fixtures/fidelity/fidelity-report.tsv` — outside the repository,
 per ticket `10` — and names the executable that produced it;
 `XERUM_FIDELITY_DUMP=<dir>` additionally writes the exact signal pair each metric was computed on, so a

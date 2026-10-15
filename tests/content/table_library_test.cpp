@@ -7,6 +7,8 @@
 
 #include "table_library.h"
 
+#include <sys/stat.h>
+
 #include <filesystem>
 
 using namespace xerum::content;
@@ -105,6 +107,42 @@ TEST_CASE ("roots are searched in order and only real ones are kept", "[content]
 
     CHECK (lib.roots().size() == 1);
     CHECK (lib.loadTable ("Basic Shapes.wav").found());
+}
+
+TEST_CASE ("a root that denies reads is reported, and the search goes on", "[content]")
+{
+    // Ticket `56`. `stat` on anything inside a directory with its permissions taken away answers EACCES,
+    // and the throwing `exists()` turned that into a `filesystem_error` that reached the plugin's
+    // constructor and aborted the host that instantiated it. It is a value here: a path that refused, and
+    // a search that carries on to the roots behind it.
+    const auto refused = std::filesystem::temp_directory_path() / "xerum-denied-root-test";
+
+    std::filesystem::remove_all (refused);
+    std::filesystem::create_directories (refused / "Tables");
+    std::filesystem::copy_file (std::filesystem::path (XERUM_CONTENT_FIXTURE_DIR) / "Tables" / "Basic Shapes.wav",
+                               refused / "Tables" / "Basic Shapes.wav");
+    REQUIRE (::chmod (refused.c_str(), 0) == 0);
+
+    TableLibrary lib;
+    lib.addRoot (refused);
+    lib.addRoot (XERUM_CONTENT_FIXTURE_DIR);   // the root behind it, which can answer
+
+    const auto lookup = lib.loadTable ("/Basic Shapes.wav");   // must not throw, must not abort
+
+    ::chmod (refused.c_str(), 0755);
+
+    const auto problems = lib.problems();
+
+    std::filesystem::remove_all (refused);
+
+    // The root behind the refused one answered, so a refusal costs only what was in the refused root.
+    REQUIRE (lookup.found());
+    CHECK (lookup.path.string().rfind (XERUM_CONTENT_FIXTURE_DIR, 0) == 0);
+
+    // And the refusal is on the record, with the path that refused and why.
+    REQUIRE_FALSE (problems.empty());
+    CHECK (problems.front().path.string().rfind (refused.string(), 0) == 0);
+    CHECK (problems.front().reason.find ("could not be read") != std::string::npos);
 }
 
 TEST_CASE ("a table declaring spectral morphing loads like any other", "[content]")

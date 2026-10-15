@@ -42,6 +42,34 @@ std::string slotPrefix (const int slot)
 /// How long the message thread waits for an in-flight block before it gives up and keeps the memory.
 constexpr int kHandshakeTimeoutMs = 250;
 
+/// The roots xerum offers its content library, in the import contract's order (`docs/preset-import-contract.md`
+/// §5): a user-configured root, then the reference instrument's content tree, then xerum's own, and last the
+/// source tree, which only exists in a development checkout.
+///
+/// These are **candidates**. Nothing here is examined — no `exists`, no directory listing — because asking
+/// the filesystem is the thing that used to hang the host (ticket `56`), and the four paths above are
+/// guesses until it answers. `TableLibrary::addRoot` filters them where it is safe to ask.
+std::vector<std::filesystem::path> contentRootCandidates()
+{
+    std::vector<std::filesystem::path> roots;
+
+    if (const auto userRoot = juce::SystemStats::getEnvironmentVariable ("XERUM_CONTENT_ROOT", {});
+        userRoot.isNotEmpty())
+        roots.emplace_back (userRoot.toStdString());
+
+    roots.emplace_back ("/Library/Audio/Presets/Xfer Records/Serum 2 Presets");
+
+    const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+    roots.emplace_back (home.getChildFile ("Library/Application Support/xerum/content").getFullPathName().toStdString());
+
+    // A shipped build has no source tree, and `XERUM_CONTENT_DIR` is then not defined at all: an invalid
+    // `File` is no root, and offering one would put an empty entry in the list the report shows.
+    if (const auto source = sourceContentDir(); source != juce::File())
+        roots.emplace_back (source.getFullPathName().toStdString());
+
+    return roots;
+}
+
 constexpr int kAmpEnvelopeSlot = 0;
 
 /// The document value one **modulation field's** live value stands for, or `nullopt` when nothing should
@@ -108,18 +136,11 @@ XerumAudioProcessor::XerumAudioProcessor()
     setParameterTree (bridge_.releaseTree());
     resolveLayout();
 
-    // Content roots, in the import contract's order (§5 / `content/table_library.h`): a user-configured
-    // root, then the reference instrument's content tree, then xerum's own, and last the source tree,
-    // which only exists in a development checkout.
-    if (const auto userRoot = juce::SystemStats::getEnvironmentVariable ("XERUM_CONTENT_ROOT", {});
-        userRoot.isNotEmpty())
-        library_.addRoot (userRoot.toStdString());
-
-    library_.addRoot ("/Library/Audio/Presets/Xfer Records/Serum 2 Presets");
-
-    const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
-    library_.addRoot (home.getChildFile ("Library/Application Support/xerum/content").getFullPathName().toStdString());
-    library_.addRoot (sourceContentDir().getFullPathName().toStdString());
+    // Content roots, in the import contract's order (§5 / `content/table_library.h`). The list is built
+    // here and *read* here; the filesystem is not asked anything about it, because this is the host's
+    // thread inside a constructor (ticket 56 — see the header note).
+    library_ = std::make_shared<content::TableLibrary>();
+    contentRoots_ = contentRootCandidates();
 
     // Both arrays cover the *whole* parameter table — the interface surface and the matrix surface — and
     // a spec's `paramIndex` is the index into them.
@@ -134,7 +155,8 @@ XerumAudioProcessor::XerumAudioProcessor()
         bridge_.parameters()[static_cast<std::size_t> (spec.paramIndex)]->addListener (this);
 
     // Only when a message loop exists and this is its thread — a bare `XerumAudioProcessor` in a unit
-    // test has neither, and a host has both. The timer is what drains the coalesced matrix flag.
+    // test has neither, and a host has both. The timer is what drains the coalesced matrix flag, and what
+    // publishes a content resolution that outlived its bounded wait (ticket 56).
     ensureTimer();
 
     // The init patch: no document at all, so every parameter resolves through `resolveAbsent`, and the
@@ -176,6 +198,10 @@ void XerumAudioProcessor::parameterGestureChanged (int, bool) {}
 void XerumAudioProcessor::timerCallback()
 {
     flushModulation();
+
+    // Ticket 56: a content resolution whose bounded wait expired publishes here, when the filesystem
+    // finally answered. Cheap when there is nothing pending — one atomic load.
+    flushContent();
 }
 
 void XerumAudioProcessor::ensureTimer()
@@ -215,6 +241,11 @@ void XerumAudioProcessor::resolveLayout()
     layout_.portamentoCurve = find ("global0.portamentocurve");
     layout_.portaAlways = find ("global0.portaalways");
     layout_.masterVolume = find ("global0.mastervolume");
+
+    // Ticket `58`: xerum's own two paths. The reference's schema has no limiter leaf, so these never
+    // resolve against a preset — they resolve against the bridge's own table, which is the point.
+    layout_.limitOn = find ("master0.limiton");
+    layout_.limitCeiling = find ("master0.limitceiling");
 
     for (int slot = 0; slot < dsp::kOscillatorSlots; ++slot)
     {
@@ -309,6 +340,15 @@ void XerumAudioProcessor::prepareToPlay (const double sampleRate, const int maxi
     // The pool is sized here and never on the audio thread: `VoiceEngine::prepare` rebuilds the voice
     // pool and the modulation matrix, and the matrix allocates (ticket 28's contract).
     engine_.prepare (sampleRate_, maxBlock_, polyphony);
+
+    // **The master ceiling's latency, declared to the host** (ticket `58`). A lookahead limiter delays the
+    // signal by its lookahead, and an unreported delay breaks every host's delay compensation — which is a
+    // worse bug than the clipping this stage exists to fix. The number is the lookahead in samples at this
+    // rate, and it does **not** move when the on/off parameter does: the delay line runs either way, so a
+    // host that has compensated for it stays compensated.
+    limiter_.prepare (sampleRate_);
+    setLatencySamples (limiter_.latencySamples());
+
     prepared_ = 1;
 
     masterGain_ = 1.0;
@@ -472,6 +512,15 @@ void XerumAudioProcessor::refreshSettingsFromParameters() noexcept
         filter.poleZero = poleZero_[static_cast<std::size_t> (slot)];
     }
 
+    // **The master ceiling** reads the same parameter snapshot, so a host automating it reaches the audio
+    // thread without a lock. `setEnabled` re-arms the detector (a fill, never an allocation) and does not
+    // touch the reported latency, which stays where `prepareToPlay` put it.
+    if (layout_.limitOn >= 0)
+        limiter_.setEnabled (amount (layout_.limitOn) != 0.0);
+
+    if (layout_.limitCeiling >= 0)
+        limiter_.setCeilingDb (amount (layout_.limitCeiling));
+
     engine_.setSettings (next);
     settings_ = next;
 }
@@ -607,6 +656,28 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         engine_.process (left_.data() + done, right_.data() + done, chunk);
     }
 
+    // The master gain is applied to the engine's own stereo render **before** the ceiling, because the
+    // ceiling is a master stage: it has to see what the master gain produced, not the host's channel
+    // mapping of it. The ramp is unchanged — one step per sample across the block.
+    {
+        auto gain = gainStart;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            left_[static_cast<std::size_t> (i)] *= static_cast<float> (gain);
+            right_[static_cast<std::size_t> (i)] *= static_cast<float> (gain);
+            gain += gainStep;
+        }
+    }
+
+    masterGain_ = gainTarget;
+
+    // **The ceiling, last** (ticket `58`). Off, `process` is a delay line and nothing else; on and not
+    // engaging, it multiplies by exactly `1.0f`. Either way a preset that already sat below the ceiling
+    // comes out unchanged. The delay line runs whatever the on/off parameter says, so the latency
+    // declared in `prepareToPlay` is the same number with the stage on or off.
+    limiter_.process (left_.data(), right_.data(), numSamples);
+
     // Channel 0 is the left, channel 1 the right. A mono output bus — which `isBusesLayoutSupported`
     // allows — takes their mean, and so does any channel past the second, because that is the only
     // honest answer for a layout xerum does not render. With no spread the two channels are identical, so
@@ -614,7 +685,6 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     for (int channel = 0; channel < numChannels; ++channel)
     {
         auto* out = buffer.getWritePointer (channel);
-        auto gain = gainStart;
         const bool leftChannel = channel == 0 && numChannels > 1;
         const bool rightChannel = channel == 1;
 
@@ -623,23 +693,14 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             const auto* source = rightChannel ? right_.data() : left_.data();
 
             for (int i = 0; i < numSamples; ++i)
-            {
-                out[i] = source[static_cast<std::size_t> (i)] * static_cast<float> (gain);
-                gain += gainStep;
-            }
+                out[i] = source[static_cast<std::size_t> (i)];
         }
         else
         {
             for (int i = 0; i < numSamples; ++i)
-            {
-                out[i] = 0.5f * (left_[static_cast<std::size_t> (i)] + right_[static_cast<std::size_t> (i)])
-                         * static_cast<float> (gain);
-                gain += gainStep;
-            }
+                out[i] = 0.5f * (left_[static_cast<std::size_t> (i)] + right_[static_cast<std::size_t> (i)]);
         }
     }
-
-    masterGain_ = gainTarget;
 }
 
 //==============================================================================
@@ -799,11 +860,76 @@ int XerumAudioProcessor::interpolateAfterLoadOf (const model::PresetDocument& do
 
 void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
 {
-    std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> next;
+    // Whatever was in flight belongs to the *previous* document, so it goes now. Its result, if it ever
+    // arrives, is not this document's answer and `flushContent` will not publish it.
+    pendingPlan_.reset();
+    pendingResolved_.reset();
+    pendingFinished_.reset();
+
+    auto plan = std::make_shared<ContentPlan> (planContent (document));
+
+    // Nothing to read: every slot carries its table inline or wants none. No thread, no wait — and this is
+    // the case where ticket 56 changes nothing at all.
+    if (plan->references.empty())
+    {
+        ResolvedContent nothing;
+        publishResolved (*plan, nothing);
+        return;
+    }
+
+    auto resolved = std::make_shared<ResolvedContent>();
+    const auto finished = std::make_shared<std::atomic<bool>> (false);
+    const auto library = library_;
+    const auto roots = contentRoots_;
+
+    contentWork_.submit ([library, roots, plan, resolved]
+    {
+        // **Every question the filesystem is asked is asked here.** Which roots are readable, the walk
+        // that tells an exact hit from a lucky one, the read itself: ticket 56's whole substance is that
+        // this does not run on the thread that asked for it, and that that thread does not wait for it
+        // longer than its budget.
+        for (const auto& root : roots)
+            library->addRoot (root);
+
+        resolved->lookups.reserve (plan->references.size());
+
+        for (const auto& reference : plan->references)
+            resolved->lookups.push_back (library->loadTable (reference));
+
+        resolved->problems = library->problems();
+    }, finished);
+
+    if (contentWork_.waitForNewest (kContentResolveBudgetMs) && finished->load (std::memory_order_acquire))
+    {
+        publishResolved (*plan, *resolved);
+        return;
+    }
+
+    // The root has not answered inside the budget. Nothing already published is disturbed, the report
+    // says exactly what is missing and why, and the message thread's timer publishes this resolution —
+    // with its own report entries — when the filesystem finally answers.
+    //
+    // `waitForNewest` can also be true here with the flag still shut: another thread's resolution
+    // superseded this one, and *that* work is the one that will be published. Either way this call leaves
+    // the document's tables as they are.
+    addReportEntry (report_, model::Severity::High, "content", "contentRoots",
+                    "the content root did not answer within " + std::to_string (kContentResolveBudgetMs)
+                    + " ms, so the oscillator tables are still being resolved; they will load when the "
+                    "filesystem answers");
+
+    pendingPlan_ = std::move (plan);
+    pendingResolved_ = std::move (resolved);
+    pendingFinished_ = finished;
+}
+
+XerumAudioProcessor::ContentPlan XerumAudioProcessor::planContent (const model::PresetDocument& document)
+{
+    ContentPlan plan;
 
     for (int slot = 0; slot < dsp::kOscillatorSlots; ++slot)
     {
-        const auto prefix = slotPrefix (slot);
+        auto& wanted = plan.slots[static_cast<std::size_t> (slot)];
+        wanted.prefix = slotPrefix (slot);
 
         if (! slotSelectsWavetable (document, slot))
         {
@@ -813,13 +939,12 @@ void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
             continue;
         }
 
-        const auto tablePath = prefix + "/relativePathToWT";
-        std::string reference;
+        wanted.tablePath = wanted.prefix + "/relativePathToWT";
 
-        if (const auto found = document.parameters.find (tablePath); found != document.parameters.end())
-            modelText (found->second, reference);
+        if (const auto found = document.parameters.find (wanted.tablePath); found != document.parameters.end())
+            modelText (found->second, wanted.reference);
 
-        const bool carriesEmbedded = document.parameters.find (prefix + "/embeddedWTData[0]")
+        const bool carriesEmbedded = document.parameters.find (wanted.prefix + "/embeddedWTData[0]")
                                      != document.parameters.end();
 
         // **The embedded table comes first**, because contract §5 says an embedded asset takes precedence
@@ -828,68 +953,154 @@ void XerumAudioProcessor::resolveContent (const model::PresetDocument& document)
         // `interpolateAfterLoad` applies at all: ticket 37 measured the reference ignoring it for a table
         // referenced by path, so the morph is decided here, once, at bind — 2 MB per table paid once
         // rather than per sample — and a table that came from a file is never morphed.
+        //
+        // Deciding it *here* rather than where the file is read is the ticket 56 split: morphing an inlined
+        // table is arithmetic on memory the document already holds, and asks the filesystem nothing.
         if (carriesEmbedded)
         {
-            const auto embedded = embeddedTable (document, prefix);
+            const auto embedded = embeddedTable (document, wanted.prefix);
 
             if (! embedded.has_value())
             {
                 // The preset inlined a table, but not as a whole number of 2048-sample cycles, so there is
                 // no cycle to read. Reported rather than substituted: a file in its place would be exactly
                 // the silent drop the contract forbids.
-                addReportEntry (report_, model::Severity::High, prefix, "embeddedWTData",
+                addReportEntry (report_, model::Severity::High, wanted.prefix, "embeddedWTData",
                                 "the preset carries its wavetable inline, but not as a whole number of "
                                 "2048-sample cycles, so this slot renders silence");
                 continue;
             }
 
-            next[static_cast<std::size_t> (slot)] =
-                dsp::tableForInterpolateAfterLoad (*embedded, /*embedded*/ true,
-                                                   interpolateAfterLoadOf (document, prefix));
+            wanted.kind = ContentPlan::Slot::Kind::Embedded;
+            wanted.embedded = dsp::tableForInterpolateAfterLoad (*embedded, /*embedded*/ true,
+                                                                interpolateAfterLoadOf (document, wanted.prefix));
+            continue;
         }
-        else if (! reference.empty())
+
+        wanted.kind = ContentPlan::Slot::Kind::Reference;
+
+        if (! wanted.reference.empty())
         {
-            const auto lookup = library_.loadTable (reference);
+            wanted.lookup = static_cast<int> (plan.references.size());
+            plan.references.push_back (wanted.reference);
+        }
+    }
 
-            if (lookup.found())
+    // The substitution is resolved in the same batch as the references themselves: a slot whose own
+    // reference misses falls back to xerum's own table, and asking for it here costs no second walk. It is
+    // last in the list, so a slot's own lookup is always found by its own index.
+    for (const auto& wanted : plan.slots)
+        if (wanted.kind == ContentPlan::Slot::Kind::Reference)
+        {
+            plan.fallback = static_cast<int> (plan.references.size());
+            plan.references.push_back (kDefaultTable);
+            break;
+        }
+
+    return plan;
+}
+
+void XerumAudioProcessor::publishResolved (ContentPlan& plan, ResolvedContent& resolved)
+{
+    // A root that is there and refuses to be read is the largest thing that can fail to load, so it is
+    // said out loud — every time, whether or not this resolution ends up missing anything (ticket 56).
+    for (const auto& problem : resolved.problems)
+        addReportEntry (report_, model::Severity::High, "content", problem.path.string(), problem.reason);
+
+    const auto lookupAt = [&resolved] (const int index) -> content::TableLookup*
+    {
+        return index >= 0 && index < static_cast<int> (resolved.lookups.size())
+                   ? &resolved.lookups[static_cast<std::size_t> (index)]
+                   : nullptr;
+    };
+
+    std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> next;
+
+    for (int slot = 0; slot < dsp::kOscillatorSlots; ++slot)
+    {
+        auto& wanted = plan.slots[static_cast<std::size_t> (slot)];
+
+        if (wanted.kind == ContentPlan::Slot::Kind::Embedded)
+        {
+            next[static_cast<std::size_t> (slot)] = std::move (wanted.embedded);
+            continue;
+        }
+
+        if (wanted.kind != ContentPlan::Slot::Kind::Reference)
+            continue;
+
+        // A slot's own lookup is its own entry in the batch, so it can be moved out: two slots naming the
+        // same reference asked for it twice and hold a lookup each.
+        if (auto* lookup = lookupAt (wanted.lookup); lookup != nullptr)
+        {
+            if (lookup->found())
             {
-                next[static_cast<std::size_t> (slot)] = lookup.table;
+                next[static_cast<std::size_t> (slot)] = std::move (lookup->table);
 
-                if (lookup.resolution == content::Resolution::CaseInsensitive)
-                    addReportEntry (report_, model::Severity::Info, tablePath, reference,
-                                    "resolved case-insensitively to " + lookup.path.string());
+                if (lookup->resolution == content::Resolution::CaseInsensitive)
+                    addReportEntry (report_, model::Severity::Info, wanted.tablePath, wanted.reference,
+                                    "resolved case-insensitively to " + lookup->path.string());
             }
             else
             {
-                addReportEntry (report_, model::Severity::High, tablePath, reference,
-                                lookup.error.empty()
+                addReportEntry (report_, model::Severity::High, wanted.tablePath, wanted.reference,
+                                lookup->error.empty()
                                     ? std::string ("the asset could not be found under any content root")
-                                    : lookup.error);
+                                    : lookup->error);
             }
         }
 
-        if (! next[static_cast<std::size_t> (slot)].has_value())
+        if (next[static_cast<std::size_t> (slot)].has_value())
+            continue;
+
+        // The fallback is **one** lookup shared by every slot that needs it, so it is copied rather than
+        // moved: a slot that took it must not leave the next one with nothing.
+        if (const auto* fallback = lookupAt (plan.fallback); fallback != nullptr && fallback->found())
         {
-            const auto fallback = library_.loadTable (kDefaultTable);
+            next[static_cast<std::size_t> (slot)] = fallback->table;
 
-            if (fallback.found())
-            {
-                next[static_cast<std::size_t> (slot)] = fallback.table;
+            if (! wanted.reference.empty())
+                addReportEntry (report_, model::Severity::Info, wanted.tablePath, wanted.reference,
+                                std::string ("substituted xerum's own ") + kDefaultTable);
+        }
+        else
+        {
+            // A root that is there and will not be read has a *reason* — a permission, a path that is not a
+            // regular file — and the reason is more use than the sentence below. A root that simply is not
+            // installed has none, and gets the sentence the contract has always used.
+            const bool unreadable = fallback != nullptr
+                                    && fallback->resolution == content::Resolution::Unreadable;
 
-                if (! reference.empty())
-                    addReportEntry (report_, model::Severity::Info, tablePath, reference,
-                                    std::string ("substituted xerum's own ") + kDefaultTable);
-            }
-            else
-            {
-                addReportEntry (report_, model::Severity::High, prefix, reference.empty() ? kDefaultTable : reference,
-                                "no content root could supply a wavetable, so this slot renders silence "
-                                "(set XERUM_CONTENT_ROOT to a directory containing Tables/)");
-            }
+            addReportEntry (report_, model::Severity::High, wanted.prefix,
+                            wanted.reference.empty() ? kDefaultTable : wanted.reference,
+                            unreadable
+                                ? fallback->error + ", so this slot renders silence"
+                                : std::string ("no content root could supply a wavetable, so this slot renders "
+                                               "silence (set XERUM_CONTENT_ROOT to a directory containing Tables/)"));
         }
     }
 
     publishTables (std::move (next));
+}
+
+void XerumAudioProcessor::flushContent()
+{
+    const juce::ScopedLock lock (stateLock_);
+
+    if (pendingPlan_ == nullptr || pendingResolved_ == nullptr
+        || pendingFinished_ == nullptr
+        || ! pendingFinished_->load (std::memory_order_acquire))
+        return;
+
+    publishResolved (*pendingPlan_, *pendingResolved_);
+
+    pendingPlan_.reset();
+    pendingResolved_.reset();
+    pendingFinished_.reset();
+
+    // The tables the interface shows have changed, and so has the report: this is the same notification a
+    // preset load makes, for the same reason.
+    sendChangeMessage();
 }
 
 void XerumAudioProcessor::completeReport (const model::PresetDocument& document)
@@ -1691,8 +1902,9 @@ const dsp::Wavetable* XerumAudioProcessor::oscillatorTable (const int slot) cons
 std::vector<juce::String> XerumAudioProcessor::contentRoots() const
 {
     std::vector<juce::String> roots;
+    roots.reserve (contentRoots_.size());
 
-    for (const auto& root : library_.roots())
+    for (const auto& root : contentRoots_)
         roots.emplace_back (root.string());
 
     return roots;

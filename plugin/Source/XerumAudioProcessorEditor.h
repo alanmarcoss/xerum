@@ -59,6 +59,7 @@
 #include "PoleZeroPlane.h"
 #include "PresetBrowser.h"
 #include "SectionStrip.h"
+#include "off_thread_work.h"
 
 #include <atomic>
 #include <memory>
@@ -73,7 +74,8 @@ class XerumAudioProcessor;
 
 class XerumAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                         private juce::ChangeListener,
-                                        private juce::KeyListener
+                                        private juce::KeyListener,
+                                        private juce::Timer
 {
 public:
     explicit XerumAudioProcessorEditor (XerumAudioProcessor& processor);
@@ -242,6 +244,7 @@ public:
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
+    void timerCallback() override;
 
     void parentHierarchyChanged() override;
     bool handleGlobalKey (const juce::KeyPress& key);
@@ -250,6 +253,17 @@ private:
     void updateSectionSeverity (const model::ImportReport& report);
     void updateModulationArcs();
     void updateWavetableHeads();
+
+    /// Read the bank, off this thread, and install it if it answers inside the budget (ticket 56).
+    ///
+    /// `Factory/manifest.json` is content, read through the same roots the wavetables come from, and this
+    /// runs inside the host's `createEditor` — so a root that will not answer must not be able to keep the
+    /// window from opening. The same bounded wait, the same worker, and the timer below installs a bank
+    /// that answers late.
+    void requestBankCatalog();
+
+    /// Install a bank that arrived after its bounded wait. Message thread; the timer's own work.
+    void installBankCatalog();
 
     /// Read the loaded document back into the header and the browser: the name, the category the bank
     /// files it under (or none, for a preset that is not one of the bank's), and the browser's cursor.
@@ -293,6 +307,13 @@ private:
     /// The bank, as the manifest describes it, and which slot the loaded preset came from.
     ui::BankCatalog catalog_;
     int bankIndex_ { -1 };
+
+    /// The bank read while it is in flight (ticket 56): the worker, the catalogue it is filling, and the
+    /// flag that says it has. `catalog_` above is the interface's copy and is only ever written on this
+    /// thread — at construction when the read answers in time, or by `installBankCatalog` when it does not.
+    content::OffThreadWork bankWork_;
+    std::shared_ptr<ui::BankCatalog> pendingCatalog_;
+    std::shared_ptr<std::atomic<bool>> pendingCatalogFinished_;
 
     HeaderLayout headerLayout_;
 

@@ -66,6 +66,23 @@ Resolution **MUST**:
 - when nothing matches, report at `high` and substitute a documented default. It **MUST NOT** crash,
   and it **MUST NOT** substitute silently.
 
+Resolution **MUST** ask the filesystem nothing it cannot answer with a value:
+
+- **no call on this path may throw.** A path that cannot be examined — a permission, a symlink loop, an
+  I/O error — is an `error_code` and not an exception. A `filesystem_error` escaping the resolver used to
+  reach the plugin's own constructor, which aborts the host that instantiated it; "**MUST NOT** crash"
+  above is exactly that promise;
+- **a root that refuses to be read is reported**, with the path that refused and why, and the roots after
+  it are still asked: a refused root loses only what was inside it;
+- **no content-root filesystem call runs on the thread that asked for it.** Resolution is handed to a
+  worker (`src/content/off_thread_work.h`) and the caller waits a bounded time. A walk of a handful of
+  local files finishes well inside that bound, so an ordinary load is unchanged; a root that will not
+  answer — a consent prompt nobody has answered, a volume that has gone to sleep, a drive that is not
+  spinning — costs the caller the bound and no more. A resolution that lands after the bound is published
+  when it lands, with its own report entries;
+- while a slot has no table, **unresolved is what it stays**: nothing is substituted that the preset did
+  not ask for, and the report says what has not loaded yet.
+
 An embedded asset **MUST** take precedence over a path reference, because a preset carrying its own
 data is self-contained.
 

@@ -94,6 +94,10 @@ bool claims (const SectionSpec& section, const std::string& group)
 /// the macro strip there and xerum's table has no effects group, so the half of that row the absent FX
 /// section would have held is exactly where the fall-through groups belong: the row completes itself
 /// without anyone writing down which groups go in it.
+///
+/// Ticket `57` names a section for the amplitude envelope, so `Global` is the one group left falling
+/// through — and the row is unchanged, because a section that gained a home must not move the ones that
+/// did not.
 SectionSpec defaultSection()
 {
     return { "default-section", "Other", SectionKind::Panels, {}, "bottom" };
@@ -135,20 +139,30 @@ int rowHeightFor (const ParamSpec& spec)
 std::vector<SectionSpec> designedComposition()
 {
     // `docs/design/xerum-direction-warm.html`, read as data. The bands are the design's own rows, in its
-    // own order — three oscillators, noise and sub, the two filters, the matrix, then the bottom row of
-    // macros beside the fall-through — and the last entry is the fall-through itself, which is where
-    // `Global` and `Amp Envelope` land today because the design's composition names no section for them.
+    // own order — three oscillators, noise and sub, the amplitude envelope's own band, the two filters, the
+    // bottom row of macros beside the fall-through, and the matrix at the end — and the entry that names no
+    // group is the fall-through itself, which is where the groups the composition does not name land.
+    // Ticket `57` moved two things and added one; every other entry, and every section's identity, is
+    // `52`'s.
     //
-    // Ticket `53` changed exactly one thing here: the fall-through section's **band** (see
-    // `defaultSection`). The order of the entries, and every section's identity, is `52`'s.
+    // The **flexible** row is the design's `1fr`, and since ticket `57` it is the amplitude envelope's
+    // rather than the matrix's: the design's own grid names four fixed rows (`auto`) above the flexible
+    // one, and the section that takes the window's slack is the section the instrument should be read
+    // from. The envelope's band is its own, so the slack it takes lands inside it and nowhere else.
     return {
         { "osc-row", "Oscillators", SectionKind::Panels, { "Osc" }, "osc" },
         { "noise-sub-row", "Noise + Sub", SectionKind::Panels, { "Noise", "Sub Osc" }, "noiseSub" },
+        { "env-section", "Amp Envelope", SectionKind::Panels, { "Amp Envelope" }, "env", true },
         { "filter-section", "Filter", SectionKind::Panels, { "Filter" }, "filter" },
-        { "mod-panel", "Mod Matrix", SectionKind::Matrix, {}, "matrix" },
         { "fx-section", "Effects Chain", SectionKind::Strip, { "FX" }, "bottom" },
         { "macro-section", "Macros", SectionKind::Strip, { "Macro" }, "bottom" },
         defaultSection(),
+
+        // The matrix is **last**, after the macros and after the fall-through section it shares no band
+        // with: ticket `57`'s editorial call is that the page's end is where a 64-row grid belongs, and it
+        // is also where the design's own grid has nothing left to give. Its band is its own, because the
+        // grid is twelve columns wide and does not share a row with a panel or a strip.
+        { "mod-panel", "Mod Matrix", SectionKind::Matrix, {}, "matrix" },
     };
 }
 
@@ -279,6 +293,7 @@ InterfacePlan planInterface (const std::vector<ParamSpec>& specs,
         section.title = spec.title;
         section.kind = spec.kind;
         section.band = spec.band;
+        section.flexible = spec.flexible;
 
         for (int panel = 0; panel < static_cast<int> (plan.panels.size()); ++panel)
             if (sectionForPanel[static_cast<std::size_t> (panel)] == index)

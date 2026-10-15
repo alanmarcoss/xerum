@@ -41,6 +41,17 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
     std::set<std::string> modelPaths;
     int lastParamIndex = -1;
 
+    // **Ticket `58`'s exception, and the table's only one.** The master ceiling is a deliberate divergence
+    // from the reference, and the divergence is structural: the reference's schema has no limiter leaf, so
+    // these two paths are xerum's own and the schema describes neither. They are **named** rather than the
+    // rule being loosened, so it still binds every other parameter in the table — a hand-written path that
+    // appeared without a line here would still fail, which is the property the rule exists for.
+    const auto isXerumsOwn = [] (const std::string& modelPath)
+    {
+        return modelPath == "Master0/plainParams/kParamLimitOn"
+               || modelPath == "Master0/plainParams/kParamLimitCeiling";
+    };
+
     const auto check = [&] (const ParamSpec& spec)
     {
         // The id is *derived*, not hand-written: the rule in `parameterIdFromPath` is the definition, and
@@ -48,9 +59,14 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
         CHECK (spec.id == parameterIdFromPath (spec.modelPath));
 
         // And the path really is the model's: the schema normalises the concrete path to the schema path,
-        // and the schema path is one the schema describes.
+        // and the schema path is one the schema describes — or, for the two named above, one the schema
+        // pointedly does not.
         CHECK (spec.schemaPath == schema.normalise (spec.modelPath));
-        REQUIRE (schema.describe (spec.schemaPath) != nullptr);
+
+        if (isXerumsOwn (spec.modelPath))
+            CHECK (schema.describe (spec.schemaPath) == nullptr);
+        else
+            REQUIRE (schema.describe (spec.schemaPath) != nullptr);
 
         CHECK (ids.insert (spec.id).second);
         CHECK (modelPaths.insert (spec.modelPath).second);
@@ -93,7 +109,11 @@ TEST_CASE ("every parameter is derived from its module path, points at the schem
     // matrix's source table names `Macro 1..8` and a macro that no one can move would be a source with no
     // generator — the ticket's own defect, one step smaller. They are one group each, so the interface's
     // page-per-group rule is untouched.
-    CHECK (bridge.specs().size() == 83);
+    //
+    // 85 rather than 83 since ticket 58: the master ceiling's two — the on/off and the ceiling. They are
+    // the table's only parameters the schema does not describe, which is the divergence stated in
+    // `isXerumsOwn` above and in `docs/test-strategy.md`.
+    CHECK (bridge.specs().size() == 85);
     CHECK (schema.leafCount() > bridge.specs().size());
 }
 

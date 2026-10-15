@@ -6,6 +6,7 @@
 #include "ParameterBridge.h"
 
 #include "PluginIdentity.h"
+#include "limiter.h"
 
 #include <algorithm>
 #include <array>
@@ -579,6 +580,22 @@ void ParameterBridge::buildSpecs()
     addGlobal ("kParamPortamentoCurve", "Global Glide Curve (%)", ParamType::Float, 0, 100, 50);
     addGlobal ("kParamPortaAlways", "Global Glide Always", ParamType::Bool, 0, 1, 0);
     addGlobal ("kParamMasterVolume", "Global Master Level", ParamType::Float, 0, 1, 1);
+
+    // --- The master ceiling (ticket `58`) -------------------------------------------------------------
+    //
+    // **The one deliberate divergence from the reference's schema.** The reference has no limiter leaf —
+    // nothing in its decoded model is a ceiling — so these two paths are xerum's own and no reference
+    // preset carries them. That is exactly why they belong on this surface as parameters rather than as a
+    // hard-coded stage: a user who wants the reference's own output sets `kParamLimitOn` to 0 and gets a
+    // wire, and one who leaves it alone gets the ceiling. `resolveAbsent` lands both on `init` when a
+    // preset does not carry them, so the default is stated here and nowhere else in the plugin.
+    //
+    // The default is **on**, because the dev asked for the clipping to stop; the ceiling's default, its
+    // range and its unit are Ableton's own factory preset (`limiter.h` records the artefact).
+    add ("Master0/plainParams/kParamLimitOn", "Master Limiter", "Master", ParamType::Bool, ChoiceSet::None, 0, 1,
+         1);
+    add ("Master0/plainParams/kParamLimitCeiling", "Master Ceiling (dB)", "Master", ParamType::Float,
+         ChoiceSet::None, dsp::kMasterCeilingMinDb, dsp::kMasterCeilingMaxDb, dsp::kMasterCeilingDb);
 
     // --- The three wavetable oscillator slots ---------------------------------------------------------
     for (int slot = 0; slot < dsp::kOscillatorSlots; ++slot)

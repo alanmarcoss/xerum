@@ -313,14 +313,16 @@ cover it; and the real-time invariant.
   top of that surface — pages of panels, the matrix, the pole/zero plane, the report bar and drawer —
   and ticket `52` arranged the panels the way the design's own screen arranges them: one composed page
   of sections. Those are the sections at the end of this file.
-* **The composed page needs a window about 1108 logical pixels tall at its default width**, and ticket
+* **The composed page needs a window about 1128 logical pixels tall at its default width**, and ticket
   `53` opens the editor at exactly that size, because the whole instrument on one screen is the point of
-  the design's composition and a scroll bar is not. The page is 1018 tall at 1080 wide (947 at 1400) and
+  the design's composition and a scroll bar is not. The page is 1038 tall at 1080 wide (967 at 1400) and
   every one of those pixels is a control the table has: the oscillator row alone is 344 for three panels
   of thirteen controls each. On a display shorter than that the window is resized by the user (or by the
   host) and the strip scrolls the page as ticket `52` had it — legible, not clipped, but not all at once.
   A smaller instrument screen would need a decision this build has not taken: a section behind the strip,
-  or smaller knobs than the design draws. Ticket `53`'s section below has the arithmetic.
+  or smaller knobs than the design draws. Ticket `53`'s section below has the arithmetic, and ticket `57`'s
+  has the numbers as they stand since the amplitude envelope took the flexible row (1108/1018 then,
+  1128/1038 now).
 
 ## JUCE observations worth keeping
 
@@ -375,9 +377,11 @@ A **panel is a `ParamSpec::group`** — the model's own grouping. Panels are *de
 table, one per group, and nothing is hand-listed: `Osc A`, `Osc B`, `Osc C`, `Noise`, `Sub Osc`,
 `Filter 1`, `Filter 2`, `Global`, `Amp Envelope`. **Where they sit is a composition rather than a
 derivation**: `ui::designedComposition()` is an ordered list of sections — the three oscillators in a row,
-noise and sub beneath them, the filters beside their response display, the matrix, then the effects and
-macros — each naming the groups it holds and how they arrange, and a group no section names falls through
-to a default section rather than vanishing. So which section a group lands in is data; *whether* it lands
+noise and sub beneath them, the amplitude envelope's own section, the filters beside their response
+display, then the effects and the macros, and the compact modulation matrix **last** — each naming the
+groups it holds and how they arrange, and a group no section names falls through to a default section
+rather than vanishing. (The envelope's section and the matrix's place are ticket `57`; see that section at
+the end of this file.) So which section a group lands in is data; *whether* it lands
 is still derived and still total. `ui::SectionStrip` draws one tab per section, always all of them,
 **scrolling the single composed page** — larger than the window the plugin shipped then, and since ticket
 `53` larger only than a window smaller than the instrument — and carrying a severity dot on any section
@@ -798,14 +802,17 @@ the middle, the matrix under them, the effects and macros side by side at the bo
 ## The resolution: the composition is data, the binding stays derived
 
 `ui::designedComposition()` is now an ordered list of `ui::SectionSpec` — `osc-row`, `noise-sub-row`,
-`filter-section`, `mod-panel`, `bottom-row` (its two halves sharing a `band`, which is how "side by side"
-is expressed), and the **default section** — each naming the groups it holds (`Osc` claims `Osc A`…`Osc C`
-by prefix, `Macro` claims the eight) and how they arrange (`Panels`, `Strip`, `Matrix`).
+`env-section`, `filter-section`, `bottom-row` (its two halves sharing a `band`, which is how "side by side"
+is expressed), the **default section**, and `mod-panel` — each naming the groups it holds (`Osc` claims
+`Osc A`…`Osc C` by prefix, `Macro` claims the eight) and how they arrange (`Panels`, `Strip`, `Matrix`),
+and each declaring whether it is the composition's flexible row (`SectionSpec::flexible`, the design's
+`1fr`). The first four entries and the flexible flag are ticket `57`'s; the rest is ticket `52`'s.
 
 `ui::planInterface` resolves that over the table: panels are still one per group in the table's order,
 every panel lands in exactly one section, and **a group no section names falls through to the default
-section** rather than vanishing — which is why `Global` and `Amp Envelope` are on the page at all, and why
-`InterfacePlan::sectionForGroup` exists as the answer to "where did it land" that the evidence reads.
+section** rather than vanishing — which is why `Global` is on the page at all (`Amp Envelope` fell through
+here until ticket `57` gave it a section of its own), and why `InterfacePlan::sectionForGroup` exists as
+the answer to "where did it land" that the evidence reads.
 
 The binding did not move. Every control is still built from its `ParamSpec` by model type
 (`controlKindFor`), still bound through JUCE's own attachment to the bridge's parameter object, and the
@@ -836,16 +843,18 @@ editor still cannot be constructed eagerly. What moved is the arrangement:
   carries its own. Noted as a deviation.
 * **The matrix is a section** (`mod-panel`), headed `MOD MATRIX` with the design's tag: the number of rows
   on screen over 64 — the section's own height divided by the row height, so the tag cannot drift from the
-  geometry (ticket `53` made the section the composition's flexible row, so the number is at least the
-  design's eight and more when the window has slack). The four effects cards are the design's `fx-section`;
+  geometry. Ticket `53` made the section the composition's flexible row; **ticket `57` gave that flag to
+  the amplitude envelope and made the matrix a compact panel** — four of the 64 rows, at the **end** of
+  the composition, after the macros — and the tag is unchanged, because a caption saying `4 / 64` is how a
+  compact matrix says what it is not showing. The four effects cards are the design's `fx-section`;
   **xerum's table has no FX group** (the FX rack is not in the bridge), so that section resolves to zero
   panels and is not drawn. It stays in the composition so the bottom row completes itself the day the table
   has one — and its absence is a stated fact rather than a silent drop.
 * **The macros are a strip**: eight bare 26px knobs with their labels, no panel chrome —
   `ParameterPanel::setCompact`, which the `Strip` section kind turns on. The fall-through section —
-  `Global` and `Amp Envelope`, the groups the composition does not name — was its own line under the
-  matrix in ticket `52` and is, since ticket `53`, the **other half of the design's bottom row**, beside
-  the macro strip.
+  `Global`, the one group the composition does not name since ticket `57` named the envelope, and
+  `Amp Envelope` beside it before that — was its own line under the matrix in ticket `52` and is, since
+  ticket `53`, the **other half of the design's bottom row**, beside the macro strip.
 
 ## What did not move
 
@@ -855,7 +864,8 @@ surfaces, the lazy editor and the counters that prove it. `plugin/tests/interfac
 composition at both acceptance sizes and, in `the design's sections are in the design's positions`, the
 arrangement itself — three oscillator panels on one line, noise and sub beneath them, the plane a child of
 its filter panel and to the right of every control in it, the matrix's visible rows as its heading reports
-them, the macro strip on one line, and the fall-through holding exactly `Global` and `Amp Envelope`.
+them, the macro strip on one line, and the fall-through holding exactly `Global` (and `Amp Envelope` beside
+it until ticket `57` gave the envelope a section of its own).
 
 ## Acceptance, measured
 
@@ -1005,9 +1015,15 @@ Measured in-process by `plugin/tests/interface_test.cpp`, which prints the table
 build-53/plugin/tests/xerum-plugin-tests "[interface]" -s
 ```
 
+**These are ticket `53`'s own numbers**, from the build that packed the page; ticket `57` then moved the
+page's slack to the amplitude envelope and made the matrix compact, so the default window is 1080×1128 and
+the page 1038 now — the current tables are in ticket `57`'s section at the end of this file. What did *not*
+change is the claim these tables make: the page fits the window it opens at, and scrolls only where the
+window is smaller than the instrument.
+
 | window | viewport | page | |
 |---|---|---|---|
-| **1080×1108** (the editor's own default) | 1060×1018 | **1018** | fits, and no scroll bar is drawn |
+| **1080×1108** (the editor's own default *then*) | 1060×1018 | **1018** | fits, and no scroll bar is drawn |
 | 1082×668 (ticket `52`'s baseline) | 1054×578 | 1018 | scrolls |
 | 900×600 (the window's minimum) | 872×510 | 1144 | scrolls; every control still laid out and inside its panel |
 | 1400×900 | 1372×810 | 947 | scrolls by 137; the oscillator row is one knob row shorter at this width |
@@ -1017,7 +1033,7 @@ build-53/plugin/tests/xerum-plugin-tests "[interface]" -s
 | `osc-row` "Oscillators" | 344 | 344 | Osc A/B/C, 350 / 286 wide, one line, 13 controls each |
 | `noise-sub-row` "Noise + Sub" | 144 | 199 | Noise and Sub Osc, one line of small knobs with their option rows |
 | `filter-section` "Filter" | 172 | 172 | Filter 1 / Filter 2 side by side, the plane inside each panel |
-| `mod-panel` "Mod Matrix" | 216 (8 / 64) | 216 | the 64-row grid, its own scroll bars |
+| `mod-panel` "Mod Matrix" | 216 (8 / 64) | 216 | the 64-row grid, its own scroll bars — four rows and last since ticket `57` |
 | `macro-section` "Macros" | 316×130 | 314×201 | eight items on one line, the design's strip |
 | `default-section` "Other" | 738×130 | 552×201 | Global + Amp Envelope — the fall-through, in the bottom row |
 
@@ -1429,3 +1445,318 @@ both are in the editor's *drawing* code rather than in what is asserted about it
 * **Whether the panel's own drawing looks right.** The session has no eyes: the PNGs above were produced
   from JUCE's paint path and are printed with their palette shares and their rectangles, and that is the
   whole of what can be said here.
+
+# Ticket 57 — the amp envelope is prominent, the matrix is quiet
+
+The dev's editorial call, and the first answer to this map's fog about *which* controls deserve the front
+panel: **the matrix is too prominent and the ADSR is not prominent enough.** The composition is data, so
+that turned out to be an answerable question rather than a matter of taste — and the answer is a pair of
+rectangles.
+
+## What was wrong, measured before it was changed
+
+* the amp envelope sat in the **fall-through** section, sharing the half of the design's bottom row the
+  absent FX section leaves: a **367×118** panel third-from-nothing on the page, for the control a player
+  touches on every patch;
+* the matrix was the composition's **flexible row** — the design's `1fr`, hardwired as
+  `SectionKind::Matrix` in `CompositionView::layout` — and it was the tallest band of the lower half of the
+  page: **1060×216**, 8 of its 64 rows, sitting in the middle of the instrument.
+
+## What changed, and it is all data
+
+| | before | after |
+|---|---|---|
+| the composition | `osc-row`, `noise-sub-row`, `filter-section`, `mod-panel`, `macro-section`, `default-section` | `osc-row`, `noise-sub-row`, **`env-section`**, `filter-section`, `macro-section`, `default-section`, **`mod-panel`** |
+| the flexible row (the design's `1fr`) | implied by `SectionKind::Matrix` | `SectionSpec::flexible`, an entry's own flag — carried through to `SectionPlan` — and it is the **envelope's** |
+| the matrix's rows | 8 of 64 | **4** of 64 |
+| the matrix's place | between the filters and the bottom row | **the end of the composition**, after the macros |
+| the envelope's band | a 367×118 panel in the bottom row | a **1060×105 band of its own**, third row, four knobs at 44px |
+
+The claim on the slack became a fact about an **entry** rather than about a **section kind**, which is what
+let one data edit move it: `CompositionView::layout`'s slack block reads `SectionPlan::flexible`, and the
+matrix keeps its own index in the band because it still has a grid to place and an `N / 64` caption to keep
+honest. Two names in one struct, because ticket `57` made them two facts.
+
+**The matrix's four rows** are half the design's eight and few enough that the page's last band (128) is no
+taller than the bottom row above it (130) — that is the arithmetic behind the number, and the tag says
+`4 / 64` so the loss is stated rather than hidden.
+
+## Who absorbs the slack: the measurement
+
+The ticket's own acceptance, first, as the pair of numbers it is. The editor's default height is **derived
+from the page** (ticket `53`), so the honest way to ask "who takes the slack" is to ask at more than one
+size; all five lines below are printed by
+`plugin/tests/interface_test.cpp`'s `the composition's slack is the envelope's, and the compact matrix takes
+none`:
+
+| window | viewport | page | `env-section` | `mod-panel` | matrix rows |
+|---|---|---|---|---|---|
+| **1080×1128** (the editor's own default) | 1060×1038 | 1038 | 105 | 128 | 4 |
+| 1080×640 | 1060×550 | 1038 (scrolls) | 105 — its natural height | 128 | 4 |
+| 900×600 (the minimum) | 872×510 | 1093 (scrolls) | 105 | 128 | 4 |
+| **1080×1428** (the default, 300 taller) | 1060×1338 | 1338 | **405 (+300)** | **128 (+0)** | 4 |
+| **1400×1128** (the default, 320 wider) | 1380×1038 | 1038 | **176 (+71)** | **128 (+0)** | 4 |
+
+* **the envelope grows by exactly the slack and the matrix does not grow at all.** At 300 px of extra
+  window the envelope's band is 300 px taller and the matrix's is the same 128 it is at every other size —
+  which is the change, in one measurement, and every other section's height is unchanged too (asserted
+  per section, not just for these two);
+* **at the default window the slack is nought**, and that is a measurement rather than an assumption: the
+  envelope's height at 1080×640 — a window smaller than the page, where nothing can be handed out — is its
+  natural 105, and it is 105 at the default window as well. Ticket `53`'s "the page equals the window" is
+  why: the window's height *is* the page's own need, so the `1fr` row is empty at the size the plugin opens
+  at. It was empty for the matrix too — 216 is exactly 8 rows of its grid — so the matrix was the tallest
+  band of the lower page at the default window because of its **natural** height, not because of slack;
+* **a wider window is the other way a user produces slack**, and the last row of the table is that gesture:
+  at 1400 wide the panels re-flow, the page needs 71 px less, and those 71 px are the envelope's.
+
+## The section title order, and the two bands' controls, as measured
+
+```sh
+cmake --build build-57 -j8
+build-57/plugin/tests/xerum-plugin-tests "[interface]"      # 7210 assertions, 23 cases — all passed
+ctest --test-dir build-57 --output-on-failure               # 368/368 — all passed, 176.03 s
+/tmp/pluginval-104/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 \
+    --validate build-57/plugin/xerum_artefacts/Release/VST3/xerum.vst3   # SUCCESS, Editor tests included
+```
+
+The order the strip draws, read off the resolved composition at the default window:
+
+| # | section | title | rectangle | holds |
+|---|---|---|---|---|
+| 0 | `osc-row` | `OSCILLATORS` | 1060×344 @0,0 | Osc A/B/C |
+| 1 | `noise-sub-row` | `NOISE + SUB` | 1060×144 @0,347 | Noise, Sub Osc |
+| 2 | **`env-section`** | **`AMP ENVELOPE`** | **1060×105 @0,494** | Amp Envelope — four 44px knobs, full width |
+| 3 | `filter-section` | `FILTER` | 1060×172 @0,602 | Filter 1, Filter 2, their planes |
+| 4 | `macro-section` | `MACROS` | 314×130 @0,777 | the eight macro items |
+| 5 | `default-section` | `OTHER` | 740×130 @320,777 | Global (the fall-through, one group) |
+| 6 | **`mod-panel`** | **`MOD MATRIX`** | **1060×128 @0,910** | the grid, `4 / 64` |
+
+**The controls, in px, on screen rather than in a constant**: the envelope's four knobs are **44×44**, mode
+`Dial`, `KnobSize::Default` — the design's largest diameter, the same the oscillators and the filters draw,
+larger than the compact band's 28 and the macros' 26. A matrix cell is **not a dial**: mode `Cell`, one row
+of the grid less its border, inside a 22px row (`ModulationMatrixView::kRowHeight`). So "the envelope has
+the largest knobs and the matrix has none" is literally what the two sections contain.
+
+## The render, and its palette shares
+
+`createComponentSnapshot` of the editor at **1080×1128** — the window it opens at — written to
+`<build>/interface-evidence/ticket-57-default-window.png` by that same case, and counted by
+`every colour a drawn surface resolves is a token`:
+
+| colour | token | share of the window |
+|---|---|---|
+| `rgb(26,25,23)` | `surface` (panels) | **60.444 %** (was 53.389 % at 1080×1108) |
+| `rgb(17,17,16)` | `bg` (window) | **24.482 %** (was 29.345 %) |
+| `rgb(42,40,38)` | `border` | 3.075 % |
+| `rgb(34,33,32)` | `surface2` | 2.903 % |
+| `rgb(232,155,48)` | `accent` | 0.188 % |
+| `#42a2c8` | JUCE's own dark-scheme fill | **0 px** |
+
+Panel surface up 7 points and window background down 5 is the envelope's full-width band and `Global`'s
+wider one: the page is more instrument and less empty space. The token walk resolves 1443 components and
+4532 colour ids with **none outside the palette**; the preset browser's overlay still differs in **0 of
+64800** pixels outside its own rectangle; and the lazy-editor, headless and audio-path cases are untouched.
+
+## Assertions that became false were replaced with reasons
+
+* `sectionOf ("Amp Envelope") == "default-section"` → **`"env-section"`**: the envelope has a section of its
+  own. `Global` is still the fall-through, and the same edit moved no other group;
+* `fellThrough == { "Global", "Amp Envelope" }` → **`{ "Global" }`**, and the fall-through's place in the
+  composition is still the bottom row;
+* `defaultSection == sectionCount() - 1` → **`defaultSection == matrixSection - 1`**: the matrix is last
+  now, and the bottom row is the page's last but one;
+* the section ids by index (`filter-section` was 2, `mod-panel` 3, `macro-section` 4) → the new order, with
+  `sectionForModule ("VoiceFilter0") == 3` and `sectionForModule ("ModSlot") == 6` following it;
+* `composition.sectionBounds (macroSection).getY() > sectionBounds (matrixSection).getY()` → the bottom row
+  is below the **filter** section and the matrix is below the **bottom row**;
+* `matrixVisibleRows() >= kMatrixVisibleRows` → **`== kMatrixVisibleRows`**: the "at least" existed because
+  the matrix grew with the slack, and it no longer does. `kMatrixVisibleRows` itself went `8` → `4`;
+* the matrix's placement comment ("below the filters, as tall as the design's 8 / 64") is replaced by the
+  compact-last one, and `matrixNatural` in `layout` is now the matrix's whole height rather than its floor;
+* `editor->setSize (1080, 1108)` in the token walk → **the editor's own default size**, because the number
+  is derived from the page and pinning it measures a window the plugin no longer opens at. That is exactly
+  what ticket `57` did to it.
+
+Ticket `53`'s fit assertions are **extended rather than weakened**: both sizes still assert every section's
+rectangle inside the page, every panel inside its section and every control inside its panel, and the new
+case adds the slack measurement on top. Nothing in that case was loosened.
+
+## What could not be seen, and is not claimed
+
+* **The live standalone window's pixels.** The window **does** come up in this build — the re-launch that
+  ticket `55` recorded as hanging is fixed by the ticket `56` work now in `src/content` — and its geometry
+  was read from the window server: **1082×1156 at (739,199)**, owner `xerum`, layer 0. That is this ticket's
+  default window, end to end: the editor's own **1080×1128** plus the 1 px frame and the 28 px title bar, so
+  the *product* opens at the size the layout asks for and not only the harness. What could not be read is
+  its colour: `.scratch/xerum/tools/window-capture` (local, not committed) returns a **redacted** image —
+  1040 distinct colours whose red channel is forced to 255 and whose green/blue channels are the real render
+  (`rgb(255,26,25)` for `surface` at 58.39 %, `rgb(255,17,17)` for `bg` at 25.49 %), i.e. Screen Recording
+  permission is still not granted to this session's tools. `[INFERENCE]`: that distribution is the same
+  distribution as the editor's own render below within ~2 points (58.4/25.5/3.5/2.9 against
+  60.4/24.5/3.1/2.9), which is consistent with the running product drawing this composition — but it is not
+  a second measurement of the palette and is not claimed as one. (A `Problem Reporter` window for `xerum`
+  was also on screen at that moment, from a launch before this one; this build's own launch stayed up, and
+  the kill below was deliberate: `pkill -f Standalone/xerum`.) The renders and rectangles above are the
+  editor's own paint path and layout, in-process, at the sizes named;
+* **whether the envelope *reads* as the centre of the instrument.** That is the dev's call and this session
+  has no eyes. What is claimed is the geometry: the envelope's band is 105 px and the matrix's 128 at the
+  default window, and the envelope's is the one that grows. The matrix's band is still the taller of the two
+  by 23 px, and the honest reason is arithmetic rather than preference — a heading plus one row of 44 px
+  knobs with their readouts and labels is 105, and a twelve-column grid with its column header and four rows
+  is 128; flipping that ratio needs the matrix to show **two** rows or fewer, which stops being a matrix;
+* **what the envelope's slack *is*.** Measured and stated: at 1080×1428 the envelope's band is 405 px, of
+  which 105 are its own content and **300 are air**, because the design system has no envelope content that
+  uses height — there is no envelope graphic in the design, and drawing one is not this ticket. A 44 px knob
+  row in a 405 px band is air around controls, not a filled hero panel; whether that is the prominence the
+  ticket wanted, or whether the envelope needs a designed display to hold the space, is the dev's call.
+  Reported rather than papered over, which is what the ticket asked for.
+
+# Ticket 58 — the master ceiling
+
+## What it is, and the first deliberate divergence from the reference
+
+The dev's report was that **the audio turns red when more than one key is held**, and the ask was a limiter at
+the end of the flow, modelled on **Ableton's Limiter at its defaults**. Two facts established before any code:
+there is **no limiter or soft-clip leaf in the reference's decoded schema**, and nothing in `src/dsp` clamped
+the output. So this is a new **master stage**, and it is the project's **first deliberate divergence from the
+reference** — stated here rather than absorbed.
+
+**It is a parameter, not a hard-coded stage.** `Master Limiter` (on/off) and `Master Ceiling (dB)` are on the
+parameter table like everything else, so a user who wants the reference's own output turns the first one off
+and gets a wire. The default is **on**, because the dev asked for the red to stop. The two paths are
+`Master0/plainParams/kParamLimitOn` and `Master0/plainParams/kParamLimitCeiling`, and they are the table's only
+parameters the schema does not describe — `bridge_test.cpp`'s `isXerumsOwn` names them rather than loosening
+the rule, so the rule still binds every other parameter.
+
+## Where the reference's numbers come from
+
+**Ableton's own factory default preset**, not recall and not the ticket. In the installed
+`Ableton Live 12 Suite.app`:
+
+* `Contents/App-Resources/Core Library/Defaults/Audio Effects/Limiter.adv` — gzipped XML, a `Limiter` device.
+  Decompressed, its defaults are `Gain = 0` (unity), **`Ceiling = -0.2999997139`** (**-0.30 dB**),
+  **`Release = 99.9999542`** (**100 ms**), `AutoRelease = false`, **`Lookahead = 0`** — index 0 of the
+  enumerated 1.5 / 3 / 6 ms, so **1.5 ms** — `Routing = 0` (L/R), `Mode = 0` (Standard) and
+  `LinkAmount = 1` (100 %).
+* `…/Max/Max.app/Contents/Resources/C74/packages/ableton-dsp/docs/abl.device.limiter~.maxref.xml` — the
+  enumerations, confirming `enumvals` of size 3 for the lookahead (`1.5 ms`, `3 ms`, `6 ms`), of size 3 for
+  the ceiling mode (`Standard` first) and of size 2 for the routing (`Left/Right` first). Integration could
+  not reach these from the published DSP reference, which serves boilerplate; the installed application
+  does have them.
+* The Live 12 manual's effect reference (**§29.24 Limiter**) supplies the *shape* rather than the numbers: the
+  ceiling "sets the absolute maximum level that Limiter will output", "if your incoming signal level has no
+  peaks that are higher than the ceiling, no limiting will be applied", `Standard` is "the device's default
+  mode", and lookahead "introduces latency: the longer the lookahead time, the higher the latency".
+
+Both the preset and the reference XML were read on this machine on 2026-10-15; the values, the artefact paths
+and the manual section are recorded in `src/dsp/limiter.h`.
+
+## Where it sits, and what it is not
+
+**Last, after the effects rack** — a master stage outside the rack, not a slot in it. In `processBlock` the
+order is: the voice pool's stereo render → the **master gain** (ramped, unchanged) → **this stage** → the
+host's channel mapping. The ceiling is deliberately after the master gain, because it has to see what the
+master gain produced rather than the host's mapping of it.
+
+One thing to be plain about: **the `FX` rack is not in the signal path yet.** `dsp::FxRack`/`FxBank` are built
+and tested (14 shipped classes) but nothing in `XerumAudioProcessor` or `VoiceEngine` instantiates them —
+`VoiceEngine::process` sums the voices and stops. So "after the rack" is where this stage will remain once the
+rack is wired, and *today* it is after the master gain, which is the end of the chain as it actually exists.
+That gap is not ticket 58's and was not touched.
+
+## Latency, which is declared
+
+A lookahead limiter delays what it passes. The stage delays by **its lookahead in samples** —
+`round(1.5 ms × sampleRate / 1000)`, so **66 samples at 44.1 kHz, 72 at 48 kHz, 144 at 96 kHz** — and the
+plugin declares it with `setLatencySamples` from `prepareToPlay`. An unreported delay breaks every host's
+delay compensation, which is a worse bug than the clipping it fixes.
+
+**The declared latency does not move with the on/off parameter**, and that is deliberate: the delay line runs
+whether the ceiling is enforced or not, so a host that has compensated for it stays compensated when the
+parameter moves under automation. It also means the off state is not a bypass of the *stage*, only of the
+ceiling — the output is the input exactly, delayed by the declared number.
+
+For anything outside a host the compensation is explicit, and the two places that need it do it:
+`plugin/tests/fidelity_test.cpp` renders `latency` samples long and drops the front (see below), and the
+window boundaries in `plugin/tests/audio_test.cpp` are taken at the plugin's own latency rather than at a raw
+block edge.
+
+## The invariant that protects the work underneath
+
+**When the ceiling is not engaging, the render is identical with it enabled and disabled — bit-identical, not
+close.** Two things make that true rather than merely true-ish:
+
+* the required gain is *exactly* `1` for any sample within the ceiling (the branch is a comparison, not a
+  division that lands near 1), and the envelope never leaves unity in that case;
+* the envelope state is a **`double`**. As a `float` the release adder saturates: the step `(1 - gain) ×
+  coefficient` falls below half an ulp of 1.0 and the gain sticks about `3e-8 × releaseSamples` short of
+  unity — roughly `-77 dB` at the default release — and *never arrives*. In `double` the decay continues until
+  the perturbation is far below a float ulp, so the multiplication **rounds to the delayed sample exactly**.
+  The invariant therefore holds *after a release*, not only before the first engagement, which is what a
+  preset that engaged once on a loud note and then went quiet needs.
+
+The brickwall is a separate line from the envelope: the applied gain is clamped to `ceiling / |sample|`, so no
+transient, no ramp rate and no detector failure can put a sample over the ceiling. The attack ramp only shapes
+the *approach*.
+
+## Acceptance, measured
+
+Command: `./build-58/plugin/tests/xerum-plugin-tests "[limiter]"` and
+`./build-58/tests/dsp/xerum-dsp-tests "[limiter]"`, 48 kHz / block 512, ceiling at its default −0.30 dB
+(linear **0.966051**).
+
+| measurement | value |
+|---|---|
+| **16 voices held, ceiling off** (both channels) | **7.740814** — above full scale |
+| **16 voices held, ceiling on** | **0.966051 / 0.966051** — exactly the ceiling, at the sample level |
+| 1 voice, ceiling off | 0.9999996 — full scale to the last bit |
+| 2 voices, ceiling off | 1.999630 |
+| a signal below the ceiling, ceiling on vs off | **bit-identical, every sample** (8 192-sample and 12 288-sample renders) |
+| after an engagement and a release, ceiling on vs off | **bit-identical from sample 120 000 on** |
+| declared latency | 72 samples at 48 kHz (66 at 44.1, 144 at 96) |
+
+The counterfactual is what makes the first pair mean something: the same render with the ceiling **off** does
+exceed full scale (7.740814), so the "never exceeds 0 dBFS" assertion is not describing an already-safe
+signal. `[dsp][limiter]` carries the same shape at the algorithm level, including a four-sample hard
+transient, which is the case a lookahead exists for.
+
+## The gain-staging finding, which is reported and not acted on
+
+**The voices sum with no headroom, and that is why the second key goes red.** Measured with the ceiling off,
+init patch, velocity 127, notes 36/39/42…:
+
+* **one voice already peaks at 0.9999996** — full scale to the last bit, since the init patch's oscillator
+  at level 1.0 drives a table whose peak is 1.0 through a master gain of 1.0. There is no per-voice trim and
+  no mix-bus trim anywhere between the oscillator and the output;
+* **two voices are 1.999630** — about twice one voice (the two peaks do not land on the same sample, which
+  is the only reason it is not exactly 2×);
+* **sixteen voices are 7.740814** — about 7.7 times, sub-linear for the same reason.
+
+So the fix is not "the voices are slightly too hot"; it is that **a single voice is already exactly full
+scale**, which makes any polyphony a guaranteed overload. **Nothing was re-voiced.** The dev asked for a
+limiter, and whether the voices should be quieter — a per-voice headroom factor, or a mix-bus trim, or a
+lower table peak — is a separate decision about the instrument's gain structure, and it belongs in this
+report. Changing it would alter every preset's level and every fidelity measurement, which is not what this
+ticket was asked for.
+
+## Fidelity: the corpus bypasses it, and says so
+
+`docs/test-strategy.md`'s fidelity layer renders each fixture through xerum and compares it against a golden
+captured from the **reference**, which has no such stage. So the layer **bypasses the ceiling** — it sets
+`Master Limiter` to off after the document is applied — and **compensates the declared latency** by rendering
+`latency` samples long and dropping the front. The alternative the ticket offered, regenerating the corpus
+with the ceiling on, would bake xerum's divergence into the reference's side of the comparison and the
+divergence would stop being measurable; bypassing keeps the layer measuring the *engine*, which is what it
+exists for. `[fidelity-stimulus]` is untouched and still byte-identical, because both of its sides render
+through the same plugin with the same declared latency.
+
+## What could not be judged
+
+**Everything about how it sounds.** This session has no ears. The numbers above establish that the output
+cannot exceed the ceiling, that a signal below it is bit-identical, that the latency is declared and
+compensated, and that the reduction begins one lookahead before the peak. They do **not** establish that the
+release does not pump, that the attack does not dull transients, or that the result is what Ableton's device
+would have done to the same signal — this is a limiter with the reference's *defaults and shape*, not a model
+of its internals. Release, lookahead and the link are the reference's; the attack ramp, the detector and the
+release curve are xerum's, and the dev's ears decide whether that is good enough.

@@ -21,6 +21,19 @@ std::string_view toString (Resolution resolution)
 namespace
 {
 
+/// Is this error simply "there is nothing there"?
+///
+/// It matters, because the two have opposite meanings here (ticket `56`): **absence** is an ordinary miss —
+/// a preset naming an asset no root has is the import contract's every-day case — while a path that *is*
+/// there and will not be read is a refusal, and a refusal is reported. `ENOENT` and `ENOTDIR` are how a
+/// filesystem spells absence, both from a walk over a directory that is not there and from a stat of a path
+/// that is not; libc++ already folds both into `file_type::not_found` for the stat, and this is the same
+/// distinction made where the error code is all there is.
+bool isAbsence (const std::error_code& error)
+{
+    return error == std::errc::no_such_file_or_directory || error == std::errc::not_a_directory;
+}
+
 std::string normaliseReference (std::string_view reference)
 {
     std::string out (reference);
@@ -41,7 +54,11 @@ std::string normaliseReference (std::string_view reference)
 /// what macOS gives you by default — `exists()` succeeds for `basic shapes.WAV` whether or not the file is
 /// spelled that way, so asking the filesystem is not enough: the *directory entries* have to be compared.
 /// Without this the CaseInsensitive resolution would be dead code on the machine most likely to need it.
-bool spelledExactly (const std::filesystem::path& root, const std::filesystem::path& suffix)
+///
+/// `refusal` is set when a directory could not be listed at all — a refusal, which is a fact about the
+/// content root rather than about the spelling, and one the caller reports (ticket `56`).
+bool spelledExactly (const std::filesystem::path& root, const std::filesystem::path& suffix,
+                     ContentProblem& refusal)
 {
     std::filesystem::path current = root;
 
@@ -57,6 +74,12 @@ bool spelledExactly (const std::filesystem::path& root, const std::filesystem::p
                 break;
             }
 
+        if (error && ! isAbsence (error))
+        {
+            refusal = { current, "could not be listed (" + error.message() + ")" };
+            return false;
+        }
+
         if (exact.empty())
             return false;
 
@@ -67,7 +90,8 @@ bool spelledExactly (const std::filesystem::path& root, const std::filesystem::p
 }
 
 /// A case-insensitive lookup inside one directory, for a filesystem that is case-*sensitive*.
-std::filesystem::path findByIgnoringCase (const std::filesystem::path& root, const std::string& relative)
+std::filesystem::path findByIgnoringCase (const std::filesystem::path& root, const std::string& relative,
+                                          ContentProblem& refusal)
 {
     std::filesystem::path current = root;
 
@@ -81,7 +105,18 @@ std::filesystem::path findByIgnoringCase (const std::filesystem::path& root, con
         if (piece.empty())
             return {};
 
-        if (! std::filesystem::exists (current / piece))
+        // Non-throwing, like every other question this file asks the filesystem: a path it may not look at
+        // is a refusal to report, not an exception to unwind through a host (ticket `56`).
+        std::error_code failing;
+        const bool present = std::filesystem::exists (current / piece, failing);
+
+        if (failing && ! isAbsence (failing))
+        {
+            refusal = { current, "could not be read (" + failing.message() + ")" };
+            return {};
+        }
+
+        if (! present)
         {
             std::error_code error;
             std::filesystem::path match;
@@ -102,7 +137,12 @@ std::filesystem::path findByIgnoringCase (const std::filesystem::path& root, con
             }
 
             if (match.empty())
+            {
+                if (error && ! isAbsence (error))
+                    refusal = { current, "could not be listed (" + error.message() + ")" };
+
                 return {};
+            }
 
             current = match;
         }
@@ -122,15 +162,40 @@ std::filesystem::path findByIgnoringCase (const std::filesystem::path& root, con
 
 } // namespace
 
-void TableLibrary::addRoot (const std::filesystem::path& root)
+void TableLibrary::noteProblem (const std::filesystem::path& path, std::string reason) const
 {
-    std::error_code error;
-
-    if (! std::filesystem::exists (root, error))
+    if (hasProblemFor (path))
         return;
 
-    if (std::find (roots_.begin(), roots_.end(), root) == roots_.end())
-        roots_.push_back (root);
+    problems_.push_back ({ path, std::move (reason) });
+}
+
+bool TableLibrary::hasProblemFor (const std::filesystem::path& path) const
+{
+    return std::any_of (problems_.begin(), problems_.end(),
+                        [&path] (const ContentProblem& problem) { return problem.path == path; });
+}
+
+void TableLibrary::addRoot (const std::filesystem::path& root)
+{
+    if (std::find (roots_.begin(), roots_.end(), root) != roots_.end() || hasProblemFor (root))
+        return;
+
+    std::error_code error;
+    const auto status = std::filesystem::status (root, error);
+
+    if (! std::filesystem::exists (status))
+    {
+        // Not there: an ordinary candidate — a machine that has not installed the reference has one — and
+        // saying so would be noise. A refusal that happened to the path's *parent* leaves the type as
+        // `not_found` too, so the error is the thing that tells them apart (ticket `56`).
+        if (error && ! isAbsence (error))
+            noteProblem (root, "the content root could not be examined (" + error.message() + ")");
+
+        return;
+    }
+
+    roots_.push_back (root);
 }
 
 TableLookup TableLibrary::loadTable (std::string_view reference) const
@@ -149,20 +214,55 @@ TableLookup TableLibrary::loadTable (std::string_view reference) const
 
     for (const auto& root : roots_)
     {
+        // A path inside a root that will not be read — a refused root, a directory with its permissions
+        // taken away — is a fact about the content root, and it is recorded *and skipped*: the roots after
+        // it are still asked (ticket `56`). A stall is not recorded here at all: it never returns.
+        ContentProblem refusal;
+
         for (const auto& suffix : candidates)
         {
             const auto candidate = root / suffix;
 
-            if (std::filesystem::exists (candidate))
+            // **The `error_code` overload, everywhere on this path.** A stat that fails for anything but
+            // "not there" — a permission, a symlink loop, an I/O error — used to throw a
+            // `filesystem_error` out of the constructor and abort the host; the crash report is
+            // `__throw_filesystem_error` under `TableLibrary::loadTable`. It is a value now.
+            std::error_code failing;
+            const bool present = std::filesystem::exists (candidate, failing);
+
+            if (failing && ! isAbsence (failing))
             {
-                const bool exactSpelling = spelledExactly (root, suffix);
+                noteProblem (candidate, "could not be read (" + failing.message() + ")");
+                continue;
+            }
+
+            if (present)
+            {
+                const bool exactSpelling = spelledExactly (root, suffix, refusal);
                 const auto key = candidate.string();
 
                 if (const auto cached = cache_.find (key); cached != cache_.end())
                     return cached->second;
 
                 std::ifstream in (candidate, std::ios::binary);
-                std::vector<std::byte> bytes ((std::size_t) std::filesystem::file_size (candidate));
+
+                // The **non-throwing** size call, deliberately: a specious entry in a content root — a
+                // FIFO, a socket, anything the filesystem will not size — used to throw out of here, and
+                // an exception is not a report. It is an unreadable asset like any other (ticket `56`).
+                std::error_code sizing;
+                const auto size = std::filesystem::file_size (candidate, sizing);
+
+                if (sizing)
+                {
+                    TableLookup lookup;
+                    lookup.resolution = Resolution::Unreadable;
+                    lookup.path = candidate;
+                    lookup.error = "could not read " + candidate.string() + " (" + sizing.message() + ")";
+                    cache_.emplace (key, lookup);
+                    return lookup;
+                }
+
+                std::vector<std::byte> bytes (static_cast<std::size_t> (size));
 
                 if (in.good() && ! bytes.empty())
                 {
@@ -200,9 +300,16 @@ TableLookup TableLibrary::loadTable (std::string_view reference) const
         // Exact failed everywhere under this root; try ignoring case before moving on.
         for (const auto& suffix : candidates)
         {
-            const auto found = findByIgnoringCase (root / suffix.parent_path(), suffix.filename().string());
+            const auto found = findByIgnoringCase (root / suffix.parent_path(), suffix.filename().string(),
+                                                   refusal);
 
-            if (! found.empty() && std::filesystem::exists (found))
+            std::error_code failing;
+            const bool present = ! found.empty() && std::filesystem::exists (found, failing);
+
+            if (failing && ! isAbsence (failing))
+                noteProblem (found, "could not be read (" + failing.message() + ")");
+
+            if (present)
             {
                 const auto key = found.string();
 
@@ -214,7 +321,14 @@ TableLookup TableLibrary::loadTable (std::string_view reference) const
                 }
 
                 std::ifstream in (found, std::ios::binary);
-                std::vector<std::byte> bytes ((std::size_t) std::filesystem::file_size (found));
+
+                std::error_code sizing;
+                const auto size = std::filesystem::file_size (found, sizing);
+
+                if (sizing)
+                    continue;
+
+                std::vector<std::byte> bytes (static_cast<std::size_t> (size));
 
                 if (in.good() && ! bytes.empty())
                 {
@@ -240,11 +354,18 @@ TableLookup TableLibrary::loadTable (std::string_view reference) const
                 }
             }
         }
+
+        if (! refusal.path.empty())
+            noteProblem (refusal.path, refusal.reason);
     }
 
     TableLookup lookup;
     lookup.resolution = Resolution::Missing;
     lookup.error = "not found in " + std::to_string (roots_.size()) + " content root(s)";
+
+    if (! problems_.empty())
+        lookup.error += "; " + std::to_string (problems_.size()) + " content path(s) could not be read";
+
     return lookup;
 }
 

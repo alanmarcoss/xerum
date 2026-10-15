@@ -193,16 +193,19 @@ TEST_CASE ("the composition is the design's, and every parameter lands in one pa
     //==========================================================================
     // Ticket `52`: the composition, which is data — and the invariant that survives it.
 
-    // **The design's sections, in the design's order**, and the fall-through section last. That is
-    // `docs/design/xerum-direction-warm.html`'s content grid: an oscillator row, a noise-and-sub row, a
-    // filter section, the matrix panel, the bottom row, and then the groups the composition does not name.
+    // **The design's sections, in the design's order**. `docs/design/xerum-direction-warm.html`'s content
+    // grid: an oscillator row, a noise-and-sub row, the amplitude envelope's own section (ticket `57`), the
+    // filter section, the bottom row (the macro strip beside the group the composition does not name), and
+    // the compact matrix **last** — ticket `57` moved it there from between the filters and the bottom row,
+    // and the fall-through section is no longer the last one.
     std::vector<std::string> sectionIds;
 
     for (const auto& section : plan.sections)
         sectionIds.push_back (section.id);
 
-    CHECK (sectionIds == std::vector<std::string> { "osc-row", "noise-sub-row", "filter-section", "mod-panel",
-                                                    "macro-section", "default-section" });
+    CHECK (sectionIds == std::vector<std::string> { "osc-row", "noise-sub-row", "env-section",
+                                                    "filter-section", "macro-section", "default-section",
+                                                    "mod-panel" });
 
     // **Every panel is in exactly one section**, and every panel's group has a section to ask about: a
     // group that landed twice would be drawn twice, and a group that landed nowhere would vanish from the
@@ -239,11 +242,13 @@ TEST_CASE ("the composition is the design's, and every parameter lands in one pa
     CHECK (sectionOf ("Macro 1") == "macro-section");
     CHECK (sectionOf ("Macro 8") == "macro-section");
 
-    // **The fall-through, named.** The design's composition has no section for the global section or the
-    // amplitude envelope, so they land in the default one — visible here rather than assumed, which is what
-    // `sectionForGroup` exists for.
+    // **The fall-through, named.** The design's composition has no section for the global section, so it
+    // lands in the default one — visible here rather than assumed, which is what `sectionForGroup` exists
+    // for. The amplitude envelope used to fall through too; ticket `57` gives it a section of its own (and
+    // `Global` used to fall through *beside* it), so this is the one group left, and it is still on the
+    // page: a section that gained a home moved no other group.
     CHECK (sectionOf ("Global") == "default-section");
-    CHECK (sectionOf ("Amp Envelope") == "default-section");
+    CHECK (sectionOf ("Amp Envelope") == "env-section");
 
     // The row a section sits in is data too: the effects cards and the macro strip share the design's
     // `bottom-row`, which is how "side by side" is expressed rather than a section with two columns.
@@ -259,6 +264,25 @@ TEST_CASE ("the composition is the design's, and every parameter lands in one pa
 
     CHECK (bandOf ("fx-section") == bandOf ("macro-section"));
     CHECK (bandOf ("osc-row") != bandOf ("noise-sub-row"));
+
+    // Ticket `57`: the design's **flexible row** is the amplitude envelope's, and the matrix — which ticket
+    // `53` had given it to — has none. Exactly one entry carries it, which is what the layout's single
+    // slack block assumes.
+    const auto flexible = [&composition] (const std::string& id)
+    {
+        for (const auto& spec : composition)
+            if (spec.id == id)
+                return spec.flexible;
+
+        return false;
+    };
+
+    CHECK (flexible ("env-section"));
+    CHECK_FALSE (flexible ("mod-panel"));
+    CHECK_FALSE (flexible ("osc-row"));
+    CHECK (std::count_if (composition.begin(), composition.end(),
+                          [] (const SectionSpec& spec) { return spec.flexible; })
+           == 1);
 
     // **The FX holder matches nothing in this table**: xerum's bridge exposes no effect parameters, so the
     // section resolves to no panels and is not drawn. It stays in the composition — the bottom row
@@ -741,26 +765,34 @@ TEST_CASE ("the strip names every section of the composition, and each section h
         }
     }
 
-    // The sections are the design's, by id. `osc-row` is three oscillators in a row, `noise-sub-row` is
-    // noise and sub beneath them, `filter-section` is the two filters, `mod-panel` is the matrix — the one
-    // section the table does not derive — and `macro-section` is the bottom row's strip.
+    // The sections are the design's, by id — and since ticket `57` in the design's new order:
+    // `osc-row` is three oscillators in a row, `noise-sub-row` is noise and sub beneath them,
+    // `env-section` is the amplitude envelope's own band at the design's largest knob size,
+    // `filter-section` is the two filters, `macro-section` is the bottom row's strip, and `mod-panel` —
+    // the one section the table does not derive — is **last**.
     CHECK (editor->sectionId (0) == "osc-row");
     CHECK (editor->sectionId (1) == "noise-sub-row");
-    CHECK (editor->sectionId (2) == "filter-section");
-    CHECK (editor->sectionId (3) == "mod-panel");
+    CHECK (editor->sectionId (2) == "env-section");
+    CHECK (editor->sectionId (3) == "filter-section");
+    CHECK (editor->sectionId (4) == "macro-section");
+    CHECK (editor->sectionId (5) == "default-section");
+    CHECK (editor->sectionId (6) == "mod-panel");
 
-    CHECK (editor->sectionIsMatrix (3));
+    CHECK (editor->sectionIsMatrix (6));
     CHECK_FALSE (editor->sectionIsMatrix (0));
     CHECK_FALSE (editor->sectionIsMatrix (2));
-    CHECK (editor->sectionId (4) == "macro-section");
+    CHECK_FALSE (editor->sectionIsMatrix (3));
 
     // A section's modules are its panels' — what the strip's severity dot is keyed on — and the matrix's
-    // section is `ModSlot`, the module a report names a row by.
+    // section is `ModSlot`, the module a report names a row by. The amplitude envelope's module is `Env0`
+    // (the bridge's own module for it), which is what makes "the envelope's section" a question the strip
+    // can answer rather than a name this test wrote down twice.
     CHECK (editor->sectionModules (0)
            == std::vector<juce::String> { "Oscillator0", "Oscillator1", "Oscillator2" });
-    CHECK (editor->sectionForModule ("VoiceFilter0") == 2);
-    CHECK (editor->sectionForModule ("VoiceFilter1") == 2);
-    CHECK (editor->sectionForModule ("ModSlot") == 3);
+    CHECK (editor->sectionForModule ("Env0") == 2);
+    CHECK (editor->sectionForModule ("VoiceFilter0") == 3);
+    CHECK (editor->sectionForModule ("VoiceFilter1") == 3);
+    CHECK (editor->sectionForModule ("ModSlot") == 6);
     CHECK (editor->sectionForModule ("NoSuchModule") < 0);
 
     // A tab click locates its section on the one page, and **whether that is a scroll is the window's
@@ -1461,11 +1493,13 @@ TEST_CASE ("every colour a drawn surface resolves is a token", "[interface][ui]"
     CHECK (ui::look::XerumLookAndFeel().findColour (juce::ScrollBar::thumbColourId) == ui::look::borderHi);
 
     // **And it is not drawn either.** The ids above are what a widget would ask for; this is what the
-    // editor's own render contains — JUCE's paint path at the window's own size, the same measurement
-    // ticket `52` made. The scroll bars are inside this image (the matrix's grid is taller and wider than
-    // its viewport), so the colour that used to be here would be here.
-    editor->setSize (1080, 1108);
-
+    // editor's own render contains — JUCE's paint path at the size the editor **opened** at, the same
+    // measurement ticket `52` made. The scroll bars are inside this image (the matrix's grid is taller and
+    // wider than its viewport), so the colour that used to be here would be here.
+    //
+    // The size is not written down here: ticket `53` derives the default height from the composed page, so
+    // pinning a number would measure a window the plugin no longer opens at — which is exactly what ticket
+    // `57` did to the old hardcoded 1080×1108. The render's size is printed with the shares below.
     const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
     std::map<juce::uint32, int> counts;
     auto blue = 0;
@@ -1599,7 +1633,14 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
                 CHECK (editor->matrixView().getWidth() > 0);
                 CHECK (editor->matrixView().getHeight() > 0);
                 CHECK (editor->matrixView().getHeight() > bounds.getHeight());
-                CHECK (editor->composition().matrixVisibleRows() >= (int) ui::CompositionView::kMatrixVisibleRows);
+
+                // Ticket `53`'s assertion here was "at least" the constant, because the matrix took the
+                // window's slack and a taller window showed more rows. Ticket `57` gives that slack to the
+                // envelope, so the compact matrix shows **exactly** its own four rows at every size — which
+                // is the whole of "the matrix no longer absorbs the slack", asserted at both sizes this
+                // case measures.
+                CHECK (editor->composition().matrixVisibleRows()
+                       == (int) ui::CompositionView::kMatrixVisibleRows);
                 continue;
             }
 
@@ -1712,13 +1753,311 @@ TEST_CASE ("the composed page fits the window it opens at, and stays legible at 
 }
 
 //==============================================================================
+TEST_CASE ("the composition's slack is the envelope's, and the compact matrix takes none",
+           "[interface][ui]")
+{
+    // Ticket `57`'s acceptance, as one measurement: **who absorbs the window's slack**. Ticket `53` gave it
+    // to the matrix — so a window with room to spare showed more matrix rows and nothing else moved —
+    // and the composition gives it to the amplitude envelope now (`SectionSpec::flexible`), so the
+    // envelope's section is the one that grows and the matrix's is the one that stays put.
+    //
+    // Four sizes, and why they are these four:
+    //
+    //   * **the default window** — the size the editor opens at. Ticket `53` derives that height from the
+    //     page itself (`composition_.totalHeight()` in the constructor), so at this size the page and the
+    //     viewport are the same number and whatever slack there is is at most a few pixels broad. The
+    //     envelope's section at this size is printed, and the *natural* size below is what says how much of
+    //     it is the window's;
+    //   * **1080×640** — deliberately smaller than the page, where the slack is nought by construction:
+    //     the page is taller than the window and scrolls, so every section is exactly what it asked for.
+    //     The envelope's height there **is** its natural height, which is what makes the default window's
+    //     own slack a measured number rather than an assumption;
+    //   * **900×600** — the window's minimum, where the page is again taller than the window: nothing to
+    //     hand out, and neither of the two sections moves;
+    //   * **the default window 300 px taller** — the only size here with a slack in it. The envelope's
+    //     section grows by exactly those 300 px, the matrix's does not change at all, and every section
+    //     below the envelope moves down by the same 300.
+    //
+    // The numbers are printed rather than only asserted, because "who takes the slack" is a pair of
+    // measurements. This session has no eyes; it has these rectangles.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    XerumAudioProcessor processor;
+    auto editor = openEditor (processor);
+    REQUIRE (editor != nullptr);
+
+    const auto sectionFor = [&editor] (const juce::String& id)
+    {
+        for (int index = 0; index < editor->sectionCount(); ++index)
+            if (editor->sectionId (index) == id)
+                return index;
+
+        return -1;
+    };
+
+    const auto envSection = sectionFor ("env-section");
+    const auto matrixSection = sectionFor ("mod-panel");
+
+    REQUIRE (envSection >= 0);
+    REQUIRE (matrixSection >= 0);
+
+    // **The composition in order, as measured** — the titles and the rectangles off the resolved
+    // composition rather than the data it came from, so a section that landed somewhere else fails here.
+    {
+        std::vector<juce::String> titles;
+
+        for (int index = 0; index < editor->sectionCount(); ++index)
+            titles.push_back (editor->sectionTitle (index));
+
+        std::fprintf (stderr, "\n[interface] the composition, in order (default window):\n");
+
+        for (int index = 0; index < editor->sectionCount(); ++index)
+        {
+            const auto bounds = editor->composition().sectionBounds (index);
+
+            std::fprintf (stderr, "[interface]   %d %-16s %-14s %4dx%4d @%4d,%-4d\n", index,
+                          editor->sectionId (index).toRawUTF8(), editor->sectionTitle (index).toRawUTF8(),
+                          bounds.getWidth(), bounds.getHeight(), bounds.getX(), bounds.getY());
+        }
+
+        CHECK (titles == std::vector<juce::String> { "Oscillators", "Noise + Sub", "Amp Envelope", "Filter",
+                                                     "Macros", "Other", "Mod Matrix" });
+
+        // Early, and early *in the page*: the envelope is in the first half of the composition, i.e. above
+        // the filters and the whole bottom half of the instrument — the position the ticket is about.
+        CHECK (titles[static_cast<std::size_t> (envSection)] == "Amp Envelope");
+        CHECK (envSection < editor->sectionCount() / 2);
+        CHECK (matrixSection == editor->sectionCount() - 1);
+    }
+
+    // **The controls of the two sections, in px**, read off the widgets rather than the constants: the
+    // envelope's four knobs at the design's largest diameter, and a matrix cell — which is not a dial at
+    // all, but the compact numeric field inside a 22px row. This is the "knob sizes in each of the two
+    // sections" half of the acceptance.
+    {
+        const auto* envPlan = editor->sectionPlan (envSection);
+        REQUIRE (envPlan != nullptr);
+        REQUIRE (envPlan->panels.size() == 1);
+
+        auto* envelope = editor->panelForGroup (editor->plan().panels[
+            static_cast<std::size_t> (envPlan->panels[0])].title);
+        REQUIRE (envelope != nullptr);
+
+        std::fprintf (stderr, "[interface] %s: panel %dx%d, %d controls\n", envelope->title().c_str(),
+                      envelope->getWidth(), envelope->getHeight(), envelope->rows());
+
+        CHECK (envelope->rows() == 4);   // attack, decay, sustain, release — the whole group
+
+        for (int row = 0; row < envelope->rows(); ++row)
+        {
+            auto* control = envelope->controlAtRow (row);
+
+            REQUIRE (control != nullptr);
+            REQUIRE (control->knob() != nullptr);
+
+            const auto* knob = control->knob();
+
+            std::fprintf (stderr, "[interface]   %-14s knob %2dx%-2d, %s\n",
+                          control->label().toRawUTF8(), knob->getWidth(), knob->getHeight(),
+                          knob->size() == KnobSize::Default ? "design's largest" : "smaller");
+
+            CHECK (knob->size() == KnobSize::Default);
+            CHECK (knob->mode() == Knob::Mode::Dial);
+            CHECK (knob->getWidth() == ui::look::knobDiameter);
+            CHECK (knob->getHeight() == ui::look::knobDiameter);
+        }
+
+        // The matrix's cells are bound controls like every other (`ticket 45`), and their size is the
+        // grid's: a row of the compact matrix is 22px and a cell is one row less its border.
+        auto* amount = editor->matrixView().controlForCell (0, 3);
+        REQUIRE (amount != nullptr);
+        REQUIRE (amount->knob() != nullptr);
+
+        std::fprintf (stderr, "[interface] Mod Matrix: cell (0,3) %dx%d, mode %s, row height %d\n",
+                      amount->knob()->getWidth(), amount->knob()->getHeight(),
+                      amount->knob()->mode() == Knob::Mode::Cell ? "Cell" : "Dial",
+                      ModulationMatrixView::kRowHeight);
+
+        CHECK (amount->knob()->mode() == Knob::Mode::Cell);
+        CHECK (amount->knob()->getHeight() <= ModulationMatrixView::kRowHeight);
+    }
+
+    // --- 1. the default window -----------------------------------------------------------------------
+    const auto defaultSize = juce::Point<int> (editor->getWidth(), editor->getHeight());
+    const auto rectsAtDefault = [&editor]
+    {
+        std::vector<juce::Rectangle<int>> rects;
+
+        for (int index = 0; index < editor->sectionCount(); ++index)
+            rects.push_back (editor->composition().sectionBounds (index));
+
+        return rects;
+    }();
+
+    std::vector<int> heightsAtDefault;
+    std::vector<int> yAtDefault;
+
+    for (const auto& rect : rectsAtDefault)
+    {
+        heightsAtDefault.push_back (rect.getHeight());
+        yAtDefault.push_back (rect.getY());
+    }
+
+    const auto envAtDefault = editor->composition().sectionBounds (envSection);
+    const auto matrixAtDefault = editor->composition().sectionBounds (matrixSection);
+
+    std::fprintf (stderr, "[interface] default window %dx%d: viewport %d, page %d; envelope %d, matrix %d, "
+                          "matrix rows %d\n",
+                  editor->getWidth(), editor->getHeight(), editor->compositionViewportHeight(),
+                  editor->compositionHeight(), envAtDefault.getHeight(), matrixAtDefault.getHeight(),
+                  editor->composition().matrixVisibleRows());
+
+    CHECK (editor->getWidth() == 1080);
+    CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
+    CHECK_FALSE (editor->compositionScrolls());
+
+    // --- 2. smaller than the page: the sections' own heights, with nothing to hand out -----------------
+    editor->setSize (1080, 640);
+
+    const auto envNatural = editor->composition().sectionBounds (envSection).getHeight();
+
+    std::fprintf (stderr, "[interface] 1080x640 (the page scrolls): envelope %d — its natural height; "
+                          "matrix %d, rows %d\n",
+                  envNatural, editor->composition().sectionBounds (matrixSection).getHeight(),
+                  editor->composition().matrixVisibleRows());
+
+    CHECK (editor->compositionHeight() > editor->compositionViewportHeight());
+
+    // The default window's slack, measured: what the envelope has there over what it needs. Since ticket
+    // `53` the default height *is* the page's own need, so this is nought in this build — and it is a
+    // number rather than an assumption, which is what the ticket asks for at this size.
+    std::fprintf (stderr, "[interface] the default window's slack, as the envelope measures it: %d px\n",
+                  envAtDefault.getHeight() - envNatural);
+
+    // --- 3. the window's minimum ----------------------------------------------------------------------
+    editor->setSize (900, 600);
+
+    std::fprintf (stderr, "[interface] 900x600: viewport %d, page %d; envelope %d, matrix %d, rows %d\n",
+                  editor->compositionViewportHeight(), editor->compositionHeight(),
+                  editor->composition().sectionBounds (envSection).getHeight(),
+                  editor->composition().sectionBounds (matrixSection).getHeight(),
+                  editor->composition().matrixVisibleRows());
+
+    CHECK (editor->composition().sectionBounds (envSection).getHeight() == envNatural);
+    CHECK (editor->composition().sectionBounds (matrixSection).getHeight() == matrixAtDefault.getHeight());
+    CHECK (editor->composition().matrixVisibleRows()
+           == static_cast<int> (CompositionView::kMatrixVisibleRows));
+
+    // --- 4. a window with slack in it ------------------------------------------------------------------
+    constexpr int kSlack = 300;
+
+    editor->setSize (defaultSize.x, defaultSize.y + kSlack);
+
+    const auto envAtTall = editor->composition().sectionBounds (envSection);
+    const auto matrixAtTall = editor->composition().sectionBounds (matrixSection);
+
+    std::fprintf (stderr, "[interface] %dx%d: viewport %d, page %d; envelope %d (+%d), matrix %d (+%d), "
+                          "rows %d\n",
+                  editor->getWidth(), editor->getHeight(), editor->compositionViewportHeight(),
+                  editor->compositionHeight(), envAtTall.getHeight(),
+                  envAtTall.getHeight() - envAtDefault.getHeight(), matrixAtTall.getHeight(),
+                  matrixAtTall.getHeight() - matrixAtDefault.getHeight(),
+                  editor->composition().matrixVisibleRows());
+
+    // **The change, in one measurement**: the window's 300 extra pixels are the envelope's and nothing
+    // else's.
+    CHECK (envAtTall.getHeight() == envAtDefault.getHeight() + kSlack);
+    CHECK (matrixAtTall.getHeight() == matrixAtDefault.getHeight());
+    CHECK (editor->composition().matrixVisibleRows()
+           == static_cast<int> (CompositionView::kMatrixVisibleRows));
+
+    // Every other section is exactly the height it was, and everything *after* the envelope's band moved
+    // down by the slack and no further: the space went to one section, not to the page. The envelope itself
+    // keeps its y — it grows downwards from the same place, which is what a section taking slack looks like.
+    // (The bands are placed in order, so a section after the envelope's index sits below it;
+    // `default-section` shares its band with the macro strip and is therefore *beside* the section before
+    // it rather than below it, which is why this is a y-comparison against the window's other size and not
+    // a stacking test.)
+    for (int index = 0; index < editor->sectionCount(); ++index)
+    {
+        const auto bounds = editor->composition().sectionBounds (index);
+
+        INFO ("section " << index << ": " << editor->sectionId (index).toStdString());
+
+        CHECK (bounds.getHeight()
+               == heightsAtDefault[static_cast<std::size_t> (index)] + (index == envSection ? kSlack : 0));
+        CHECK (bounds.getY()
+               == yAtDefault[static_cast<std::size_t> (index)] + (index > envSection ? kSlack : 0));
+    }
+
+    // The page still fits the window it was given, so the slack was absorbed rather than pushed out.
+    CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
+    CHECK_FALSE (editor->compositionScrolls());
+
+    // **What the envelope's slack is.** The envelope's content is one row of four knobs — a fixed height —
+    // so the pixels above its natural height are air: the design system has no envelope content that uses
+    // height, and this ticket does not draw one. Stated as a measurement here rather than left for a reader
+    // to discover, because it is the one part of "prominence is the space it occupies" that geometry cannot
+    // settle.
+    std::fprintf (stderr, "[interface] of the envelope's %d px at %dx%d, %d are its own content and %d are "
+                          "air (the knob row is %d)\n",
+                  envAtTall.getHeight(), editor->getWidth(), editor->getHeight(), envNatural,
+                  envAtTall.getHeight() - envNatural, ui::kKnobRowHeight);
+
+    // **A wider window is the other gesture that produces slack** — the panels re-flow into fewer rows, so
+    // the page needs less height and the window the user already has has room the composition never asked
+    // for. That room is the envelope's as well: the same rule, reached the way a user actually reaches it.
+    editor->setSize (1400, defaultSize.y);
+
+    std::fprintf (stderr, "[interface] 1400x%d: viewport %d, page %d; envelope %d, matrix %d, rows %d\n",
+                  editor->getHeight(), editor->compositionViewportHeight(), editor->compositionHeight(),
+                  editor->composition().sectionBounds (envSection).getHeight(),
+                  editor->composition().sectionBounds (matrixSection).getHeight(),
+                  editor->composition().matrixVisibleRows());
+
+    CHECK (editor->composition().sectionBounds (matrixSection).getHeight() == matrixAtDefault.getHeight());
+    CHECK (editor->composition().sectionBounds (envSection).getHeight() >= envAtDefault.getHeight());
+    CHECK (editor->compositionHeight() <= editor->compositionViewportHeight());
+    CHECK_FALSE (editor->compositionScrolls());
+
+    // **The capture.** The editor's own render at the window it opens at — `createComponentSnapshot`, the
+    // method tickets `52` and `53` measure with — written to the build directory as a PNG, because "does
+    // the envelope now read as the centre of the instrument" is the dev's call and looking at it is how
+    // that call is made. What this session can do instead is measure the same render: the palette shares
+    // and the non-token blue are asserted in
+    // `every colour a drawn surface resolves is a token`, which renders the editor at exactly this size.
+    {
+        editor->setSize (defaultSize.x, defaultSize.y);
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds());
+
+        auto directory = juce::File (juce::String (XERUM_BUILD_DIR)).getChildFile ("interface-evidence");
+        directory.createDirectory();
+
+        const auto png = directory.getChildFile ("ticket-57-default-window.png");
+        juce::PNGImageFormat format;
+
+        if (auto stream = std::unique_ptr<juce::FileOutputStream> (png.createOutputStream()))
+            format.writeImageToStream (image, *stream);
+
+        std::fprintf (stderr, "[interface] the composed page at %dx%d rendered to %s\n", image.getWidth(),
+                      image.getHeight(), png.getFullPathName().toRawUTF8());
+
+        CHECK (image.getWidth() == editor->getWidth());
+        CHECK (image.getHeight() == editor->getHeight());
+        CHECK (png.getSize() > 0);
+    }
+}
+
+//==============================================================================
 TEST_CASE ("the design's sections are in the design's positions", "[interface][ui]")
 {
     // Ticket `52`'s acceptance, as geometry: three oscillators **in a row** across the top, noise and sub
-    // beneath them, the filters in the middle with their response displays **inside** their own panels, the
-    // matrix under them, and — ticket `53` — the design's bottom row, the macro strip beside the section
-    // the composition does not name its groups in. These are the placements the dev said were missing: the
-    // elements were the design's and the arrangement was a panel-per-group grid.
+    // beneath them, the amplitude envelope's own band (ticket `57`), the filters with their response
+    // displays **inside** their own panels, — ticket `53` — the design's bottom row, the macro strip beside
+    // the section the composition does not name its groups in, and — ticket `57` — the compact matrix
+    // **last**. These are the placements the dev said were missing: the elements were the design's and the
+    // arrangement was a panel-per-group grid.
     const juce::ScopedJuceInitialiser_GUI gui;
 
     XerumAudioProcessor processor;
@@ -1837,14 +2176,14 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
             CHECK (panel->controlAtRow (row)->getRight() <= plane.getX());
     }
 
-    // **The matrix** below the filters, as tall as the design's "8 / 64": at least eight rows of the 64, and
-    // the grid scrolls inside the section. Ticket `53` made the number the geometry's rather than a
-    // constant — the section takes the window's slack, so a taller window shows more rows — and the heading
-    // is checked against it, which is what keeps the caption honest.
+    // **The matrix is the last band of the page**, after the bottom row, and it is the composition's
+    // **compact** section since ticket `57`: four of the 64 rows, its `N / 64` tag still the geometry's own
+    // number, and no slack — the section it used to take the window's slack with is the envelope's now
+    // (asserted below), so the number of rows it shows *is* the constant rather than at least it.
     const auto matrixSection = sectionFor ("mod-panel");
     REQUIRE (matrixSection >= 0);
     CHECK (editor->sectionIsMatrix (matrixSection));
-    CHECK (composition.sectionBounds (matrixSection).getY() > composition.sectionBounds (filterSection).getY());
+    CHECK (matrixSection == editor->sectionCount() - 1);
 
     const auto matrixBounds = composition.sectionBounds (matrixSection);
     const auto visibleRows = (matrixBounds.getHeight() - ui::kSectionTitleHeight
@@ -1852,16 +2191,55 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
                              / ui::ModulationMatrixView::kRowHeight;
 
     CHECK (visibleRows == editor->composition().matrixVisibleRows());
-    CHECK (visibleRows >= ui::CompositionView::kMatrixVisibleRows);
+    CHECK (visibleRows == ui::CompositionView::kMatrixVisibleRows);
     CHECK (editor->matrixView().getHeight() > matrixBounds.getHeight());
+
+    // **The envelope's own section**, ticket `57`'s first half: directly after the noise/sub row and before
+    // the filters, holding the amplitude envelope's panel and nothing else, and the panel's knobs are the
+    // design's **largest** — `KnobSize::Default`, the same 44px the oscillators and the filters draw, and
+    // larger than the compact band's small knob and the macros'. Position is asserted here, the size
+    // measured separately, and the band the section owns is checked against the page's width: an envelope
+    // that landed in a half-width panel would have the position without the room.
+    const auto envSection = sectionFor ("env-section");
+    REQUIRE (envSection >= 0);
+    CHECK (composition.sectionBounds (envSection).getY() >= composition.sectionBounds (noiseRow).getBottom());
+    CHECK (composition.sectionBounds (envSection).getBottom()
+           <= composition.sectionBounds (filterSection).getY());
+
+    const auto* envPlan = editor->sectionPlan (envSection);
+    REQUIRE (envPlan != nullptr);
+    REQUIRE (envPlan->panels.size() == 1);
+
+    auto* envelope = panelOf (envPlan->panels[0]);
+    REQUIRE (envelope != nullptr);
+    CHECK (envelope->title() == "Amp Envelope");
+    CHECK (envelope->getBounds().getWidth() == composition.sectionBounds (envSection).getWidth());
+
+    for (int row = 0; row < envelope->rows(); ++row)
+    {
+        auto* control = envelope->controlAtRow (row);
+        REQUIRE (control != nullptr);
+
+        INFO ("envelope control " << control->label().toStdString());
+
+        REQUIRE (control->knob() != nullptr);
+        CHECK (control->knob()->size() == KnobSize::Default);
+        CHECK (control->knob()->getWidth() == ui::look::knobDiameter);
+        CHECK (control->knob()->getHeight() == ui::look::knobDiameter);
+    }
 
     // **The bottom row: the macros beside the section the composition does not name its groups in.** The
     // design pairs its effects cards with the macro strip there, and xerum has no effects group — so the
     // half of that row the absent FX section would have held is where the fall-through section sits
-    // (ticket `53`), and the two are one row rather than two lines.
+    // (ticket `53`), and the two are one row rather than two lines. Since ticket `57` this row is the last
+    // one but for the matrix, so the assertions that named the matrix as its neighbour name the envelope's
+    // section instead.
     const auto macroSection = sectionFor ("macro-section");
     REQUIRE (macroSection >= 0);
-    CHECK (composition.sectionBounds (macroSection).getY() > composition.sectionBounds (matrixSection).getY());
+    CHECK (composition.sectionBounds (macroSection).getY()
+           >= composition.sectionBounds (filterSection).getBottom());
+    CHECK (composition.sectionBounds (matrixSection).getY()
+           >= composition.sectionBounds (macroSection).getBottom());
 
     const auto* macroPlan = editor->sectionPlan (macroSection);
     REQUIRE (macroPlan != nullptr);
@@ -1877,12 +2255,14 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
         CHECK (panel->getBounds().getX() >= panelOf (macroPlan->panels[0])->getBounds().getX());
     }
 
-    // **The fall-through, visible**: the last section is the one the composition does not name its groups
-    // in, the two groups in it are the two the design's composition has no place for, and it shares the
-    // design's bottom row with the macro strip rather than taking a line of its own.
+    // **The fall-through, visible**: the one group the design's composition has no place for is the global
+    // section, and it shares the design's bottom row with the macro strip rather than taking a line of its
+    // own. It is no longer the *last* section — ticket `57` put the compact matrix after the bottom row —
+    // so the assertion that said so is replaced by the reason: this row is the page's last but one, and
+    // what ends the page is the matrix.
     const auto defaultSection = sectionFor ("default-section");
     REQUIRE (defaultSection >= 0);
-    CHECK (defaultSection == editor->sectionCount() - 1);
+    CHECK (defaultSection == matrixSection - 1);
 
     const auto* defaultPlan = editor->sectionPlan (defaultSection);
     REQUIRE (defaultPlan != nullptr);
@@ -1892,7 +2272,14 @@ TEST_CASE ("the design's sections are in the design's positions", "[interface][u
     for (const auto panelIndex : defaultPlan->panels)
         fellThrough.insert (editor->plan().panels[static_cast<std::size_t> (panelIndex)].title);
 
-    CHECK (fellThrough == std::set<std::string> { "Global", "Amp Envelope" });
+    // `Amp Envelope` used to be in this set; ticket `57` gave it the section above, and this is the check
+    // that says the fall-through lost exactly that group and kept the other. Ticket `58` is the second
+    // member: the master ceiling's group is `Master`, the design's composition has no section for it, and
+    // the fall-through is **exactly where a group nobody named is supposed to land** — the alternative
+    // would be a group that vanished from the page, which is the invariant ticket `51` protected and ticket
+    // `52` built the fall-through to keep. Naming it a section is a composition decision and belongs to
+    // whoever next opens the composition, not to the parameter that arrived.
+    CHECK (fellThrough == std::set<std::string> { "Global", "Master" });
 
     const auto macroBounds = composition.sectionBounds (macroSection);
     const auto defaultBounds = composition.sectionBounds (defaultSection);

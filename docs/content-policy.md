@@ -101,9 +101,41 @@ Resolution order — see [the import contract](preset-import-contract.md):
 
 1. the user-configured content root;
 2. the reference's content root, if present;
-3. xerum's own content directory.
+3. xerum's own content directory;
+4. in a development checkout only, the source tree's own `content/`.
 
 With no reference installed, a preset still loads and reports its unresolved references.
+
+### The roots are offered, and asking is not the caller's job
+
+Those four paths are **candidates**: xerum does not check them where it stands, because a directory the OS
+will not let it look at is not a slow question, it is an open-ended one. `~/Desktop` is gated behind a
+consent prompt; a network volume, a sleeping external drive and a stalled file provider all answer nothing
+for as long as they like. Ticket `56` measured the cost of asking on the wrong thread: the plugin's own
+constructor, inside a host, sat in `open$NOCANCEL` for over two hours while `tccd` logged an unanswered
+`kTCCServiceSystemPolicyDesktopFolder` prompt for it — and a plugin that cannot finish constructing is a
+host that cannot start.
+
+So two rules hold, and `src/content/off_thread_work.h` is the mechanism for the second:
+
+- **nothing on the resolution path throws.** A path that cannot be examined is an `error_code`, recorded
+  with the path and the reason; a root that refuses is skipped and the roots behind it are still asked.
+  The throwing overload used to reach the plugin's constructor and `abort()` the host — a crash report the
+  dev produced — and a missing path never triggered it (`ENOENT` is `not_found`, not an error), so the
+  case that did was a root the OS denied;
+- **no content-root filesystem call runs on the thread that asked for it.** The walk runs on a worker and
+  the caller waits a bounded time (250 ms — microseconds in the ordinary case). A resolution that lands
+  later is published by the message thread's timer, with its own report entries.
+
+  Nothing in that read can name the processor or the editor: it captures only `shared_ptr`s — the content
+  library, the plan, the result block — and the roots by value. The worker's own queue state is shared with
+  it the same way, so a destructor neither cancels nor joins a read that is inside a system call: it joins
+  only an idle worker. The **residual** is that such a read holds its memory until the call returns — a
+  bounded leak, not a dangling access, and a read the OS will not let go cannot be asked to stop.
+
+`content/table_library_test.cpp` and `plugin/tests/content_gate_test.cpp` are where both rules are
+tested: a mode-000 root, a FIFO standing in for a root that will not answer, and an owner destroyed
+underneath an outstanding read.
 
 ## Deferred assets
 

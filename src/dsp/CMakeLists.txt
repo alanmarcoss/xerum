@@ -9,6 +9,7 @@ add_library(xerum_dsp STATIC
     noise_osc.cpp
     sub_osc.cpp
     fx_rack.cpp
+    limiter.cpp
     spectral_morph.cpp)
 
 # **Authoring-only code, deliberately not in `xerum_dsp`.**

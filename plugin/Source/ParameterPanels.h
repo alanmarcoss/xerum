@@ -354,23 +354,39 @@ private:
 };
 
 /// The composed page: the design's arrangement of whole sections, in the design's order — three
-/// oscillators in a row, noise and sub beneath them, the two filters with their response displays beside
-/// their knobs, the matrix, the macros beside the fall-through section in the design's bottom row.
-/// Ticket `52`'s answer to "the design specifies a composition, the interface derived a grid".
+/// oscillators in a row, noise and sub beneath them, the amplitude envelope's own band, the two filters
+/// with their response displays beside their knobs, the macros beside the fall-through section in the
+/// design's bottom row, and the compact matrix last. Ticket `52`'s answer to "the design specifies a
+/// composition, the interface derived a grid", with ticket `57`'s editorial order — the envelope's section
+/// and the matrix's place — on top of it.
 ///
 /// It arranges and paints; it binds nothing and owns nothing. The panels, the matrix and the planes belong
 /// to the editor, and this is the one place that knows where they sit — which is why the layout is a
 /// single function that both sets the rectangles and returns the height, rather than a `resized` and a
 /// separate estimate that could disagree.
 ///
-/// ## Ticket `53`: the page is packed to fit, and the matrix takes the slack
+/// ## Ticket `53`: the page is packed to fit, and one section takes the slack
 ///
-/// The design's own content box is a grid whose fourth row is `1fr` — the matrix, the one section whose
-/// body is a grid of 64 rows that no window shows at once — and it fits a 900×600 window with no scroll at
-/// all. The composition here is packed the same way: the sections' own heights are measured, and the
-/// difference between what they need and what the window has is given to the matrix, which shows as many
-/// of its rows as fit and says the number in its heading. Below its natural height the page is taller than
-/// the window and scrolls; it never shrinks a section to hide it.
+/// The design's own content box is a grid whose fourth row is `1fr` and it fits a 900×600 window with no
+/// scroll at all. The composition here is packed the same way: the sections' own heights are measured, and
+/// the difference between what they need and what the window has is given to the composition's **flexible
+/// section** — `SectionSpec::flexible`, the design's `1fr` — which shows as much of itself as fits and says
+/// how much it is showing. Below its natural height the page is taller than the window and scrolls; it
+/// never shrinks a section to hide it.
+///
+/// ## Ticket `57`: the flexible section is the amplitude envelope's, and the matrix is compact
+///
+/// Ticket `53` handed the slack to the **matrix**, on the argument that a grid of 64 rows is the one
+/// section a taller window can usefully give more of. The dev's editorial call is the other way round: the
+/// amplitude envelope is the control a player touches on every patch, and the matrix is the one that was
+/// occupying the page. So the matrix gives the flexible row up (it is the envelope's in the data now), the
+/// compact matrix shows `kMatrixVisibleRows` rows and moves to the **end** of the composition, and the
+/// envelope's own band — early, at full width, with the design's largest knobs — is the section a taller
+/// window grows.
+///
+/// What the envelope's slack *is* is air: the row of four knobs is a fixed 68px and the design system has
+/// no envelope content that uses height. That is stated in `plugin/tests/interface_test.cpp` as a
+/// measurement rather than hidden, because it is the one part of this ticket the geometry cannot settle.
 class CompositionView final : public juce::Component
 {
 public:
@@ -382,15 +398,21 @@ public:
     /// The matrix, when the composition has a matrix section. Not owned; null is allowed.
     void setMatrix (juce::Component* matrixViewport);
 
-    /// How many rows of the matrix the matrix section shows **when the window has no slack to give** — the
-    /// "8 / 64" the design's heading says. At a window with room to spare the section is taller and shows
-    /// more, and `matrixVisibleRows` reports what it actually shows.
-    static constexpr int kMatrixVisibleRows = 8;
+    /// How many rows of the matrix the matrix section shows.
+    ///
+    /// Ticket `53` set this to the design's own **eight** — the tag on the design's panel reads `8 / 64`
+    /// — and the section grew from there into whatever slack the window had. Ticket `57` makes the matrix
+    /// a **compact panel** that keeps its tag but gives its slack up: it shows four of the 64 rows, which
+    /// is half the design's matrix and few enough that the last band of the page is no taller than the
+    /// bottom row above it. `matrixVisibleRows` still reports what the geometry actually shows, so the tag
+    /// in the heading and the grid on screen cannot disagree.
+    static constexpr int kMatrixVisibleRows = 4;
 
     /// Arrange the whole page for this width and this much window height, and return the height it needs.
     /// The height is what the sections themselves need: when the sections fit inside `windowHeight`, the
-    /// matrix's section grows into the difference and the page is exactly `windowHeight`; when they do not,
-    /// the page is taller than the window and the editor scrolls it — never a clipped section.
+    /// **flexible** section (the data's `1fr`) grows into the difference and the page is exactly
+    /// `windowHeight`; when they do not, the page is taller than the window and the editor scrolls it —
+    /// never a clipped section.
     int layout (int width, int windowHeight);
 
     /// The resolved composition, in the design's order, and where each section landed in the page's own

@@ -25,6 +25,19 @@
 // finish using a flag the audio thread sets and clears around `processBlock`. Waiting on a flag is not a
 // lock on the audio thread — the audio thread only ever does two atomic stores — and it is correct even
 // for a host that ignores suspension.
+//
+// ## Content resolution is the one thing that is not done where it is asked for (ticket 56)
+//
+// The root cause of ticket `56` is a filesystem call on the construction path, and the sample is a host's
+// main thread inside `open$NOCANCEL` for two hours while `tccd` waited for an answer to a Desktop-folder
+// consent prompt. The rule that comes out of it:
+//
+//   * **no content-root filesystem call runs on the calling thread**, construction included. The walk
+//     runs on a `content::OffThreadWork` worker; the caller waits at most `kContentResolveBudgetMs`;
+//   * the ordinary case is unchanged, because a walk of a handful of local files finishes inside that
+//     wait — a preset load publishes its tables before it returns, exactly as it did;
+//   * when the wait expires, the previous tables stand, the report says the root did not answer, and the
+//     tables are published — with their own report entries — when they arrive, from the message thread.
 
 #pragma once
 
@@ -32,10 +45,14 @@
 
 #include "ParameterBridge.h"
 #include "PresetState.h"
+#include "limiter.h"
+#include "off_thread_work.h"
 #include "table_library.h"
 #include "voice.h"
 
 #include <atomic>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -134,14 +151,30 @@ public:
     /// tests, and any host that would rather not wait).
     void flushModulation();
 
+    /// Publish a content resolution that landed after its bounded wait had expired, and say what it
+    /// found. Message thread; does nothing when nothing is pending or when the filesystem has still not
+    /// answered. The message-thread timer calls it, and a caller that wants it done before returning may
+    /// call it directly.
+    void flushContent();
+
     /// Edit one section of a voice filter's drawn response. Message thread.
     ///
     /// The edit is written to the document's `VoiceFilter{slot}/PZs[]` leaves — so it is a preset edit —
     /// and the engine's response is republished with it. The plane's callback is the only caller.
     void setPoleZeroSection (int filterSlot, int section, const dsp::PoleZeroSection& sectionValue);
 
-    /// The content roots content is resolved from, in the order they were tried.
+    /// The content roots content is resolved from, in the order they are tried.
+    ///
+    /// These are the roots xerum *offers*, not the ones it has managed to read: a root that is absent, or
+    /// that the OS will not let anybody read, is on this list too. Whether one can be read is reported
+    /// through the import report rather than answered by leaving it out.
     std::vector<juce::String> contentRoots() const;
+
+    /// How long content resolution may hold the thread that asked for it. A walk of a handful of local
+    /// files finishes in microseconds, so this bound only ever matters for a root that will not answer — a
+    /// consent prompt nobody has answered, a volume that has gone to sleep, a drive that is not spinning.
+    /// Then it is the whole of what a host's construction, or a preset load, waits (ticket `56`).
+    static constexpr int kContentResolveBudgetMs = 250;
 
 private:
     /// The table's layout, resolved once by id so nothing else has to count positions.
@@ -149,6 +182,10 @@ private:
     {
         int polyCount { -1 }, mono { -1 }, legato { -1 }, portamentoTime { -1 }, portamentoCurve { -1 };
         int portaAlways { -1 }, masterVolume { -1 };
+
+        /// Ticket `58`'s master ceiling. Its two paths are xerum's own — the reference has no such leaf —
+        /// so these are the only layout entries whose document paths a reference preset never carries.
+        int limitOn { -1 }, limitCeiling { -1 };
 
         struct Osc
         {
@@ -226,7 +263,50 @@ private:
     int interpolateAfterLoadOf (const model::PresetDocument& document, const std::string& prefix) const;
 
     /// Resolve the oscillator tables and complete the report with what only the plugin knows.
+    ///
+    /// Two halves, and the split is ticket `56`: `planContent` decides everything the *document* says —
+    /// which slots want a table, which of those carry one inline, which name a file — and adds the report
+    /// entries that are facts about the document alone. Only the part that reads the filesystem goes to
+    /// the worker, and the caller waits a bounded time for it.
     void resolveContent (const model::PresetDocument& document);
+
+    /// What resolving the content of one document wants: the reads it needs, and what each slot is
+    /// waiting for. Pure — it never touches the filesystem, which is the whole point.
+    struct ContentPlan
+    {
+        struct Slot
+        {
+            enum class Kind { Silent, Embedded, Reference };
+
+            Kind kind { Kind::Silent };
+            std::string prefix;        ///< `Oscillator{n}/WTOsc{n}`, for the report
+            std::string tablePath;     ///< the document leaf a reference came from
+            std::string reference;     ///< as the preset spelled it; empty when it named none
+            std::optional<dsp::Wavetable> embedded;
+            int lookup { -1 };         ///< this slot's index in `references`, -1 when it names no file
+        };
+
+        std::array<Slot, dsp::kOscillatorSlots> slots;
+        std::vector<std::string> references;   ///< what the worker must resolve, in this order
+        int fallback { -1 };                   ///< where `kDefaultTable` sits in `references`, -1 if unused
+    };
+
+    /// What the worker found: one lookup per requested reference, in that order, and the content paths
+    /// that refused. Nothing in here says whether it is *finished* — that is the flag `submit` hands back,
+    /// which stays shut for a submission the worker superseded, so a caller holding this block knows not to
+    /// publish an empty resolution.
+    struct ResolvedContent
+    {
+        std::vector<content::TableLookup> lookups;
+        std::vector<content::ContentProblem> problems;
+    };
+
+    ContentPlan planContent (const model::PresetDocument& document);
+
+    /// Apply a resolution: report the roots that refused, report every slot that could not be supplied,
+    /// and publish the tables. Both arguments are **consumed** — the tables are moved out of them, so
+    /// this runs once per resolution and once only.
+    void publishResolved (ContentPlan& plan, ResolvedContent& resolved);
 
     /// The engine-level gaps the bridge knowingly leaves: a warp variant's source routing. Named rather
     /// than dropped, per the contract. (The drawn pole/zero response left this list in ticket `45`, which
@@ -279,8 +359,32 @@ private:
     Layout layout_;
 
     dsp::VoiceEngine engine_;
+
+    /// **The master ceiling** (ticket `58`) — the last stage in the chain, after the rack the flat `FX`
+    /// arrays describe. Sized in `prepareToPlay`; `process` allocates nothing.
+    dsp::Limiter limiter_;
+
     std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> tables_ {};
-    content::TableLibrary library_;
+
+    /// Shared with the worker, which may outlive a destructor that cannot join it: the resolution reads
+    /// this library on its own thread, so it cannot be a member the processor could destroy underneath it.
+    /// Touched by that thread alone — `contentRoots()` answers from `contentRoots_` instead.
+    std::shared_ptr<content::TableLibrary> library_;
+
+    /// The content-root walk, off the calling thread. Ticket `56`.
+    content::OffThreadWork contentWork_;
+
+    /// The roots xerum offers its library, in the import contract's order. **Candidates**: whether one can
+    /// be read is the filesystem's answer, asked for on the worker, so this list holds no filesystem
+    /// question's outcome and never changes.
+    std::vector<std::filesystem::path> contentRoots_;
+
+    /// The newest resolution handed to `contentWork_`, and its plan, result and completion flag, kept
+    /// only while it is still in flight past its bounded wait. Guarded by `stateLock_`, which both
+    /// `applyDocument` and the timer's `flushContent` hold.
+    std::shared_ptr<ContentPlan> pendingPlan_;
+    std::shared_ptr<ResolvedContent> pendingResolved_;
+    std::shared_ptr<std::atomic<bool>> pendingFinished_;
 
     /// The drawn responses, read off the document and read by the audio thread when it rebuilds the
     /// settings. Written only while the audio thread is held out (`publishPoleZero`), which is why the

@@ -1137,9 +1137,9 @@ void CompositionView::setMatrix (juce::Component* matrixViewport)
 namespace
 {
 /// One band of the composition: the run of sections that share a `band`, the width each of them got, and
-/// the height each one needs. Measuring and placing are two steps because the matrix takes the slack
-/// between them (ticket `53`), and a single pass that both decided a rectangle and reported a height could
-/// not grow the matrix without moving everything under it.
+/// the height each one needs. Measuring and placing are two steps because the **flexible** section takes
+/// the slack between them, and a single pass that both decided a rectangle and reported a height could not
+/// grow that section without moving everything under it.
 struct Band
 {
     std::size_t begin { 0 };          ///< the first section of the band
@@ -1148,6 +1148,7 @@ struct Band
     std::vector<int> heights;         ///< per section, heading included
     int height { 0 };                 ///< the band's own height: its tallest section
     int matrix { -1 };                ///< index within the band of the matrix section, or -1
+    int flexible { -1 };              ///< index within the band of the `1fr` section, or -1
 };
 } // namespace
 
@@ -1173,8 +1174,9 @@ int CompositionView::matrixVisibleRows() const
 
 int CompositionView::layout (const int width, const int windowHeight)
 {
-    // The matrix's own height, before the window has a say: the design's own "8 / 64" panel — the heading,
-    // the column header and the eight rows the design's matrix shows at its 900×600 window.
+    // The matrix's own height, before the window has a say: the compact panel of ticket `57` — the heading,
+    // the column header and `kMatrixVisibleRows` rows. It is a *natural* height now rather than a floor:
+    // the section no longer takes the window's slack, so this is the height it gets at every size.
     const auto matrixNatural = kSectionTitleHeight + ModulationMatrixView::kHeaderHeight
                                + kMatrixVisibleRows * ModulationMatrixView::kRowHeight + 2;
 
@@ -1253,6 +1255,13 @@ int CompositionView::layout (const int width, const int windowHeight)
             const auto& section = sections_[slot];
             auto& sectionPanels = panels_[slot];
 
+            // The design's `1fr`, as data: at most one section of the composition carries it, and the slack
+            // block below is the only thing that reads it. `matrix` and `flexible` are both kept, because
+            // since ticket `57` they are different sections — the matrix has a grid to place and a `N / 64`
+            // caption to keep honest, and the envelope is the one that grows.
+            if (section.flexible)
+                band.flexible = i;
+
             int tallest = 0;
 
             if (section.kind == SectionKind::Matrix)
@@ -1278,14 +1287,18 @@ int CompositionView::layout (const int width, const int windowHeight)
         index = end;
     }
 
-    // --- the matrix takes the window's slack --------------------------------------------------------
+    // --- the flexible section takes the window's slack -------------------------------------------------
     //
-    // The design's content grid is `auto auto auto 1fr auto auto`: the matrix is its **flexible row**, the
-    // one section whose body is a grid of 64 rows that no window can show at once. Ticket `53` gives it the
-    // same job here — what the other sections need is fixed, and the difference between that and the
-    // window is the matrix's — which is what makes the composed page fit its window instead of scrolling in
-    // it. The slack is never taken *from* it: below its natural eight rows the page scrolls, and the
-    // heading says how many rows are actually on screen.
+    // The design's content grid is `auto auto auto 1fr auto auto`: one section is its **flexible row**, and
+    // what the other sections need is fixed. Ticket `53` gave that job to the matrix; ticket `57` gives it
+    // to the amplitude envelope (`SectionSpec::flexible`), because the section the instrument should be read
+    // from is the one a taller window should grow. The slack is never taken *from* a section: below the
+    // flexible section's natural height the page scrolls, and every section keeps what it asked for.
+    //
+    // The flexible section's band is its own in this composition, so the slack lands inside the flexible
+    // section and nowhere else. A band's sections share its height, so a flexible section that shared a
+    // band would grow its band-mates with it — the data does not do that, and this is the comment that says
+    // so rather than a check that cannot fire.
     {
         int natural = 0;
 
@@ -1298,9 +1311,9 @@ int CompositionView::layout (const int width, const int windowHeight)
 
         if (slack > 0)
             for (auto& band : bands)
-                if (band.matrix >= 0)
+                if (band.flexible >= 0)
                 {
-                    band.heights[static_cast<std::size_t> (band.matrix)] += slack;
+                    band.heights[static_cast<std::size_t> (band.flexible)] += slack;
                     band.height += slack;
                 }
     }
@@ -1340,8 +1353,9 @@ int CompositionView::layout (const int width, const int windowHeight)
 
             if (section.kind == SectionKind::Matrix)
             {
-                // The rows the window has room for. The tag in the heading is this number, so the panel says
-                // "8 / 64" when eight fit rather than promising a count it does not show.
+                // The rows the section has room for — `kMatrixVisibleRows` of them, since ticket `57` gives
+                // the matrix no slack to grow into. The tag in the heading is this number, so the panel says
+                // `4 / 64` rather than promising a count it does not show.
                 const auto rows = juce::jmax (0, (content.getHeight() - ModulationMatrixView::kHeaderHeight)
                                                      / ModulationMatrixView::kRowHeight);
 

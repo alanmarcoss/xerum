@@ -199,11 +199,16 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
     //==============================================================================
     // Ticket `55`: the bank, the field that is the way into it, and the browser itself.
     //
-    // The bank is read **once**, here, from the manifest the first content root carries — the same roots
-    // the wavetables resolve through, in the same order. Reading it at construction rather than per paint
-    // is what makes "the browser lists what the manifest lists" a fact about a moment rather than about a
+    // The bank is read **once**, from the manifest the first content root carries — the same roots the
+    // wavetables resolve through, in the same order. Reading it at construction rather than per paint is
+    // what makes "the browser lists what the manifest lists" a fact about a moment rather than about a
     // filesystem that might change under a repaint.
-    catalog_ = ui::readBankCatalog (processor_.contentRoots());
+    //
+    // Ticket `56` added the other half of that sentence: it is read **off this thread**. The read is
+    // filesystem work through a content root, and this constructor runs inside the host's `createEditor`,
+    // so a root that will not answer must not be able to keep the window from opening. The bound is the
+    // same one the processor uses, and a bank that answers later is installed by `installBankCatalog`.
+    requestBankCatalog();
 
     presetField_.onStep = [this] (const int step) { stepPreset (step); };
     presetField_.onOpen = [this] { setBrowserOpen (! browser_.isVisible()); };
@@ -245,6 +250,9 @@ XerumAudioProcessorEditor::XerumAudioProcessorEditor (XerumAudioProcessor& proce
 
 XerumAudioProcessorEditor::~XerumAudioProcessorEditor()
 {
+    // The bank read's timer first: nothing may call back into this editor once it is going away.
+    stopTimer();
+
     // The key listener lives on a component this editor does not own, so it is removed before anything
     // else is torn down. Then the look-and-feel: a component must not outlive the one it points at.
     if (keyListenerHost_ != nullptr)
@@ -562,6 +570,58 @@ void XerumAudioProcessorEditor::updateBankCursor()
             : juce::String());
 
     browser_.setSelectedIndex (bankIndex_, false);
+}
+
+void XerumAudioProcessorEditor::requestBankCatalog()
+{
+    const auto roots = processor_.contentRoots();
+    auto catalog = std::make_shared<ui::BankCatalog>();
+    const auto finished = std::make_shared<std::atomic<bool>> (false);
+
+    bankWork_.submit ([roots, catalog] { *catalog = ui::readBankCatalog (roots); }, finished);
+
+    if (bankWork_.waitForNewest (XerumAudioProcessor::kContentResolveBudgetMs)
+        && finished->load (std::memory_order_acquire))
+    {
+        catalog_ = std::move (*catalog);
+        return;
+    }
+
+    // The root has not answered. The window opens without a bank listed, the browser says why rather than
+    // the misleading "no factory bank", and the timer below installs the bank when the manifest arrives.
+    catalog_ = {};
+    catalog_.error = "the content root did not answer within "
+                     + std::to_string (XerumAudioProcessor::kContentResolveBudgetMs)
+                     + " ms, so the bank has not been read yet; it will be listed when the manifest arrives";
+
+    pendingCatalog_ = std::move (catalog);
+    pendingCatalogFinished_ = finished;
+
+    startTimerHz (20);
+}
+
+void XerumAudioProcessorEditor::installBankCatalog()
+{
+    if (pendingCatalog_ == nullptr || pendingCatalogFinished_ == nullptr
+        || ! pendingCatalogFinished_->load (std::memory_order_acquire))
+        return;
+
+    stopTimer();
+
+    catalog_ = std::move (*pendingCatalog_);
+    pendingCatalog_.reset();
+    pendingCatalogFinished_.reset();
+
+    // The same two calls the constructor makes when the read answers in time, for the same reason: the
+    // browser's list and the field's category are the catalogue's, and neither is guessed.
+    browser_.setCatalog (catalog_);
+    updateBankCursor();
+    repaint();
+}
+
+void XerumAudioProcessorEditor::timerCallback()
+{
+    installBankCatalog();
 }
 
 bool XerumAudioProcessorEditor::loadBankPreset (const int index)
