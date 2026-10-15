@@ -542,7 +542,8 @@ void XerumAudioProcessorEditor::refreshReport()
         planes_[slot]->setFilter (slot, type != document.parameters.end() && type->second.isText()
                                             ? juce::String (type->second.text)
                                             : juce::String());
-        planes_[slot]->setSections (poleZeroFromDocument (document, slot));
+        planes_[slot]->setSections (poleZeroFromDocument (document, "VoiceFilter"
+                                                                        + std::to_string (slot)));
     }
 
     // The knobs' second arc, from the same rows: a knob whose parameter a modulation row addresses draws

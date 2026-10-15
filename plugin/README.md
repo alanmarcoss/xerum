@@ -1660,15 +1660,16 @@ and the manual section are recorded in `src/dsp/limiter.h`.
 ## Where it sits, and what it is not
 
 **Last, after the effects rack** — a master stage outside the rack, not a slot in it. In `processBlock` the
-order is: the voice pool's stereo render → the **master gain** (ramped, unchanged) → **this stage** → the
-host's channel mapping. The ceiling is deliberately after the master gain, because it has to see what the
-master gain produced rather than the host's mapping of it.
+order is: the voice pool's stereo render → the **master gain** (ramped, unchanged) → the **FX rack** → **this
+stage** → the host's channel mapping. The ceiling is deliberately after the master gain, because it has to see
+what the master gain produced rather than the host's mapping of it.
 
-One thing to be plain about: **the `FX` rack is not in the signal path yet.** `dsp::FxRack`/`FxBank` are built
-and tested (14 shipped classes) but nothing in `XerumAudioProcessor` or `VoiceEngine` instantiates them —
-`VoiceEngine::process` sums the voices and stops. So "after the rack" is where this stage will remain once the
-rack is wired, and *today* it is after the master gain, which is the end of the chain as it actually exists.
-That gap is not ticket 58's and was not touched.
+One thing that was true when this section was written and is not any more: **the `FX` rack was built and
+instantiated nowhere** — `dsp::FxRack`/`FxBank` existed, with 14 shipped classes, and nothing in
+`XerumAudioProcessor` or `VoiceEngine` constructed them, so "after the rack" meant "after the master gain".
+That gap was ticket `60`'s and is closed below: the rack now sits between the master gain and this stage, and
+it is ticket 60's section that carries the measurements. This paragraph is left standing rather than deleted
+because the sentence it corrects was load-bearing for ticket 58's placement — the ceiling has to stay last.
 
 ## Latency, which is declared
 
@@ -1885,3 +1886,177 @@ the graph's second curve and the knob's arc as **the same number**.
 response display), whether 0.957 wide-per-tall **feels right** for an instrument window against the mock's
 1.62, and whether the four monospaced times under the curve are information or repetition of the knob
 readouts beside them. This session has rectangles, heights, scales and colour shares — no eyes.
+
+# Ticket 60 — the FX rack in the signal path
+
+Ticket `58`'s agent found this while placing the ceiling: `dsp::FxBank` was **built and tested and instantiated
+nowhere** — fourteen classes, the MAIN / BUS 1 / BUS 2 topology, splitters, a `kParam…` vocabulary — and none of
+it reached the output. So every preset whose sound depends on its FX rendered without them, and every fidelity
+number on such a preset was measuring a signal the reference does not produce. Measured over the factory bank:
+**621 of 626 presets carry an FX slot**, 4168 slot entries in all, so this was not a corner.
+
+## Where it sits, and what feeds it
+
+`processBlock`'s chain is now: the voice pool's stereo render → the **master gain** → **`dsp::FxBank`** →
+**the ceiling** (ticket `58`) → the host's channel mapping. The ceiling stays last, which is what its declared
+latency assumes, and the order is asserted by a render rather than by the call's position : an `FXEQ` band at
++24 dB through the rack reaches **6.221161** peak with the ceiling off and **0.966051** with it on — the
+ceiling's own default, to the digit. Were the rack downstream of the ceiling, the boosted signal would arrive at
+the host unbounded.
+
+**The three racks are wired; only MAIN is fed.** A preset's `FXRack0/1/2` are MAIN / BUS 1 / BUS 2, and the
+*mixer* that sends a voice to BUS 1 or 2 lives in the voice layer — `RoutingSlot`'s `kParamFXBus{n}Level`, which
+xerum does not implement. So `FxBank` gets the pool's stereo render on MAIN and the *silence* its buffers were
+sized with on the two busses, and a bus rack therefore processes nothing: 169 factory presets put FX on BUS 1
+and 24 on BUS 2, and for those the rack is wired and inaudible. `[plugin][audio][fx]`'s "a rack on BUS 1 changes
+nothing, because nothing feeds it" is that gap's record — the assertion to invert the day the mixer lands.
+`Global0`'s `kParamFXBus{n}Dest`/`Vol` are read and handed to the bank, so the routing is already the preset's.
+
+## Where the parameters come from
+
+Not the bridge: nothing in a reference preset puts an effect on the host-visible surface, so there is nothing for
+a parameter to be. The slots are read **from the document**, by the same schema paths everything else arrives by
+(`FXRack{n}/FX[i]/type` and `<class>/plainParams/kParam…`), at load, and handed to the rack with the audio
+thread held out — building an effect allocates. The decode is `XerumAudioProcessor::planFxRack`, and three
+things in it are worth naming:
+
+* **the index is parsed, not iterated.** `std::map` orders the document's keys lexicographically, so `FX[10]`
+  sorts before `FX[2]`; ticket 41 was caught by exactly that, and the slots are emitted in numeric order.
+* **a drawn `FXFilter` response is decoded** with the same reader the voice filter uses — ticket 60
+  parameterised `poleZeroFromDocument` with the object path (`VoiceFilter{n}` or `FXRack{n}/FX[i]/FXFilter`)
+  rather than writing a second reader for one format. Six factory slots are `PZ_SVF` with a response inline;
+  without it a `PZ_SVF` band is a pass-through, which is a substitution, not a filter.
+* **the plan owns its assets.** A `FxSlot` *borrows* its curve and its response, and `prepareToPlay` re-prepares
+  the bank, which rebuilds the chain and dereferences them again — so the storage lives in the processor and is
+  replaced only while the audio thread is out.
+
+## What is in the path now, proved by difference
+
+`[plugin][audio][fx]` renders the same document with and without the slots and compares **sample by sample**,
+which is this project's counterfactual standard. One `FXDistortion` (hard clip, drive 60, wet 100 %): **6496 of
+8192 samples differ**, residual -7.91 dB against the dry render, peak 0.3937 → 0.2174. Two slots in the other
+order — distortion into delay versus delay into distortion — differ in **10243 of 12288 samples** (-14.13 dB):
+the chain is the preset's order, not the rack's own.
+
+**The per-class table**, which is the dev's version of "what was missing": one slot per class, a representative
+setting, measured against the same document without it (24 blocks × 512, note 60). `residual-vs-dry` is how much
+of the dry render the difference accounts for — near 0 dB means the render was *replaced* rather than shaped:
+
+| class | residual-vs-dry | samples differ | peak dry → wet | reports |
+|---|---|---|---|---|
+| `FXDistortion` | -7.97 dB | 8544 | 0.3937 → 0.2174 | 0 |
+| `FXFlanger` | +1.12 dB | 11948 | 0.3937 → 0.8238 | 0 |
+| `FXPhaser` | +4.43 dB | 12214 | 0.3937 → 1.0491 | 0 |
+| `FXChorus` | -0.28 dB | 9193 | 0.3937 → 0.7782 | 0 |
+| `FXDelay` | +2.47 dB | 12215 | 0.3937 → 0.6408 | 0 |
+| `FXComp` | -7.59 dB | 8544 | 0.3937 → 0.7566 | 0 |
+| `FXReverb` | +5.90 dB | 12215 | 0.3937 → 0.4698 | 0 |
+| `FXEQ` | +16.58 dB | 12215 | 0.3937 → 3.1235 | 0 |
+| `FXFilter` | +3.83 dB | 12215 | 0.3937 → 0.3093 | 0 |
+| `FXHyperD` | +3.05 dB | 9081 | 0.3937 → 0.2195 | 0 |
+| `FXBode` | +0.65 dB | 8670 | 0.3937 → 0.1969 | 0 |
+| `FXConv` | −∞ dB | **0** | 0.3937 → 0.3937 | **1** |
+| `FXUtils` | -6.21 dB | 12215 | 0.3937 → 0.3920 | 0 |
+| `FXSplit` | -5.87 dB | 8993 | 0.3937 → 0.2187 | 0 |
+
+Thirteen of the fourteen change the render. **`FXConv` changes nothing and says why**: it convolves with an
+impulse response the *caller* supplies, the reference's `Impulses/` tree is resolved by no layer here yet
+(tickets `16`/`34`), and the effect reports "no impulse response was supplied" rather than convolving with
+nothing — which is why its row is the only one with a report and the only one whose difference is exactly zero.
+
+## The runaway the wiring found
+
+Wiring the rack found a real defect in a shipped effect, and it was not subtle. `FXDelay` reads `kParamBW` as
+the *loop filter's* Q and multiplies the filtered tap by `kParamFeedback`, so the loop's gain is
+`feedback x Q` — and the corpus's own values are BW **3.28 … 8.25** with feedback up to 58 %:
+
+| preset | its own `FXDelay` | loop gain | render, ceiling off, before |
+|---|---|---|---|
+| `ARP - Aardvark` | BW 3.28, feedback 47 % | **1.55** | peak **2.3e9** at 2 s |
+| `ARP - Bell Arperium` | BW 5.33, feedback 58 % | **3.09** | peak 3.7e9 at 2 s |
+
+That is not a delay that rings, it is one that grows without bound — and Bell Arperium's oscillators are a
+deferred engine, so it grew from numerical noise with **no input at all**. The fix keeps the reading rather
+than inventing a second meaning for `kParamBW` (ticket 04 read the parameter *ranges*, not the curves) and trims
+the feedback by the filter's own peak gain, so the loop sits at or below unity at the resonance:
+`feedback x min(1, 1/max(1, Q))`. `[fx-loop]` in `tests/dsp/fx_rack_test.cpp` measures it at the corpus's two
+values, an impulse and four seconds of silence, and through the rack — and it **fails loudly** if the bound is
+removed (the tail reaches 8.97e35, measured by reverting the line for one run).
+
+## The import report's half of it
+
+Nothing the rack cannot build is silent, and each of these is a real case rather than a hypothesis:
+
+* an **effect class that is deferred** (`FXSplit3`, `FXSplitMS`) or unknown: the rack skips it, and the model's
+  own walk already names it at `high` — the plugin does not say it twice. The classes a deferred splitter
+  claims are skipped *with* it, because their routing is not reproduced and running them serially would invent
+  a topology;
+* a **parameter name an effect does not know**, as `Class/kParamName`;
+* an **`FXFilter` whose type the preset never stored** — 1209 of the bank's 1513 `FXFilter` slots are in this
+  case, the schema marks the leaf optional, and the reference's *default* type applies in the reference. xerum
+  does not know it, so the band passes unfiltered and the report says exactly that (it used to say
+  `filter type '' is not shipped`, which no author can act on);
+* a **missing impulse response**, per slot;
+* a **drawn `flex[0]` curve that is not applied**. 88 factory presets carry one, and its domain is not
+  established: the corpus stores `xVals` over 0..1 with a falling `yVals`, while the transfer curve a distortion
+  applies is the input sample over -1..1 — and `curveShape` returns the first ordinate for anything at or below
+  the first abscissa, so reading one as the other would put a **constant on every negative sample** of a
+  `kXShaper` slot. The built-in curve plays instead, and the report says so.
+
+## What the fidelity baseline did
+
+Wiring the rack moved **every** comparison that had FX in it, which is 621 of 626 presets. The gate's seven
+rows, measured twice on this machine (48 kHz / block 512) — once with the stage's publish call neutralised as a
+control, once with it restored, both runs otherwise identical:
+
+| fixture | rmsDiff | spectral |
+|---|---|---|
+| `arp-aardvark` | -25.44 → -25.61 | 10.85 → 11.11 |
+| `arp-acid101` | -21.72 → -22.44 | 9.89 → 10.81 |
+| `ba-funk-me-electric-2` | -20.79 → -20.80 | 14.76 → 15.20 |
+| `ba-basist` | -19.14 → **-21.18** | 15.00 → 13.96 |
+| `ba-deep-throat-bass` | -19.52 → -20.18 | 18.85 → 21.25 |
+| `808-decomposed` | -21.06 → -21.82 | 14.60 → **18.04** |
+| `808-diesel` | -18.33 → -18.39 | 14.95 → 13.02 |
+
+Six rows sit inside their thresholds. **`808-decomposed` did not** — its spectral distance passed
+14.60 + 3.0 — and its baseline in `fidelity_test.cpp` is now the *measured after* value, with the reason written
+beside it. Nothing else moved: the thresholds, the margin and the other six baselines are untouched and no
+convention was adjusted to shrink the number.
+
+**Why it moved, and why that is not the rack being right.** `808-decomposed`'s rack has an `FXComp` at
+`FXRack0/FX[1]` whose `kParamThresh` 0.372 and `kParamRatio` 1e6 xerum reads as a **brickwall at -44.6 dB**
+(`thresholdDb = -120 x threshold`, ratio 1e6 = limit), which takes the preset's render 21 dB down — while the
+**reference's own render of it sits at -22 dBFS**, which no -44.6 dB brickwall can produce. So `FXComp`'s maps
+are measurably wrong for this preset. They are ticket `29`'s conventions ("ticket 04 read the ranges, not the
+curves"), they are out of ticket 60's scope, and they are recorded here rather than tuned. The same convention
+shows in the other direction on `BA - Lazer Bass`, whose `FXComp` asks for `kParamGain0..2` of +13…+16 dB and
+comes out **6x louder** than its dry render — that row's rmsDiff worsens by 7.1 dB.
+
+The direction of the whole set is worth stating, because an improvement here is not automatically a fix: the
+rack **removes energy** in most of these presets. The level error against the golden changes by **-25 … +16 dB**
+across the 32 fixtures, **median -1.4 dB**, and several of the improved `rmsDiff` rows are the rack attenuating
+a preset xerum was already too loud on. The candidate mechanism is a stated convention of `FxBase`: every
+effect's `kParamLevelOut` is applied as a **linear multiplier** (and its absence means unity), while 690 slots
+in the bank store one and its unit is not established — `FXDistortion`'s corpus values top out at 0.956,
+`FXDelay`'s at 0.853, and `ARP - Acid101`'s two slots multiply the whole chain by 0.431 and 0.311, which is the
+12 dB its render loses. That is a convention to measure against the reference before it is changed, and it is
+recorded here rather than guessed at.
+
+## What nobody here could judge
+
+Whether the effects **sound like the reference's** — that is the dev's ears and nothing in this session has
+any. What is measured is that they are in the path, in the preset's order, before the ceiling, that thirteen
+classes change the render and by how much, and that the one that cannot (a convolution with no impulse) says so
+instead of pretending.
+
+## Verified by running it
+
+| | |
+|---|---|
+| `[fx]` in `plugin/tests/audio_test.cpp` | **8 cases / 55 assertions — all passed** in `build-60`, the corpus-gated ones included (the reference's factory bank is installed on this machine) |
+| `[fx-loop]` in `tests/dsp/fx_rack_test.cpp` | **1 case / 27 assertions passed** — and it **fails** if the loop bound is removed: reverting that one line for a run put the tail at **8.97e35** (impulse) and 5.76e11 (through the rack), which is what makes it a regression test rather than a description |
+| `xerum-dsp-tests` | **161 cases / 1,642,990 assertions — all passed** |
+| `[fidelity-corpus]`, with the stage wired | **1879 assertions — all passed**; the seven gate rows printed above, and 808-decomposed's re-measured baseline is the number it measures |
+| `[fidelity-corpus]`, stage neutralised (the control) | **all seven rows reproduced their recorded baselines to the printed 0.01 dB** (-25.44, -21.72, -20.79, -19.14, -19.52, -21.06, -18.33 / 10.85, 9.89, 14.76, 15.00, 18.85, 14.60, 14.95) and every assertion passed — so the table above is a before/after of one machine, one build, one control |
+| the rest of the plugin suite (`~[interface]`) | 71 cases, 68 passed, **2 failed in `gain_staging_test.cpp`** — another session's ticket-61 file, mid-flight while this ran, whose *reference*-side renders are empty in this build; not touched here and not this ticket's. One case skipped: `[fidelity-stimulus]`, which needs the harness binary in this build directory. The interface, model and content suites were left to integration's serialised run |

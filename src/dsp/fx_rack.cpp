@@ -1275,6 +1275,8 @@ protected:
         leftFilter_.set (filterHz_, filterQ_, sampleRate_);
         rightFilter_.set (filterHz_, filterQ_, sampleRate_);
 
+        const double feedback = loopFeedback();
+
         for (int i = 0; i < frames; ++i)
         {
             const double tapLeft = leftLine_.read (delayLeft);
@@ -1286,8 +1288,8 @@ protected:
             leftFilter_.update (fedLeft);
             rightFilter_.update (fedRight);
 
-            leftLine_.push (left[i] + feedback_ * leftFilter_.lowpass);
-            rightLine_.push (right[i] + feedback_ * rightFilter_.lowpass);
+            leftLine_.push (left[i] + feedback * leftFilter_.lowpass);
+            rightLine_.push (right[i] + feedback * rightFilter_.lowpass);
 
             left[i] = static_cast<float> (tapLeft);
             right[i] = static_cast<float> (tapRight);
@@ -1295,6 +1297,28 @@ protected:
     }
 
 private:
+    /// **The loop's gain, and why it is bounded.**
+    ///
+    /// `kParamBW` is read as the loop filter's Q, and a TPT lowpass at Q lifts its peak by about Q — so at
+    /// the corpus's *own* values (`ARP - Aardvark`: BW 3.28, feedback 47 %; `ARP - Bell Arperium`: BW 5.33,
+    /// feedback 58 %) `feedback x Q` is 1.5 and 3.1. That is not a delay that rings, it is one that runs
+    /// away: measured with the ceiling off — which is how the fidelity layer renders, the golden being the
+    /// reference's own unlimited output — Aardvark reached **2.3e9** and Bell Arperium 3.7e9 by the end of
+    /// a 2 s render, and Bell Arperium's oscillators are a deferred engine, so it grew from numerical noise
+    /// with no input at all.
+    ///
+    /// The reference's mapping for `kParamBW` is not established — ticket 04 read the parameter *ranges*,
+    /// not the curves — so this keeps the reading rather than inventing a second meaning for it, and trims
+    /// the feedback by the filter's own peak gain: the loop then sits at or below unity at the resonance and
+    /// below it everywhere else, which is the condition for the tail to decay. A preset that asks for 58 %
+    /// feedback still gets a long tail; it does not get an explosion. A delay that runs away is not the
+    /// delay any preset asked for.
+    double loopFeedback() const
+    {
+        const double peakGain = std::max (1.0, filterQ_);
+        return feedback_ * std::min (1.0, 1.0 / peakGain);
+    }
+
     double timeLeft_ { 0.25 }, timeRight_ { 0.25 };
     double offsetLeft_ { 1.0 }, offsetRight_ { 1.0 };
     double feedback_ { 0.0 };
@@ -1770,6 +1794,14 @@ public:
     {
         if (! unimplemented_)
             return {};
+
+        // **A slot that stores no `kParamType`** asks for the reference's *default* filter — the schema
+        // marks the leaf optional and the corpus leaves it out in 1209 of 1513 `FXFilter` slots. That is
+        // not a mistyped name but an unknown default, so it says which of the two it is: a preset author
+        // cannot act on "filter type '' is not shipped".
+        if (typeName_.empty())
+            return "FXFilter: the preset stores no filter type, so the reference's own default applies, and "
+                   "xerum does not know it — the band passes unfiltered";
 
         return "FXFilter: filter type '" + typeName_ + "' is not shipped in v1 — the band passes unfiltered";
     }

@@ -205,14 +205,20 @@ std::string parameterIdFromPath (std::string_view modelPath);
 /// label cannot disagree with the spec the engine will build.
 std::string describeFilterSpec (const dsp::FilterSpec& spec);
 
-/// Read a voice filter's drawn response out of a loaded document — `VoiceFilter{slot}/PZs[]`, which is
-/// where a preset inlines it. Empty when the preset carries none, and never a partial object: the
-/// reference stores eight sections per object or none.
+/// Read a filter slot's drawn response out of a loaded document — `{objectPath}/PZs[]`, which is where a
+/// preset inlines it. Empty when the preset carries none, and never a partial object: the reference
+/// stores eight sections per object or none.
 ///
 /// Ticket 45 moved this from the interface into the preset→engine path: the plane *shows* the response,
 /// but the response must also reach `dsp::VoiceFilter::setPoleZero`, so its reader belongs in the layer
 /// the processor can use rather than in a widget header.
-dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& document, int filterSlot);
+///
+/// **ticket 60 made the object path a parameter**, because there are two slots of this shape and one
+/// reader: a voice filter's is `VoiceFilter{slot}` and an `FXFilter`'s is `FXRack{n}/FX[i]/FXFilter`. The
+/// fields are the same — the schema declares the same six leaves under both — so a second reader would
+/// have been a second convention for one format.
+dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& document,
+                                               std::string_view objectPath);
 
 /// Read a number out of a document value. Returns false for anything that is not numeric.
 bool modelNumber (const model::Value& value, double& out);

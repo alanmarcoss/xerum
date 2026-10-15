@@ -53,7 +53,10 @@ the whole of what the engine claims:
   interface's matrix editing rows that reach the engine (ticket `45`). The v1 source list is the head
   that covers 90 % of use (ticket `12`) and is being extended (ticket `48`).
 * **FX** — 14 of the reference's 16 effect classes, covering 99 % of use, in the MAIN / BUS 1 / BUS 2
-  rack arrangement (tickets `12`, `29`).
+  rack arrangement (tickets `12`, `29`), **in the signal path** between the master gain and the ceiling
+  (ticket `60`): a preset's `FXRack{n}/FX[]` arrays are read from the document and processed in the
+  preset's own order. MAIN is fed by the voice pool; BUS 1 and BUS 2 are wired and receive silence,
+  because the voice layer's sends (`RoutingSlot`'s `kParamFXBus{n}Level`) are not implemented.
 * **Voices** — polyphonic with a fixed ceiling, unison with a measured stereo spread, mono/legato,
   and MIDI note, sustain-pedal and pitch-bend handling (tickets `28`, `30`, `41`). Pitch bend is
   ±2 semitones, the reference's init value — stated, not measured (ticket `30`).

@@ -21,7 +21,10 @@ add_executable(xerum-plugin-tests
     mod_sources_test.cpp
     fidelity_test.cpp
     bank_test.cpp
-    content_gate_test.cpp)
+    content_gate_test.cpp
+    # Ticket 61: the reference's voice against ours, peak and RMS at one voice and at many. It is a
+    # measurement, not a change to the engine: it renders a reference preset's own container on both sides.
+    gain_staging_test.cpp)
 
 target_sources(xerum-plugin-tests PRIVATE ${XERUM_PLUGIN_SOURCES})
 

@@ -400,3 +400,481 @@ TEST_CASE ("the gain-staging finding: the voices sum with no headroom, so the se
     // The ceiling is what stops that reaching the host's meters, which is the whole of ticket 58's ask.
     CHECK (sixteen <= 32.0);
 }
+
+//==============================================================================
+// Ticket `60` — the FX rack in the signal path.
+//
+// `dsp::FxBank` was built and tested by ticket 29 and instantiated nowhere, so a preset whose sound
+// depends on its rack rendered without it. What follows measures the wiring the way the ticket asks: by
+// **difference**. No case below claims an effect *sounds* right — nobody here has ears — only that the
+// preset's slots reach the output, in the preset's order, before the ceiling, and that whatever the rack
+// could not build says so.
+
+namespace
+{
+
+/// A minimal audible document: oscillator A on, both voice filters off, the ceiling off, no FX. Every case
+/// adds the rack it wants to measure to *this*, so the difference between two renders is the rack and
+/// nothing else.
+xerum::model::PresetDocument fxDocument()
+{
+    xerum::model::PresetDocument document;
+    document.name = "fx fixture";
+    document.schemaVersion = "4.0";
+    document.parameters["Oscillator0/plainParams/kParamEnable"] = number (1.0);
+    document.parameters["Oscillator0/plainParams/kParamVolume"] = number (0.5);
+    document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (0.0);
+    document.parameters["VoiceFilter1/plainParams/kParamEnable"] = number (0.0);
+    document.parameters["Master0/plainParams/kParamLimitOn"] = number (0.0);
+    return document;
+}
+
+/// One rack slot, written the way a preset writes one: the class's numeric `type` at the slot, and its
+/// parameters under `<class>/plainParams`. That is the document shape `planFxRack` reads, so a case built
+/// this way is exercising the decode and the rack, not a shortcut past either.
+void addFxSlot (xerum::model::PresetDocument& document, const int index, const xerum::dsp::FxClass cls,
+                const std::vector<std::pair<std::string, xerum::model::Value>>& values, const int rack = 0)
+{
+    const auto slot = "FXRack" + std::to_string (rack) + "/FX[" + std::to_string (index) + "]";
+
+    document.parameters[slot + "/type"] = number (static_cast<double> (xerum::dsp::fxTypeId (cls)));
+
+    for (const auto& [name, value] : values)
+        document.parameters[slot + "/" + std::string (xerum::dsp::fxClassName (cls)) + "/plainParams/" + name] =
+            value;
+}
+
+/// Render a document through a fresh processor — the whole path a preset takes, minus the file.
+std::vector<float> renderDocument (const xerum::model::PresetDocument& document, const int blocks,
+                                   const int blockSize,
+                                   const std::function<void (juce::MidiBuffer&, int)>& midi)
+{
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, blockSize);
+    processor.applyDocument (document, {}, 0);
+    return render (processor, blocks, blockSize, midi);
+}
+
+/// What a slot did to the render, in the form the ticket asks for: how much of the dry render's energy the
+/// difference accounts for, how many samples are not bit-identical, and the peak of each side.
+struct RenderDelta
+{
+    double differenceDb { -std::numeric_limits<double>::infinity() };
+    std::size_t differing { 0 };
+    double peakWithout { 0.0 };
+    double peakWith { 0.0 };
+};
+
+RenderDelta deltaOf (const std::vector<float>& without, const std::vector<float>& with)
+{
+    RenderDelta out;
+    out.peakWithout = peakOf (without);
+    out.peakWith = peakOf (with);
+
+    double residual = 0.0;
+    double reference = 0.0;
+
+    for (std::size_t i = 0; i < without.size() && i < with.size(); ++i)
+    {
+        const auto difference = static_cast<double> (with[i]) - static_cast<double> (without[i]);
+        residual += difference * difference;
+        reference += static_cast<double> (without[i]) * static_cast<double> (without[i]);
+
+        if (with[i] != without[i])
+            ++out.differing;
+    }
+
+    if (residual > 0.0 && reference > 0.0)
+        out.differenceDb = 10.0 * std::log10 (residual / reference);
+
+    return out;
+}
+
+/// The report entries the FX layer contributed — every one of them names a rack.
+std::vector<xerum::model::ReportEntry> fxEntries (const XerumAudioProcessor& processor)
+{
+    std::vector<xerum::model::ReportEntry> out;
+
+    for (const auto& entry : processor.report().entries)
+        if (entry.modulePath.starts_with ("FXRack"))
+            out.push_back (entry);
+
+    return out;
+}
+
+} // namespace
+
+TEST_CASE ("a preset's FX reach the output: the render with the slots differs from the render without them",
+           "[plugin][audio][fx]")
+{
+    const auto dry = renderDocument (fxDocument(), 16, 512, noteThenRelease (60, 8));
+
+    // `kHardClip` at 60 % drive is a shape no wavetable produces, so the two renders cannot agree. The
+    // text parameter is carried the way a preset carries it (`kParamMode` is a string leaf).
+    auto document = fxDocument();
+
+    addFxSlot (document, 0, xerum::dsp::FxClass::Distortion,
+               { { "kParamMode", text ("kHardClip") },
+                 { "kParamDrive", number (60.0) },
+                 { "kParamWet", number (100.0) } });
+
+    const auto wet = renderDocument (document, 16, 512, noteThenRelease (60, 8));
+
+    REQUIRE (wet.size() == dry.size());
+
+    const auto delta = deltaOf (dry, wet);
+
+    std::fprintf (stderr,
+                  "[fx] one FXDistortion slot (hard clip, drive 60, wet 100): difference %.2f dB, "
+                  "%zu of %zu samples differ, peak %.6f -> %.6f\n",
+                  delta.differenceDb, delta.differing, dry.size(), delta.peakWithout, delta.peakWith);
+
+    CHECK (delta.peakWithout > 0.01);   // the patch renders without the slot
+    CHECK (delta.differing > 1000);     // **and the slot changes it, sample by sample**
+
+    // The counterfactual the whole ticket is stated in: the same document with the slot removed renders
+    // differently, so "the rack is wired" is a measurement rather than a claim about the call existing.
+    CHECK (delta.differenceDb > -20.0);
+
+    // And the decode did not have to guess at anything: the slot's parameters are all names the effect
+    // knows, so the rack had nothing to report.
+    XerumAudioProcessor reported;
+    reported.prepareToPlay (48000.0, 512);
+    reported.applyDocument (document, {}, 0);
+    CHECK (fxEntries (reported).empty());
+}
+
+TEST_CASE ("the rack runs in the preset's order, so swapping two slots swaps the render",
+           "[plugin][audio][fx]")
+{
+    // Two slots whose order a listener would hear: a hard clip into a delay is not a delay into a hard
+    // clip — the first echoes a clipped signal, the second clips an echo. If the rack ran in any fixed
+    // order of its own, these two documents would render identically.
+    const auto delayValues = std::vector<std::pair<std::string, xerum::model::Value>> {
+        { "kParamTimeL", number (0.05) }, { "kParamLink", number (1.0) },
+        { "kParamFeedback", number (40.0) }, { "kParamWet", number (60.0) }
+    };
+    const auto clipValues = std::vector<std::pair<std::string, xerum::model::Value>> {
+        { "kParamMode", text ("kHardClip") }, { "kParamDrive", number (40.0) },
+        { "kParamWet", number (100.0) }
+    };
+
+    auto clipThenDelay = fxDocument();
+    addFxSlot (clipThenDelay, 0, xerum::dsp::FxClass::Distortion, clipValues);
+    addFxSlot (clipThenDelay, 1, xerum::dsp::FxClass::Delay, delayValues);
+
+    auto delayThenClip = fxDocument();
+    addFxSlot (delayThenClip, 0, xerum::dsp::FxClass::Delay, delayValues);
+    addFxSlot (delayThenClip, 1, xerum::dsp::FxClass::Distortion, clipValues);
+
+    const auto a = renderDocument (clipThenDelay, 24, 512, noteThenRelease (60, 12));
+    const auto b = renderDocument (delayThenClip, 24, 512, noteThenRelease (60, 12));
+
+    REQUIRE (a.size() == b.size());
+
+    const auto delta = deltaOf (a, b);
+
+    std::fprintf (stderr, "[fx] distortion/delay vs delay/distortion: difference %.2f dB, %zu of %zu samples "
+                          "differ\n",
+                  delta.differenceDb, delta.differing, a.size());
+
+    CHECK (delta.differing > 100);
+    CHECK (delta.differenceDb > -30.0);
+
+    // And each order really is the preset's: the two slots are not silently collapsed into one.
+    CHECK (a != b);
+}
+
+TEST_CASE ("the rack feeds the ceiling, so the ceiling is still the last thing in the chain",
+           "[plugin][audio][fx][limiter]")
+{
+    // The ceiling's place is ticket 58's, and its latency declaration assumes the rack is *before* it. What
+    // proves the order is a render the rack has pushed over the ceiling: if the rack ran after the limiter,
+    // the boosted signal would arrive at the host unbounded.
+    const auto boosted = [&] (const double ceilingOn)
+    {
+        auto document = fxDocument();
+        document.parameters["Master0/plainParams/kParamLimitOn"] = number (ceilingOn);
+
+        // A peak band, +24 dB, on the note's own fundamental: the band boost is the rack's own
+        // `kParamGain1` in its schema units, so this is a preset's value and not a test-only hook.
+        addFxSlot (document, 0, xerum::dsp::FxClass::Equalizer,
+                   { { "kParamFreq1", number (261.0) }, { "kParamGain1", number (24.0) },
+                     { "kParamType1", number (2.0) }, { "kParamReso1", number (20.0) },
+                     { "kParamWet", number (100.0) } });
+
+        return renderDocument (document, 24, 512, noteThenRelease (60, 12));
+    };
+
+    const auto open = boosted (0.0);
+    const auto limited = boosted (1.0);
+
+    REQUIRE (open.size() == limited.size());
+
+    const auto openPeak = peakOf (open);
+    const auto limitedPeak = peakOf (limited);
+
+    std::fprintf (stderr, "[fx] EQ +24 dB through the rack: peak %.6f with the ceiling off, %.6f with it on\n",
+                  openPeak, limitedPeak);
+
+    // **Red before:** the rack's output exceeds the ceiling, which is what makes the next assertion bite.
+    CHECK (openPeak > ceilingLinear() * 1.2);
+
+    // **Green after:** the ceiling holds it, so the rack is upstream of the ceiling and not downstream.
+    CHECK (limitedPeak <= ceilingLinear() + 1.0e-6);
+    CHECK (limitedPeak > ceilingLinear() * 0.9);
+}
+
+TEST_CASE ("what the rack cannot build is reported, per slot, and not quietly defaulted",
+           "[plugin][audio][fx]")
+{
+    // Three things a slot can carry that nothing here acts on, each of which must be *named*: a parameter
+    // name the effect does not know, an `FXFilter` whose type the preset never stored, and a drawn
+    // `flex[0]` curve whose domain is not established.
+    auto document = fxDocument();
+
+    addFxSlot (document, 0, xerum::dsp::FxClass::Distortion,
+               { { "kParamMode", text ("kHardClip") }, { "kParamNotAThing", number (1.0) } });
+    addFxSlot (document, 1, xerum::dsp::FxClass::Filter, { { "kParamFreq", number (0.5) } });
+    document.parameters["FXRack0/FX[1]/FXFilter/plainParams/kParamReso"] = number (20.0);
+
+    // A drawn curve, the way the corpus stores one: `flex[0]` beside the class's parameters.
+    document.parameters["FXRack0/FX[0]/flex[0]/numPoints"] = number (1.0);
+    document.parameters["FXRack0/FX[0]/flex[0]/xVals[0]"] = number (0.0);
+    document.parameters["FXRack0/FX[0]/flex[0]/xVals[1]"] = number (1.0);
+    document.parameters["FXRack0/FX[0]/flex[0]/yVals[0]"] = number (1.0);
+    document.parameters["FXRack0/FX[0]/flex[0]/yVals[1]"] = number (0.0);
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    processor.applyDocument (document, {}, 0);
+
+    const auto entries = fxEntries (processor);
+
+    const auto named = [&entries] (const std::string& item)
+    {
+        return std::any_of (entries.begin(), entries.end(),
+                            [&item] (const xerum::model::ReportEntry& entry)
+                            { return entry.item == item || entry.item.find (item) != std::string::npos; });
+    };
+
+    const auto text = processor.reportText();
+
+    std::fprintf (stderr, "[fx] report for a slot the rack cannot build in full:\n");
+
+    for (const auto& entry : entries)
+        std::fprintf (stderr, "[fx]   %-9s %-14s %-34s %s\n",
+                      std::string (xerum::model::toString (entry.severity)).c_str(), entry.modulePath.c_str(),
+                      entry.item.c_str(), entry.reason.c_str());
+
+    // The parameter name no effect knows: named with its class, so a user can find it.
+    CHECK (named ("FXDistortion/kParamNotAThing"));
+    CHECK (text.contains ("kParamNotAThing"));
+
+    // The filter whose type the preset never stored. The reference's *default* type applies in the
+    // reference; xerum does not know it, so the band passes unfiltered and the report says which.
+    CHECK (named ("FXFilter"));
+    CHECK (text.contains ("no filter type"));
+
+    // The drawn curve: reported as not applied rather than read as the transfer curve.
+    CHECK (named ("flex[0]"));
+    CHECK (text.contains ("drawn curve"));
+}
+
+TEST_CASE ("a deferred splitter is named by the import report rather than skipped in silence",
+           "[plugin][audio][fx][corpus]")
+{
+    // `FXSplit3` and `FXSplitMS` are deferred by name (ticket 12), and the model's own walk already reports
+    // them. This is the end-to-end check that survives the wiring: the plugin's FX layer must not swallow
+    // the entry, and the rack must not run the slots a deferred splitter claims — their routing is not
+    // reproduced, so running them serially would invent a topology the preset does not have.
+    const juce::File preset (juce::String (corpusRoot()) + "/Presets/Factory/Keyboard/KY - Additive.SerumPreset");
+
+    if (! preset.existsAsFile())
+        SKIP ("the reference's corpus is not installed at " << corpusRoot().toStdString());
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    REQUIRE (processor.loadPresetFromFile (preset).wasOk());
+
+    const auto entries = fxEntries (processor);
+
+    const auto named = [&entries] (const std::string& item)
+    {
+        return std::any_of (entries.begin(), entries.end(),
+                            [&item] (const xerum::model::ReportEntry& entry) { return entry.item == item; });
+    };
+
+    // The preset carries `FXRack0/FX[1]/type = 15` — `FXSplitMS` — and the report says so, once.
+    CHECK (named ("FXSplitMS"));
+    CHECK (processor.reportText().contains ("not shipped in v1"));
+}
+
+TEST_CASE ("a preset whose rack holds a resonant delay does not run away", "[plugin][audio][fx][corpus]")
+{
+    // **The regression the wiring found.** `ARP - Aardvark`'s `FXDelay` stores BW 3.28 with 47 % feedback,
+    // and `FXDelay` reads BW as the loop filter's Q — so the loop's gain was `feedback x Q` = 1.5 and the
+    // delay grew without bound instead of decaying. Measured here through the plugin, with the ceiling
+    // **off** (which is how the fidelity layer renders, its golden being the reference's own unlimited
+    // output): 2.3e9 by the end of a 2 s render. The effect's own case is `[fx-loop]` in
+    // `tests/dsp/fx_rack_test.cpp`; this is the same property at the boundary a user hears.
+    const juce::File preset (juce::String (corpusRoot()) + "/Presets/Factory/Arp/ARP - Aardvark.SerumPreset");
+
+    if (! preset.existsAsFile())
+        SKIP ("the reference's corpus is not installed at " << corpusRoot().toStdString());
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    REQUIRE (processor.loadPresetFromFile (preset).wasOk());
+
+    // The ceiling would hide a runaway behind its own clamp, so it is off: what is measured is the rack.
+    processor.setParameterValue ("Master0/plainParams/kParamLimitOn", 0.0);
+
+    const auto rendered = render (processor, 190, 512, noteThenRelease (60, 47));
+    const auto peak = peakOf (rendered);
+
+    std::fprintf (stderr, "[fx] ARP - Aardvark with its rack, ceiling off: peak %.6f over 2 s\n", peak);
+
+    CHECK (std::isfinite (peak));
+    CHECK (peak < 2.0);
+}
+
+TEST_CASE ("each shipped class engages: the per-class difference the rack makes to one render",
+           "[plugin][audio][fx]")
+{
+    // The dev's version of "what was missing": for each class, one slot with a representative setting, and
+    // the measured difference against the same document without the slot. It is a table of *engagements*,
+    // not of quality — the settings are stated here rather than derived, and whether the effect sounds like
+    // the reference's is not something a number answers.
+    struct Row
+    {
+        const char* label;
+        xerum::dsp::FxClass cls;
+        std::vector<std::pair<std::string, xerum::model::Value>> values;
+        std::size_t expectedReports;   ///< what the rack has to say about this one
+    };
+
+    const std::vector<Row> rows {
+        { "FXDistortion", xerum::dsp::FxClass::Distortion,
+          { { "kParamMode", text ("kHardClip") }, { "kParamDrive", number (60.0) }, { "kParamWet", number (100.0) } }, 0 },
+        { "FXFlanger", xerum::dsp::FxClass::Flanger,
+          { { "kParamRate", number (0.5) }, { "kParamDepth", number (100.0) }, { "kParamFeedback", number (60.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        { "FXPhaser", xerum::dsp::FxClass::Phaser,
+          { { "kParamNumPoles", number (6.0) }, { "kParamFreq", number (500.0) }, { "kParamRate", number (0.5) },
+            { "kParamDepth", number (100.0) }, { "kParamFeedback", number (40.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        { "FXChorus", xerum::dsp::FxClass::Chorus,
+          { { "kParamRate", number (0.8) }, { "kParamDepth", number (100.0) }, { "kParamDelay", number (5.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        { "FXDelay", xerum::dsp::FxClass::Delay,
+          { { "kParamTimeL", number (0.05) }, { "kParamLink", number (1.0) }, { "kParamFeedback", number (50.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        { "FXComp", xerum::dsp::FxClass::Compressor,
+          { { "kParamThresh", number (0.2) }, { "kParamRatio", number (4.0) }, { "kParamAttack", number (10.0) },
+            { "kParamRelease", number (100.0) }, { "kParamMakeup", number (6.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        { "FXReverb", xerum::dsp::FxClass::Reverb,
+          { { "kParamSize", number (60.0) }, { "kParamDelay", number (2.0) }, { "kParamWet", number (100.0) } }, 0 },
+        { "FXEQ", xerum::dsp::FxClass::Equalizer,
+          { { "kParamFreq1", number (261.0) }, { "kParamGain1", number (18.0) }, { "kParamType1", number (2.0) },
+            { "kParamReso1", number (20.0) }, { "kParamWet", number (100.0) } }, 0 },
+        { "FXFilter", xerum::dsp::FxClass::Filter,
+          { { "kParamType", text ("L12") }, { "kParamFreq", number (0.3) }, { "kParamReso", number (40.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        { "FXHyperD", xerum::dsp::FxClass::HyperDimension,
+          { { "kParamUnison", number (4.0) }, { "kParamRate", number (50.0) }, { "kParamDetune", number (50.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        { "FXBode", xerum::dsp::FxClass::Bode,
+          { { "kParamShift", number (50.0) }, { "kParamRange", number (2000.0) },
+            { "kParamWet", number (100.0) } }, 0 },
+        // **No impulse response exists to resolve**: the content layer does not read the reference's `IR`
+        // tree yet (tickets 16/34), so this one passes the dry signal and *says so* — a row in this table
+        // with no difference is the honest answer, not a silent one.
+        { "FXConv", xerum::dsp::FxClass::Convolve,
+          { { "kParamWet", number (100.0) }, { "kParamDecay", number (2.0) } }, 1 },
+        { "FXUtils", xerum::dsp::FxClass::Utility,
+          { { "kParamLPF", number (700.0) }, { "kParamWet", number (100.0) } }, 0 },
+        { "FXSplit", xerum::dsp::FxClass::Split,
+          { { "kParamFreq", number (2000.0) }, { "kParamModuleCount1", number (1.0) },
+            { "kParamModuleCount2", number (1.0) } }, 0 },
+    };
+
+    const auto dry = renderDocument (fxDocument(), 24, 512, noteThenRelease (60, 12));
+
+    std::fprintf (stderr,
+                  "\n[fx] per-class engagement against the same document without the slot (24 blocks x 512, "
+                  "note 60). `residual-vs-dry` is how much of the dry render the difference accounts for: a "
+                  "large negative number means the render survived, near 0 dB means it was replaced.\n");
+
+    for (const auto& row : rows)
+    {
+        auto document = fxDocument();
+        addFxSlot (document, 0, row.cls, row.values);
+
+        // The splitter needs its bands: two of them, the first a hard clip so the low band is shaped and
+        // the second left empty, which is the smallest arrangement that engages both halves of the
+        // crossover. `kParamModuleCount1/2` are what claim them, which is the topology the schema encodes.
+        if (row.cls == xerum::dsp::FxClass::Split)
+        {
+            addFxSlot (document, 1, xerum::dsp::FxClass::Distortion,
+                       { { "kParamMode", text ("kHardClip") }, { "kParamDrive", number (60.0) },
+                         { "kParamWet", number (100.0) } });
+        }
+
+        const auto wet = renderDocument (document, 24, 512, noteThenRelease (60, 12));
+        const auto delta = deltaOf (dry, wet);
+
+        // What the rack had to say about this one, so "engages nothing" and "was not reported" cannot be
+        // confused for each other.
+        XerumAudioProcessor processor;
+        processor.prepareToPlay (48000.0, 512);
+        processor.applyDocument (document, {}, 0);
+        const auto notes = fxEntries (processor);
+
+        std::fprintf (stderr,
+                      "[fx]   %-12s residual-vs-dry %7.2f dB   differing %6zu   peak %.6f -> %.6f   reports %zu\n",
+                      row.label, delta.differenceDb, delta.differing, delta.peakWithout, delta.peakWith,
+                      notes.size());
+
+        for (const auto& note : notes)
+            std::fprintf (stderr, "[fx]        %s: %s\n", note.item.c_str(), note.reason.c_str());
+
+
+        CHECK (notes.size() == row.expectedReports);
+
+        // **Every shipped class except the convolution changes the render.** The convolution has no
+        // impulse response to convolve with, which is a reported gap rather than a silent one.
+        if (row.cls != xerum::dsp::FxClass::Convolve)
+            CHECK (delta.differing > 0);
+        else
+            CHECK (delta.differing == 0);
+    }
+}
+
+TEST_CASE ("a rack on BUS 1 changes nothing, because nothing feeds it — the mixer's sends are missing",
+           "[plugin][audio][fx]")
+{
+    // **A recorded gap, not a defect of the rack.** The reference's voices send to MAIN, BUS 1 and BUS 2;
+    // the sends live in the voice layer (`RoutingSlot`'s `kParamFXBus{n}Level`), which is not implemented,
+    // so the bus racks are wired and handed silence. This case is the gap's record: the day the mixer
+    // lands, `FXRack1` will change this render and this assertion is the one to invert.
+    const auto clip = std::vector<std::pair<std::string, xerum::model::Value>> {
+        { "kParamMode", text ("kHardClip") }, { "kParamDrive", number (60.0) }, { "kParamWet", number (100.0) }
+    };
+
+    auto onMain = fxDocument();
+    addFxSlot (onMain, 0, xerum::dsp::FxClass::Distortion, clip);
+
+    // The same slot on BUS 1 instead, at the default destination (summed into MAIN's input) and at unity
+    // volume — so if the bus carried anything, this render would differ from the dry one.
+    auto onBus = fxDocument();
+    addFxSlot (onBus, 0, xerum::dsp::FxClass::Distortion, clip, 1);
+
+    const auto dry = renderDocument (fxDocument(), 16, 512, noteThenRelease (60, 8));
+    const auto mainRender = renderDocument (onMain, 16, 512, noteThenRelease (60, 8));
+    const auto busRender = renderDocument (onBus, 16, 512, noteThenRelease (60, 8));
+
+    CHECK (deltaOf (dry, mainRender).differing > 0);   // MAIN reaches the output
+    CHECK (deltaOf (dry, busRender).differing == 0);   // BUS 1 does not, and that is the gap
+}

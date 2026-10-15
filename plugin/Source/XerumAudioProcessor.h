@@ -45,6 +45,7 @@
 
 #include "ParameterBridge.h"
 #include "PresetState.h"
+#include "fx_rack.h"
 #include "limiter.h"
 #include "off_thread_work.h"
 #include "table_library.h"
@@ -355,6 +356,44 @@ private:
     /// thread, or a host that never leaves its block, must not hang the message thread.
     bool freezeAndWait() noexcept;
 
+    //==============================================================================
+    // **The FX rack** (ticket `60`).
+    //
+    // A preset's three `FXRack{n}/FX[]` arrays are the reference's MAIN / BUS 1 / BUS 2 racks, and their
+    // slots are *not* parameters: nothing in the reference's preset puts an effect on the host-visible
+    // surface, so there is nothing for the bridge to carry and nothing to poll per block. They are read
+    // from the **document** — the same schema paths everything else arrives by — when a preset is applied,
+    // and handed to `dsp::FxBank` with the audio thread held out, because building an effect allocates.
+    //
+    // **The plan exists because a `FxSlot` borrows.** Its drawn curve and its drawn response are pointers,
+    // and the rack dereferences them when it *rebuilds* — which `prepareToPlay` may ask for a second time.
+    // So the storage the slots point into is owned here, and replaced only while the audio thread is out.
+
+    /// The decoded racks, the assets they borrow from, and what the decode itself has to report.
+    struct FxPlan
+    {
+        std::array<std::vector<dsp::FxSlot>, dsp::FxBank::kRackCount> racks {};
+
+        /// One drawn response per slot that carried one. `unique_ptr` because a slot holds a *pointer* to
+        /// it and the vector grows; owned here because `FxSlot` only borrows.
+        std::vector<std::unique_ptr<dsp::PoleZeroDescription>> responses {};
+
+        /// What the decode could not hand the rack: a slot's drawn curve, whose domain is not established.
+        /// The rack's own `unresolved()` and `problems()` are added to these when it is built.
+        std::vector<model::ReportEntry> notes {};
+    };
+
+    /// Read the three racks out of a document. Pure — it touches no engine state and no audio thread.
+    std::shared_ptr<FxPlan> planFxRack (const model::PresetDocument& document) const;
+
+    /// Install a document's racks, with the audio thread held out, and report what neither the decode nor
+    /// the rack could honour. Message thread, under the state lock (which `applyDocument` holds).
+    void publishFxRack (const model::PresetDocument& document);
+
+    /// Publish the rack a timed-out handshake deferred. Message thread; the timer calls it, and it re-plans
+    /// from the document rather than installing a plan the document may have outlived.
+    void flushFx();
+
     ParameterBridge bridge_;
     Layout layout_;
 
@@ -363,6 +402,27 @@ private:
     /// **The master ceiling** (ticket `58`) — the last stage in the chain, after the rack the flat `FX`
     /// arrays describe. Sized in `prepareToPlay`; `process` allocates nothing.
     dsp::Limiter limiter_;
+
+    /// **The rack itself** (ticket `60`): MAIN, BUS 1 and BUS 2, in that order, between the master gain
+    /// and the ceiling. A preset with no `FXRack{n}` entries leaves all three empty, and an empty rack's
+    /// `process` is a loop over no nodes.
+    dsp::FxBank fxBank_ {};
+
+    /// The decoded racks the bank was built from, and the assets its slots borrow. A `prepareToPlay` after
+    /// a load re-prepares the bank, which rebuilds the chain from the slots it holds — and dereferences
+    /// this plan's curves and responses while it does. So the plan outlives every `setSlots` that refers to
+    /// it, and a new one is installed only with the audio thread held out.
+    std::shared_ptr<FxPlan> fxPlan_ {};
+
+    /// A publish whose handshake timed out: the audio thread never left its block, so the rack was not
+    /// replaced. The timer retries, re-planning from the document — never installing a plan the document
+    /// may have outlived.
+    std::atomic<bool> fxDeferred_ { false };
+
+    /// **BUS 1 and BUS 2's inputs.** The mixer that would feed them — a voice sending to a bus — belongs
+    /// to the voice layer, and sends are not implemented, so what reaches these racks today is silence,
+    /// which is what the buffers hold. Sized in `prepareToPlay` and cleared per block.
+    std::vector<float> bus1Left_ {}, bus1Right_ {}, bus2Left_ {}, bus2Right_ {};
 
     std::array<std::optional<dsp::Wavetable>, dsp::kOscillatorSlots> tables_ {};
 

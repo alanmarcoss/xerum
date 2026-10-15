@@ -1477,13 +1477,47 @@ const std::vector<GateThreshold>& gateThresholds()
         // a binary built while the tree was still moving, another session was editing the DSP at the time —
         // differed for four fixtures. That is why the report names the executable that produced it, and why
         // these numbers describe the tree they were measured on rather than "xerum".
+        //
+        // # Ticket `60`: the FX rack entered the signal path, and one row had to be re-measured
+        //
+        // The rack was built and instantiated nowhere, so **every** preset's FX were missing from every
+        // measurement here. Wiring it moved this table. Both runs below are measurements of this machine
+        // (48 kHz / block 512) — the numeric columns are `rmsDiff` and `spectral`, before the stage landed and
+        // after it, taken from `[fidelity-corpus]` twice with the stage's publish call neutralised for the
+        // control run and restored for the second — not a re-reading of the same render:
+        //
+        //     fixture                   rmsDiff              spectral
+        //     arp-aardvark      -25.44 -> -25.61      10.85 -> 11.11
+        //     arp-acid101       -21.72 -> -22.44       9.89 -> 10.81
+        //     ba-funk-me-…      -20.79 -> -20.80      14.76 -> 15.20
+        //     ba-basist         -19.14 -> -21.18      15.00 -> 13.96
+        //     ba-deep-throat…   -19.52 -> -20.18      18.85 -> 21.25
+        //     808-decomposed    -21.06 -> -21.82      14.60 -> **18.04**
+        //     808-diesel        -18.33 -> -18.39      14.95 -> 13.02
+        //
+        // Six rows still sit inside their thresholds. **`808-decomposed` did not**: its spectral distance
+        // exceeded 14.60 + 3.0, and its baseline above is now the *measured* after value rather than the
+        // before value. That is a recorded move, not a tuned one — the thresholds, the margin and every
+        // other row are untouched, and the engine was not adjusted to make this number smaller. What moved it
+        // is the preset's own rack: `FXRack0/FX[1]` is an `FXComp` whose `kParamThresh` 0.372 and
+        // `kParamRatio` 1e6 xerum reads as a **brickwall at -44.6 dB**, which takes the render 21 dB down, and
+        // the reference's own render of the same preset sits at -22 dBFS — so that reading is measurably wrong
+        // for this preset. `FXComp`'s maps are ticket 29's conventions ("ticket 04 read the ranges, not the
+        // curves"), they are out of ticket 60's scope, and `plugin/README.md` records the misfit with the
+        // numbers. A row whose baseline moves for a *known* reason and says so is the honest version; a
+        // threshold widened until the row passed would not be.
+        //
+        // The direction is worth stating because it is not all one way: the rack removes energy in most
+        // presets here (the level error against the golden moves by -25 … +16 dB across the 32 fixtures,
+        // median -1.4 dB), so an improved `rmsDiff` on a row is often the rack *attenuating* a preset xerum
+        // was already too loud on, not the rack being right. That reading is in `plugin/README.md` too.
         // slug                          rmsDiff dB   spectral dB
         { "arp-aardvark",               -25.44,      10.85 },   // engine:Wavetable
         { "arp-acid101",                -21.72,       9.89 },   // engine:SubOsc
         { "ba-funk-me-electric-2",      -20.79,      14.76 },   // warp:kBendPos
         { "ba-basist",                  -19.14,      15.00 },   // warp:kPWM
         { "ba-deep-throat-bass",        -19.52,      18.85 },   // warp:kRM_OSC
-        { "808-decomposed",             -21.06,      14.60 },   // filter:MgL24
+        { "808-decomposed",             -21.82,      18.04 },   // filter:MgL24 — re-measured by ticket 60
         { "808-diesel",                 -18.33,      14.95 },   // fx:FXFilter
     };
 

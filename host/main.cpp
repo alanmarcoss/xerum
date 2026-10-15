@@ -19,6 +19,7 @@
 
 #include <iostream>
 #include <map>
+#include <vector>
 
 namespace
 {
@@ -31,6 +32,11 @@ struct Args
     double sampleRate = 48000.0;
     int blockSize = 512;
     int note = 60;
+    // Ticket 61: a chord, so a *reference* render can hold many voices the way ticket 58's own stimulus
+    // does. `--notes` overrides `--note`; every existing invocation, and every golden render, keeps its
+    // single note and its velocity of 100.
+    juce::String notes;
+    int velocity = 100;
     int program = -1;
     bool listParams = false;
     bool listPrograms = false;
@@ -64,6 +70,9 @@ void printUsage()
         "  --sr <n>               sample rate, default 48000\n"
         "  --block <n>            block size, default 512\n"
         "  --note <n>             MIDI note to play, default 60\n"
+        "  --notes <n,n,...>      play these notes together instead (ticket 61: the reference's own\n"
+        "                         polyphony, so a chord can be measured the way ticket 58 measured ours)\n"
+        "  --velocity <n>         note-on velocity, default 100\n"
         "  --quiet                suppress the render summary\n"
         "\n"
         "ticket 20, state experiments:\n"
@@ -92,6 +101,8 @@ bool parseArgs (Args& a, const juce::StringArray& argv)
         else if (arg == "--sr")           a.sampleRate = next().getDoubleValue();
         else if (arg == "--block")        a.blockSize = next().getIntValue();
         else if (arg == "--note")         a.note = next().getIntValue();
+        else if (arg == "--notes")        a.notes = next();
+        else if (arg == "--velocity")     a.velocity = next().getIntValue();
         else if (arg == "--program")      a.program = next().getIntValue();
         else if (arg == "--set")          a.sets.add (next());
         else if (arg == "--automate")     a.automates.add (next());
@@ -499,6 +510,18 @@ int main (int argc, char* argv[])
     const auto noteOnSamples  = (juce::int64) (0.02 * args.sampleRate);
     const auto noteOffSamples = (juce::int64) (0.5 * args.sampleRate);
 
+    // Ticket 61. `--notes` is a chord: the same two events, for each note, at the same sample. One note
+    // unless the caller asked for more, which is what keeps this additive.
+    std::vector<int> noteList;
+
+    if (args.notes.isNotEmpty())
+        for (const auto& token : juce::StringArray::fromTokens (args.notes, ",", ""))
+            if (token.trim().isNotEmpty())
+                noteList.push_back (token.trim().getIntValue());
+
+    if (noteList.empty())
+        noteList.push_back (args.note);
+
     double peak = 0.0;
     juce::int64 written = 0;
 
@@ -557,12 +580,14 @@ int main (int argc, char* argv[])
         midi.clear();
 
         if (written <= noteOnSamples && noteOnSamples < written + thisBlock)
-            midi.addEvent (juce::MidiMessage::noteOn (1, args.note, (juce::uint8) 100),
-                           (int) (noteOnSamples - written));
+            for (const auto note : noteList)
+                midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) args.velocity),
+                               (int) (noteOnSamples - written));
 
         if (written <= noteOffSamples && noteOffSamples < written + thisBlock)
-            midi.addEvent (juce::MidiMessage::noteOff (1, args.note),
-                           (int) (noteOffSamples - written));
+            for (const auto note : noteList)
+                midi.addEvent (juce::MidiMessage::noteOff (1, note),
+                               (int) (noteOffSamples - written));
 
         if (! isInstrument && thisBlock > 0)
             buffer.setSample (0, 0, 1.0f);
@@ -586,7 +611,8 @@ int main (int argc, char* argv[])
     if (! args.quiet)
     {
         std::cout << "\nrendered " << args.seconds << "s @ " << args.sampleRate << "Hz, block "
-                  << blockSize << ", note " << args.note << " -> " << outFile.getFullPathName() << "\n"
+                  << blockSize << ", " << (int) noteList.size() << " note(s) at velocity "
+                  << args.velocity << " -> " << outFile.getFullPathName() << "\n"
                   << "channels=" << numChannels << "  peak amplitude=" << juce::String (peak, 6)
                   << (peak <= 0.0 ? "   *** SILENT ***" : "") << "\n";
     }

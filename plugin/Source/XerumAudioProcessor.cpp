@@ -199,6 +199,9 @@ void XerumAudioProcessor::timerCallback()
 {
     flushModulation();
 
+    // A rack whose install timed out on the handshake while the message thread was inside `applyDocument`.
+    flushFx();
+
     // Ticket 56: a content resolution whose bounded wait expired publishes here, when the filesystem
     // finally answered. Cheap when there is nothing pending — one atomic load.
     flushContent();
@@ -348,6 +351,15 @@ void XerumAudioProcessor::prepareToPlay (const double sampleRate, const int maxi
     // host that has compensated for it stays compensated.
     limiter_.prepare (sampleRate_);
     setLatencySamples (limiter_.latencySamples());
+
+    // **The rack's scratch** (ticket 60). `prepare` sizes every effect's dry path and a splitter's bands
+    // and rebuilds the chain from the slots a preset already installed — the rack is order-independent, and
+    // this is the order that needs no deferral. The bus racks' inputs are the mixer's, and there is no
+    // mixer yet, so they hold the silence it will one day fill.
+    fxBank_.prepare (sampleRate_, maxBlock_);
+
+    for (auto* bus : { &bus1Left_, &bus1Right_, &bus2Left_, &bus2Right_ })
+        bus->assign (static_cast<std::size_t> (maxBlock_), 0.0f);
 
     prepared_ = 1;
 
@@ -671,6 +683,19 @@ void XerumAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
 
     masterGain_ = gainTarget;
+
+    // **The rack** (ticket `60`), in the preset's own order, between the master gain and the ceiling: MAIN
+    // first, then the two busses where their `kParamFXBus{n}Dest` says. It runs on what the voice pool
+    // produced, so an effect sees the same signal a host would hear without it. Bus 1 and bus 2 get the
+    // mixer's sends, and the mixer's sends are not implemented — the buffers hold the silence they were
+    // sized with, so a bus rack processes silence and adds nothing. `plugin/README.md` records that.
+    std::fill (bus1Left_.begin(), bus1Left_.end(), 0.0f);
+    std::fill (bus1Right_.begin(), bus1Right_.end(), 0.0f);
+    std::fill (bus2Left_.begin(), bus2Left_.end(), 0.0f);
+    std::fill (bus2Right_.begin(), bus2Right_.end(), 0.0f);
+
+    fxBank_.process (left_.data(), right_.data(), bus1Left_.data(), bus1Right_.data(), bus2Left_.data(),
+                     bus2Right_.data(), numSamples);
 
     // **The ceiling, last** (ticket `58`). Off, `process` is a delay line and nothing else; on and not
     // engaging, it multiplies by exactly `1.0f`. Either way a preset that already sat below the ceiling
@@ -1630,7 +1655,8 @@ void XerumAudioProcessor::publishPoleZero()
     std::array<dsp::PoleZeroDescription, dsp::kFilterSlots> next;
 
     for (int slot = 0; slot < dsp::kFilterSlots; ++slot)
-        next[static_cast<std::size_t> (slot)] = poleZeroFromDocument (document_, slot);
+        next[static_cast<std::size_t> (slot)] = poleZeroFromDocument (document_, "VoiceFilter"
+                                                                                    + std::to_string (slot));
 
     if (! freezeAndWait())
     {
@@ -1695,6 +1721,270 @@ void XerumAudioProcessor::setPoleZeroSection (const int filterSlot, const int se
 
     publishPoleZero();
     sendChangeMessage();
+}
+
+//==============================================================================
+// **The FX rack** (ticket `60`). See the header for why a slot is read from the document rather than from
+// the bridge, and why the plan exists at all.
+
+namespace
+{
+
+/// One slot key in a document, with the array index **parsed** rather than taken from iteration order.
+///
+/// The document keys an array by its real index and `std::map` orders those keys lexicographically, so
+/// `FX[10]` sorts before `FX[2]`. Ticket 41's embedded-table reader was caught by exactly that; the slots
+/// here are emitted in numeric order for the same reason.
+struct FxSlotKey
+{
+    bool ok { false };
+    int index { 0 };
+    std::string rest;   ///< what follows the index: `/type`, `/FXComp/plainParams/kParamDrive`, `/flex[0]/…`
+};
+
+FxSlotKey parseFxSlotKey (const std::string_view key, const std::string_view prefix)
+{
+    FxSlotKey out;
+
+    if (! key.starts_with (prefix))
+        return out;
+
+    const auto close = key.find (']', prefix.size());
+
+    if (close == std::string_view::npos || close == prefix.size())
+        return out;
+
+    int index = 0;
+
+    for (const auto digit : key.substr (prefix.size(), close - prefix.size()))
+    {
+        if (digit < '0' || digit > '9')
+            return out;   // a malformed index is not a slot, and guessing one would invent a position
+
+        index = index * 10 + (digit - '0');
+    }
+
+    out.ok = true;
+    out.index = index;
+    out.rest = std::string (key.substr (close + 1));
+    return out;
+}
+
+constexpr std::size_t kPlainParamsLength = 13;   // strlen ("/plainParams/")
+
+} // namespace
+
+std::shared_ptr<XerumAudioProcessor::FxPlan>
+XerumAudioProcessor::planFxRack (const model::PresetDocument& document) const
+{
+    auto plan = std::make_shared<FxPlan>();
+
+    for (int rack = 0; rack < dsp::FxBank::kRackCount; ++rack)
+    {
+        const auto prefix = "FXRack" + std::to_string (rack) + "/FX[";
+
+        std::map<int, dsp::FxSlot> slots;
+        std::map<int, std::string> responseObjects;   ///< slot -> the object path its `PZs[]` hang under
+        std::map<int, dsp::FxClass> classKeys;        ///< the class a slot's children name, from its keys
+        std::map<int, bool> drewCurve;                ///< the slot carries a `flex[]` curve
+
+        for (auto it = document.parameters.lower_bound (prefix);
+             it != document.parameters.end() && it->first.starts_with (prefix); ++it)
+        {
+            const auto key = parseFxSlotKey (it->first, prefix);
+
+            if (! key.ok)
+                continue;
+
+            auto& slot = slots[key.index];
+            const auto& value = it->second;
+
+            // The child that names the class — `FXComp`, `FXDistortion`, … — whichever leaf it turns up on.
+            // It is where the class's parameters hang, and what a slot that stored no `type` says it is.
+            if (const auto segment = key.rest.find ('/', 1); key.rest.size() > 1)
+            {
+                const auto named = dsp::fxClassFromName (
+                    key.rest.substr (1, segment == std::string::npos ? std::string::npos : segment - 1));
+
+                if (named != dsp::FxClass::Unknown)
+                    classKeys[key.index] = named;
+            }
+
+            if (key.rest == "/type")
+            {
+                double number = 0.0;
+
+                if (modelNumber (value, number))
+                    slot.cls = dsp::fxClassFromTypeId (static_cast<int> (std::lround (number)));
+
+                continue;
+            }
+
+            if (key.rest.starts_with ("/flex["))
+            {
+                drewCurve[key.index] = true;
+                continue;
+            }
+
+            if (const auto pzs = key.rest.find ("/PZs["); pzs != std::string::npos)
+            {
+                responseObjects[key.index] = "FXRack" + std::to_string (rack) + "/FX["
+                                             + std::to_string (key.index) + "]" + key.rest.substr (0, pzs);
+                continue;
+            }
+
+            // The parameter leaves. Everything else a slot's class child carries is not a parameter: the
+            // saved modulator state (`lfophasor`), the asset hints the content layer resolves
+            // (`relativePathToIR` and its cached size) and the rack's own metadata (`displayName`), which
+            // the model keeps in the document and this layer has nothing to do with.
+            const auto plain = key.rest.find ("/plainParams/");
+
+            if (plain == std::string::npos)
+                continue;
+
+            const auto name = key.rest.substr (plain + kPlainParamsLength);
+            double number = 0.0;
+            std::string text;
+
+            if (modelNumber (value, number))
+                slot.numbers.emplace_back (name, number);
+            else if (modelText (value, text))
+                slot.texts.emplace_back (name, text);
+            else if (value.type == model::Value::Type::Bool)
+                slot.numbers.emplace_back (name, value.boolean ? 1.0 : 0.0);
+        }
+
+        auto& rackSlots = plan->racks[static_cast<std::size_t> (rack)];
+        int next = 0;
+
+        for (auto& [index, slot] : slots)
+        {
+            // The flat array is the topology: an index the document does not carry is an empty slot, not a
+            // shift. (Measured over the factory bank — 4168 slot entries in 626 presets — every entry
+            // carries a `type` and no rack has a gap, so this is a guard rather than a case in the corpus.)
+            for (; next < index; ++next)
+                rackSlots.emplace_back();
+
+            if (slot.cls == dsp::FxClass::Unknown)
+                if (const auto named = classKeys.find (index); named != classKeys.end())
+                    slot.cls = named->second;
+
+            if (const auto response = responseObjects.find (index); response != responseObjects.end())
+            {
+                auto description = std::make_unique<dsp::PoleZeroDescription> (
+                    poleZeroFromDocument (document, response->second));
+
+                if (! description->empty())
+                {
+                    slot.poleZero = description.get();
+                    plan->responses.push_back (std::move (description));
+                }
+            }
+
+            // **A drawn curve is not applied, and that is a report rather than a guess.** `flex[0]` is a
+            // real curve in 88 factory presets, and its domain is not established: the corpus stores
+            // `xVals` over 0..1 with `yVals` falling, while the transfer curve a distortion applies is the
+            // input sample over -1..1 — and `curveShape` returns the first ordinate for anything at or
+            // below the first abscissa, so reading one as the other would put a constant on every negative
+            // sample of a `kXShaper` slot. The built-in curve plays instead, and this says so.
+            if (drewCurve.count (index) != 0)
+            {
+                model::ReportEntry note;
+                note.severity = model::Severity::Medium;
+                note.modulePath = "FXRack" + std::to_string (rack) + "/FX[" + std::to_string (index) + "]";
+                note.item = "flex[0]";
+                note.reason =
+                    "the slot carries a drawn curve and xerum does not apply it: the curve's domain is not "
+                    "established (the corpus stores `xVals` over 0..1, the transfer curve is the input sample "
+                    "over -1..1), so the effect's built-in curve plays instead";
+                plan->notes.push_back (std::move (note));
+            }
+
+            rackSlots.push_back (std::move (slot));
+            ++next;
+        }
+    }
+
+    return plan;
+}
+
+void XerumAudioProcessor::publishFxRack (const model::PresetDocument& document)
+{
+    auto plan = planFxRack (document);
+
+    if (! freezeAndWait())
+    {
+        // The audio thread never left its block — a host that runs `processBlock` on this thread, or one
+        // that never returns. Nothing is installed, so nothing the audio thread may be reading is
+        // destroyed underneath it; the timer re-plans from the document and tries again. Setting the flag
+        // is what makes that a retry rather than a silent drop of the preset's whole rack.
+        fxDeferred_.store (true, std::memory_order_release);
+        return;
+    }
+
+    for (int rack = 0; rack < dsp::FxBank::kRackCount; ++rack)
+        fxBank_.rack (rack).setSlots (plan->racks[static_cast<std::size_t> (rack)]);
+
+    // The busses' routing, from the same document. Absence means the reference's own default, which is
+    // what the rack already holds (destination 1 — summed into MAIN's input — at unity volume).
+    const auto busNumber = [&document] (const std::string& leaf)
+    {
+        double value = 0.0;
+        const auto found = document.parameters.find ("Global0/plainParams/" + leaf);
+        return found != document.parameters.end() && modelNumber (found->second, value) ? value : 1.0;
+    };
+
+    fxBank_.setBusRouting (busNumber ("kParamFXBus1Dest"), busNumber ("kParamFXBus1Vol"),
+                           busNumber ("kParamFXBus2Dest"), busNumber ("kParamFXBus2Vol"));
+
+    // The plan outlives this call because the slots borrow from it: `prepareToPlay` re-prepares the bank,
+    // which rebuilds the chain and dereferences those curves and responses again.
+    fxPlan_ = std::move (plan);
+    fxDeferred_.store (false, std::memory_order_release);
+
+    frozen_.store (false, std::memory_order_release);
+
+    // What neither half could honour. The **decode's** own notes are per slot; the **rack's**
+    // `unresolved()` is a class name — which the model's walk has already reported (`checkEffects`) — or
+    // `Class/kParamName` for a parameter the effect does not know; its `problems()` are the effects' own
+    // (a convolution with no impulse response, a filter family v1 does not build).
+    for (const auto& note : fxPlan_->notes)
+        report_.entries.push_back (note);
+
+    for (int rack = 0; rack < dsp::FxBank::kRackCount; ++rack)
+    {
+        const auto module = "FXRack" + std::to_string (rack);
+
+        for (const auto& unresolved : fxBank_.rack (rack).unresolved())
+        {
+            if (dsp::fxClassFromName (unresolved) != dsp::FxClass::Unknown)
+                continue;   // a deferred class, named by the model's own walk — not twice
+
+            addReportEntry (report_, model::Severity::Medium, module, unresolved,
+                            "the effect does not know this parameter, so it is not applied");
+        }
+
+        for (const auto& problem : fxBank_.rack (rack).problems())
+        {
+            // An effect's own sentence is `Class: what is wrong`, and the entry already carries the class
+            // as its item — so the reason is what follows the colon rather than the sentence again.
+            const auto colon = problem.find (':');
+            const auto separator = colon != std::string::npos && problem.substr (colon).starts_with (": ") ? 2u : 1u;
+
+            addReportEntry (report_, model::Severity::High, module,
+                            colon == std::string::npos ? problem : problem.substr (0, colon),
+                            colon == std::string::npos ? problem : problem.substr (colon + separator));
+        }
+    }
+}
+
+void XerumAudioProcessor::flushFx()
+{
+    if (! fxDeferred_.exchange (false, std::memory_order_acq_rel))
+        return;
+
+    const juce::ScopedLock lock (stateLock_);
+    publishFxRack (document_);
 }
 
 void XerumAudioProcessor::applyDocument (const model::PresetDocument& document, const model::ImportReport& report,
@@ -1787,6 +2077,12 @@ void XerumAudioProcessor::applyDocument (const model::PresetDocument& document, 
     }
 
     resolveContent (document);
+
+    // **The rack** (ticket `60`) before `completeReport`, because its own entries belong in the report
+    // this load produces — the report is regenerated per document, and an entry added after it would be
+    // the one thing the interface never shows.
+    publishFxRack (document);
+
     completeReport (document);
 
     applyingDocument_.store (false, std::memory_order_release);

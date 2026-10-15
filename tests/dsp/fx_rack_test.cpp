@@ -1227,3 +1227,121 @@ TEST_CASE ("a rack processes a block longer than its prepare size", "[fx]")
     UNSCOPED_INFO ("echo at " << peak << " in a " << kFrames << "-frame block, prepare block " << kBlock);
     CHECK (peak == 2400);
 }
+
+TEST_CASE ("a delay does not run away at the corpus's own numbers", "[fx][fx-loop]")
+{
+    // **Found by wiring the rack into the plugin (ticket 60).** The corpus's own `FXDelay` slots store the
+    // filter's `kParamBW` between 0.75 and 8.25, and this effect reads that as the loop filter's Q while
+    // the loop multiplies the filtered tap by `kParamFeedback` — so `feedback x Q` was **1.5** at
+    // `ARP - Aardvark` (BW 3.28, feedback 47 %) and **3.1** at `ARP - Bell Arperium` (BW 5.33, 58 %). A loop
+    // above unity does not ring, it grows: measured through the plugin with the ceiling off — the way the
+    // fidelity layer renders, the golden being the reference's unlimited output — Aardvark reached
+    // **2.3e9** and Bell Arperium 3.7e9 by the end of a 2 s render, and Bell Arperium's oscillators are a
+    // deferred engine, so the second one grew from numerical noise with no input at all.
+    //
+    // The two cases below are the same measurement at the two levels that matter: the effect in isolation,
+    // and the rack it lives in — because the runaway needed a *chain* to become audible in a render.
+    constexpr double kSampleRate = 48000.0;
+
+    const auto setCorpusNumbers = [] (FxEffect& delay, double bw, double feedback)
+    {
+        set (delay, "kParamTimeL", 0.04933726956749931);
+        set (delay, "kParamTimeR", 0.04933726956749931);
+        set (delay, "kParamLink", 1.0);
+        set (delay, "kParamFeedback", feedback);
+        set (delay, "kParamFreq", 2301.2985114436656);
+        set (delay, "kParamBW", bw);
+        set (delay, "kParamWet", 100.0);
+    };
+
+    for (const auto& [bw, feedback] : { std::pair { 3.2793322652578354, 47.19850718975067 },
+                                        std::pair { 5.329449445009232, 58.13401937484741 } })
+    {
+        auto delay = make (FxClass::Delay, kSampleRate);
+        setCorpusNumbers (*delay, bw, feedback);
+
+        // A one-sample impulse, then four seconds of silence. An impulse is the worst legal input for a
+        // loop: every frequency at once, including the resonance.
+        const auto seconds = 4.0;
+        std::vector<float> left (static_cast<std::size_t> (kSampleRate * seconds), 0.0f);
+        std::vector<float> right (left.size(), 0.0f);
+        left[0] = 1.0f;
+        right[0] = 1.0f;
+
+        for (std::size_t start = 0; start < left.size(); start += static_cast<std::size_t> (kBlock))
+        {
+            const int frames = static_cast<int> (std::min<std::size_t> (static_cast<std::size_t> (kBlock),
+                                                                        left.size() - start));
+            delay->process (left.data() + start, right.data() + start, frames);
+        }
+
+        const auto peakIn = [&left] (double from, double to)
+        {
+            double peak = 0.0;
+
+            for (auto i = static_cast<std::size_t> (from * kSampleRate);
+                 i < static_cast<std::size_t> (to * kSampleRate) && i < left.size(); ++i)
+                peak = std::max (peak, std::abs (static_cast<double> (left[i])));
+
+            return peak;
+        };
+
+        const auto first = peakIn (0.5, 1.5);
+        const auto last = peakIn (3.0, 4.0);
+
+        UNSCOPED_INFO ("BW " << bw << ", feedback " << feedback << " %: peak " << first << " in 0.5-1.5 s, "
+                             << last << " in 3-4 s");
+
+        // Bounded, and decaying: the tail of the second half is below the first, and neither is a runaway.
+        CHECK (std::isfinite (first));
+        CHECK (first < 4.0);
+        CHECK (last < first);
+        CHECK (last < 1.0);
+    }
+
+    // And through the rack, with the corpus's chain around it — a delay *after* a distortion, which is
+    // what Aardvark's rack does two slots earlier.
+    FxRack rack;
+    rack.prepare (kSampleRate, kBlock);
+
+    FxSlot distortion;
+    distortion.cls = FxClass::Distortion;
+    distortion.numbers = { { "kParamDrive", 36.74789369106293 }, { "kParamWet", 56.083983182907104 } };
+    distortion.texts = { { "kParamMode", "kOverdrive" } };
+
+    FxSlot delay;
+    delay.cls = FxClass::Delay;
+    delay.numbers = { { "kParamTimeL", 0.04933726956749931 },
+                      { "kParamTimeR", 0.04933726956749931 },
+                      { "kParamLink", 1.0 },
+                      { "kParamFeedback", 47.19850718975067 },
+                      { "kParamFreq", 2301.2985114436656 },
+                      { "kParamBW", 3.2793322652578354 },
+                      { "kParamWet", 22.105523943901062 } };
+
+    rack.setSlots ({ distortion, delay });
+    CHECK (rack.unresolved().empty());
+
+    std::vector<float> left (static_cast<std::size_t> (kSampleRate * 4.0), 0.0f);
+    std::vector<float> right (left.size(), 0.0f);
+
+    for (std::size_t i = 0; i < static_cast<std::size_t> (kSampleRate * 0.5); ++i)
+        left[i] = right[i] = 0.5f * static_cast<float> (std::sin (kTwoPi * 220.0 * static_cast<double> (i)
+                                                                 / kSampleRate));
+
+    for (std::size_t start = 0; start < left.size(); start += static_cast<std::size_t> (kBlock))
+    {
+        const int frames = static_cast<int> (std::min<std::size_t> (static_cast<std::size_t> (kBlock),
+                                                                    left.size() - start));
+        rack.process (left.data() + start, right.data() + start, frames);
+    }
+
+    double lastSecondPeak = 0.0;
+
+    for (auto i = static_cast<std::size_t> (kSampleRate * 3.0); i < left.size(); ++i)
+        lastSecondPeak = std::max (lastSecondPeak, std::abs (static_cast<double> (left[i])));
+
+    UNSCOPED_INFO ("rack tail, peak in the last second: " << lastSecondPeak);
+    CHECK (std::isfinite (lastSecondPeak));
+    CHECK (lastSecondPeak < 2.0);
+}

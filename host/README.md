@@ -34,6 +34,10 @@ PLUGIN="/Library/Audio/Plug-Ins/VST3/Serum2.vst3"
 # render two seconds of MIDI note 60 to a 32-bit float WAV
 "$BIN" --plugin "$PLUGIN" --out /tmp/init.wav --seconds 2 --note 60
 
+# hold a chord: the notes are struck together, at the same sample, at full velocity (ticket 61)
+"$BIN" --plugin "$PLUGIN" --out /tmp/chord.wav --seconds 0.256 \
+       --notes 36,39,42,45,48,51,54,57,60,63,66,69,72,75,78,81 --velocity 127
+
 # set parameters (values are normalised 0..1) and render again
 "$BIN" --plugin "$PLUGIN" --set "Main Vol=0.25" --out /tmp/quiet.wav --seconds 1
 
@@ -139,6 +143,9 @@ the engineering value, and for some parameters they are in different units.
   every other measurement depends on. Use `--list-params` to discover the real surface instead, and
   `tools/render-preset.sh` (ticket `20`'s content-root route) to load one.
 - **No GUI, and no plan for one.** Headless is the point.
-- **One note, no MIDI file input.** Enough to capture a reference render; extend when a ticket needs it.
+- **One note — or a chord of them — and no MIDI file input.** `--note` is the single-note default;
+  `--notes 36,39,42` strikes several together at the same sample, which is what ticket `61` needed to
+  measure the reference's own polyphony against ours, and `--velocity` (default 100) sets their velocity.
+  Nothing reads a MIDI file: a change of dynamics, of timing or of expression still needs real input.
 - **The instrument path sends note on/off only.** No expression, no aftertouch, and effects get a
   single-sample impulse rather than real material.

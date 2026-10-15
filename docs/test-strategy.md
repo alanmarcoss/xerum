@@ -158,6 +158,19 @@ still runs there.
 `pluginval` and `auval`. The `pluginval` strictness level is fixed once it first runs — starting strict
 and relaxing with a recorded reason beats starting lax and never noticing.
 
+**`[gain-staging]` is a measurement, not a gate** (ticket `61`). It renders **one reference preset's own
+container on both sides** — xerum through `loadPresetFile`/`encodeStateBlock`/`setStateInformation`, the
+reference through the harness and ticket `20`'s `Default.SerumPreset` route — under ticket `58`'s own chord
+(`36 + 3i`, velocity 127, held), with xerum's ceiling off and its declared latency compensated, and reports
+**peak and RMS at one voice and sixteen**, the vocabulary ticket `54` fixed. Its preset is chosen for an
+**empty FX rack** in the reference's own container, so ticket `60`'s stage cannot reach the numbers, and the
+test asserts that property on xerum's decoded document rather than trusting the file. Every row renders twice
+and byte-identically, and the numbers go to `~/.xerum-fixtures/fidelity/gain-staging/`. Its assertions encode
+the measured finding — that a single full-scale voice is our **default patch's** level, not a gain-staging
+fault, because the reference's own default is attenuated 14 dB by two of its own controls — and it **changes
+no engine level**; a fix would be a defaults ticket, not this one. The harness gained `--notes`/`--velocity`
+for it, additively: `[fidelity-stimulus]` still requires byte-identity, so the capture protocol did not move.
+
 ## Where fixtures live
 
 Outside the repository, in a documented location (`~/.xerum-fixtures/`), covered by `.gitignore`.
