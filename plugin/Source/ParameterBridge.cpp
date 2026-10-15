@@ -31,6 +31,40 @@ std::string lower (std::string_view text)
     return out;
 }
 
+// ---------------------------------------------------------------------------------------------------
+// The reference's own default-patch levels (ticket `63`)
+// ---------------------------------------------------------------------------------------------------
+
+// Neither leaf is *stored*: the reference's init state omits both, and its own parameter surface reports
+// the defaults its plugin applies — `Main Vol` " 50% [-9.0 dB]" and `OSC A / A Level` " 75% [-5.0 dB]",
+// read back with `xerum-host --dump-params` against Serum 2 (tickets `38` and `61`). Where a *preset*
+// omits a leaf, `resolveAbsent` resolves it here; that is why the values belong in xerum's **authored
+// init** rather than in a hard-coded output trim. Carrying the leaves is what makes an un-presetted
+// instance render where the reference's does *by construction* — and, because the leaves are carried and
+// not the 10.8 dB *difference* between the two defaults, the two instruments agree for the same reason
+// rather than by coincidence (ticket `63`'s whole argument).
+//
+// Both leaves are a **gain**, in the model's units, and the engine applies each as one
+// (`OscillatorSettings::volume`, and the master gain in `XerumAudioProcessor::processBlock`). The
+// reference's two knobs share one taper — a **square** — which ticket `32` measured directly on this leaf
+// (writing a stored `0.25` reads back " 50% [-12.0 dB]"), and the reference's own display of a level is
+// `20·log10` of the stored value:
+//
+//   * `kParamVolume`, `A Level` at 75%: 0.75² = **0.5625**, whose `20·log10` is -5.0 dB — the reference's
+//     own display. Its init state holds all three wavetable slots at 75%, so all three carry it (a slot a
+//     user enables without touching its level would otherwise be 5 dB hot).
+//   * `kParamMasterVolume`, `Main Vol` at 50%: the same square taper under a **+3 dB top** — swept against
+//     the reference, `Main Vol` spans -inf..+3 dB and its display reads "+3.0 dB" at the top and "-9.0 dB"
+//     at 50% — so 0.5² · 10^(3/20) = **0.3531344**, which `20·log10`s to -9.04 dB and so displays as the
+//     reference's own "-9.0 dB" (the 0.1 dB its display rounds to is the whole of the uncertainty).
+//
+// The two together are -14.04 dB, the reference's own 14.0 dB of default attenuation. What they do *not*
+// close is the ~3.2 dB between that and the measured default-to-default audio difference (its 0.288216
+// against ours at unity) — a content/unit-model residual ticket `63` reports rather than absorbs, and
+// which belongs to ticket `62`.
+constexpr double kReferenceDefaultOscillatorVolume = 0.5625;
+constexpr double kReferenceDefaultMasterVolume = 0.3531343861556886;
+
 const char* kindText (const dsp::FilterKind kind)
 {
     switch (kind)
@@ -578,7 +612,8 @@ void ParameterBridge::buildSpecs()
     addGlobal ("kParamPortamentoTime", "Global Glide Time (s)", ParamType::Float, 0, 4, 0);
     addGlobal ("kParamPortamentoCurve", "Global Glide Curve (%)", ParamType::Float, 0, 100, 50);
     addGlobal ("kParamPortaAlways", "Global Glide Always", ParamType::Bool, 0, 1, 0);
-    addGlobal ("kParamMasterVolume", "Global Master Level", ParamType::Float, 0, 1, 1);
+    addGlobal ("kParamMasterVolume", "Global Master Level", ParamType::Float, 0, 1,
+               kReferenceDefaultMasterVolume);
 
     // --- The master ceiling (ticket `58`) -------------------------------------------------------------
     //
@@ -612,7 +647,8 @@ void ParameterBridge::buildSpecs()
         // instrument the moment a host loads it: a synth that renders silence until a preset arrives is
         // broken in a way no validator checks.
         add (base + "kParamEnable", tag + "Enable", group, ParamType::Bool, ChoiceSet::None, 0, 1, slot == 0 ? 1 : 0);
-        add (base + "kParamVolume", tag + "Level", group, ParamType::Float, ChoiceSet::None, 0, 1, 1);
+        add (base + "kParamVolume", tag + "Level", group, ParamType::Float, ChoiceSet::None, 0, 1,
+             kReferenceDefaultOscillatorVolume);
         add (base + "kParamPitch", tag + "Pitch (semitones)", group, ParamType::Float, ChoiceSet::None, -12, 12, 0);
         add (base + "kParamOctave", tag + "Octave", group, ParamType::Float, ChoiceSet::None, -4, 4, 0);
         add (base + "kParamFine", tag + "Fine (cents)", group, ParamType::Float, ChoiceSet::None, -100, 100, 0);

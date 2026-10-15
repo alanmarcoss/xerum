@@ -60,6 +60,11 @@ xerum::model::PresetDocument baseDocument()
     document.parameters["Global0/plainParams/kParamPolyCount"] = number (4.0);
     document.parameters["Oscillator0/plainParams/kParamEnable"] = number (1.0);
     document.parameters["Oscillator0/plainParams/kParamVolume"] = number (0.8);
+    // Pinned, not left to the default: ticket 63 set the master leaf's default to the reference's own
+    // `Main Vol` (-9.04 dB), and this fixture's thresholds below are absolute differences on the render, so
+    // a stimulus that silently inherited the old unity default would have been a hidden dependence rather
+    // than a measurement of the routing these cases are about.
+    document.parameters["Global0/plainParams/kParamMasterVolume"] = number (1.0);
     document.parameters["Env0/plainParams/kParamAttack"] = number (0.002);
 
     return document;

@@ -99,9 +99,11 @@ An absent parameter resolves in this order:
    generated locally and is absent on a machine with no reference installed);
 3. **xerum's own init value** for that parameter, authored in the table.
 
-**nullopt is not zero.** Of the 776 leaves, 658 will never have a default (ticket `38`), and the
-`kParamVolume` leaf has none on any machine: it resolves to xerum's init of unity, and
-`plugin/tests/bridge_test.cpp` asserts that, with a parameter whose init *is* 0 as the positive
+**nullopt is not zero.** Of the 776 leaves, 658 will never have a default (ticket `38`). `kParamVolume`
+has none on any machine either — its entry in ticket `38`'s table is normalised-only, which is not a
+preset-unit value — so it resolves to xerum's init, and since ticket `63` that init is the reference's
+own default patch's level rather than unity (see *What xerum's init patch is* below).
+`plugin/tests/bridge_test.cpp` asserts the value, with a parameter whose init *is* 0 as the positive
 control. Because (2) is machine-local, the tests assert the *rule* (established → use it, else →
 init) rather than values, so they pass on a fresh clone and on this machine; through the harness the
 rule is observable end-to-end — `1 Resonance (%)` reads 10.0 here, which is ticket `38`'s established
@@ -144,21 +146,55 @@ The table's `init` column is xerum's own init patch, and each entry has a reason
 | `Oscillator0/plainParams/kParamEnable` | **on** | the reference's init state says so — measured through the harness: `OSC A │ A Enable │ 1.000000000 │ On` — and a synth that renders silence until a preset arrives is broken in a way no validator checks |
 | `Oscillator1/2/…/kParamEnable` | off | same source: `OSC B │ B Enable │ 0.000000000 │ Off`, `OSC C │ C Enable │ … │ Off` |
 | `VoiceFilter{N}/…/kParamEnable` | off | same source: `Filter 1 │ Filter 1 On │ 0.000000000 │ Off` |
-| `…/kParamVolume`, filter cutoff, envelope times | the engine's own defaults (`OscillatorSettings::volume` = 1, `VoiceFilter::cutoff` = 1, `AmpEnvelope` = 5 ms/0/1.0/50 ms) | see below |
+| `…/kParamVolume` (all three wavetable slots) and `Global0/…/kParamMasterVolume` | **the reference's own default patch**: `0.5625` (`A Level` 75%) and `0.3531344` (`Main Vol` 50%) | ticket `63`. The reference attenuates its default patch **14.0 dB through these two of its own controls** while xerum carried neither leaf, so one key reached 0 dBFS where the reference's reached −10.81. See *the two level leaves* below |
+| filter cutoff, envelope times | the engine's own defaults (`VoiceFilter::cutoff` = 1, `AmpEnvelope` = 5 ms/0/1.0/50 ms) | see below |
 | `VoiceFilter{N}/…/kParamType` | a 12 dB/oct low pass | xerum's authored choice. The reference's init *displays* `MG Low 12`, but that is a display string: the model stores the default as **absence** (there is no `MgL12` in the schema's enum), so mapping it onto a choice would be a guess. `Schema::defaultStringFor` returns it (ticket `38`) and the plugin deliberately does not use it for a choice. |
 
 **The reference's init, measured, for the record** (`xerum-host --dump-params` against Serum 2):
-`A Level = 75% [-5.0 dB]` — which is preset units **0.5625**, since ticket `32` measured the stored value
-to be the square of the displayed percentage; `Env 1` = attack 1.0 ms, decay 1.00 s, sustain 0.0 dB,
-release 15 ms; `Filter 1` = freq 425 Hz, res 10, drive 0, `MG Low 12`.
+`Main Vol = 50% [-9.0 dB]` and `A Level = 75% [-5.0 dB]`; `Env 1` = attack 1.0 ms, decay 1.00 s,
+sustain 0.0 dB, release 15 ms; `Filter 1` = freq 425 Hz, res 10, drive 0, `MG Low 12`.
 
-Where those values are established in **preset units**, the plugin already uses them — they arrive
-through `defaultFor`, and the arrival is observable: through the harness, xerum's own
-`1 Resonance (%)` reads **10**, which is ticket `38`'s established default, where the authored init is 0.
-Where they are not (the oscillator level, the envelope times, the filter type above), xerum's own init
-plays, and the difference is a **fidelity** matter for the fidelity suite — not a correctness one, and
-not something to fix by pasting the reference's numbers into this table, which would commit
-reference-derived data that tickets `10` and `38` deliberately keep out of the tree.
+### The two level leaves, carried since ticket `63`
+
+Both leaves are a **gain** and the engine applies each as one, so the values are preset units. Ticket
+`32` measured the taper directly on `kParamVolume` — writing a stored `0.25` makes the reference report
+`50% [-12.0 dB]`, so the knob is the **square root** of the stored value and the display is `20·log10`
+of it. That gives both defaults:
+
+| leaf | reference's own default | in preset units |
+|---|---|---|
+| `Oscillator{0,1,2}/plainParams/kParamVolume` | `A Level` 75% [-5.0 dB] | `0.75² = 0.5625` |
+| `Global0/plainParams/kParamMasterVolume` | `Main Vol` 50% [-9.0 dB] | `0.5² · 10^(3/20) = 0.3531344` |
+
+`Main Vol`'s taper is the same square under a **+3 dB top** — swept against the reference, its display
+reads `+3.0 dB` at the extreme and `-9.0 dB` at half, so `0.5² · 10^(3/20)` is what reproduces `20·log10
+= -9.04 dB`, i.e. the reference's own `-9.0 dB` to the one decimal it prints. The two together are
+`-14.04 dB`: **the reference's own 14.0 dB of default attenuation, at the reference's own values.**
+
+* **Why carry the leaves rather than attenuate the output by the measured 10.8 dB difference.** The
+  difference is a *result*; the leaves are the *cause*. Carrying them means an un-presetted instance, and
+  every preset that omits one of them, resolves to the reference's own default through the same rule the
+  plugin already uses for every other leaf — so the two instruments agree for the same reason rather than
+  by coincidence. `[gain-staging]` asserts exactly that: the init peak is the unity peak times the two
+  leaves, and with the leaves forced back to 1.0 the same patch reproduces ticket `58`'s 1.000000.
+* **What they do not close, and it is reported rather than absorbed.** The two *default patches* still
+  differ by **3.23 dB** in audio (xerum 0.198638 / −14.04 dBFS, the reference 0.288216 / −10.81): the
+  reference's raw voice is ~3.2 dB hotter than xerum's at unity control positions. No level leaf can
+  close that, it is the same disagreement as ticket `61`'s 8.6 dB on a shared preset, and it belongs to
+  ticket `62` — it is recorded, with this evidence, rather than tuned away. The same fixture family shows
+  it in the other direction: `808-diesel` omits an oscillator's level, so ticket `63` *moved* that row's
+  fidelity numbers (recorded in `plugin/tests/fidelity_test.cpp`'s gate table, with the reason).
+* **On the content policy.** These are two **facts** — a default level the reference's own parameter
+  surface states — not artefacts, which is the line ticket `10` draws ("facts survive; artefacts do not").
+  Everything ticket `38` captures in bulk stays machine-local and uncommitted in
+  `src/model/generated/defaults_data.h`; these two numbers are committed because the *default patch* has to
+  be faithful on a machine with no reference installed, which is what "by construction" means.
+
+Where the reference's values are established in **preset units** by ticket `38`'s table, the plugin
+already uses them, and the arrival is observable: through the harness, xerum's own `1 Resonance (%)`
+reads **10**, which is ticket `38`'s established default, where the authored init is 0. Where they are
+not (the envelope times, the filter type above), xerum's own init plays, and the difference is a
+**fidelity** matter for the fidelity suite rather than a correctness one.
 
 ## State: same mechanism, two codecs — and not a preset
 
@@ -217,8 +253,8 @@ block; the harness asserts it end-to-end (below).
 |---|---|
 | `pluginval` | **SUCCESS at strictness level 10** (maximum) on the VST3 *and* the AU, 25 test groups including "Fuzz parameters", exit 0 |
 | `auval` | **`auval -strict -v aumu Xrm2 Xerm` → "AU VALIDATION SUCCEEDED"** |
-| loads, plays, automates in the ticket `08` harness | loads (`found: xerum \| VST3 \| instrument=yes`); **plays with nothing set: peak 0.787401** on a bare render (the init patch has OSC A on, as the reference's init state does); `--automate "A Level=0.05:1"` ramps mid-render (peak 0.401150, so the ramp is heard), and two identical automation runs are byte-identical |
-| state round-trips byte-identically | `--set … --out r1.wav`, `--set … --dump-state s.bin`, `--load-state s.bin --out r2.wav` → `cmp r1.wav r2.wav` **identical** (peak 0.820550 both, 568-byte state block) |
+| loads, plays, automates in the ticket `08` harness | loads (`found: xerum \| VST3 \| instrument=yes`); **plays with nothing set: peak 0.156408** on a bare render (`--seconds 2 --note 60`, the init patch — OSC A on, as the reference's init state does, at the reference's own default level, ticket `63`); `--automate "A Level=0.05:1"` ramps mid-render (peak 0.077691, so the ramp is heard), and two identical automation runs are byte-identical |
+| state round-trips byte-identically | `--set "A Level=0.5" --out r1.wav`, `--set "A Level=0.5" --dump-state s.bin`, `--load-state s.bin --out r2.wav` → `cmp r1.wav r2.wav` **identical** (peak 0.139029 both, 380-byte state block) |
 | no allocation on the audio thread | 0 allocations across a 200-block full render, positive control ≥ 1 |
 
 ### The tools, exactly
@@ -1727,24 +1763,30 @@ exceed full scale (7.740814), so the "never exceeds 0 dBFS" assertion is not des
 signal. `[dsp][limiter]` carries the same shape at the algorithm level, including a four-sample hard
 transient, which is the case a lookahead exists for.
 
-## The gain-staging finding, which is reported and not acted on
+**Since ticket `63` these rows are the counterfactual, not the default patch.** They were measured with the
+two level leaves at unity, which is now the state `[gain-staging]`'s `xerum-init-unity` row reproduces to the
+digit by forcing those two back to `1.0`. The product's default carries them, so its own rows are
+**0.198638** at one voice (−14.04 dBFS) and **1.537620** at sixteen — and the ceiling-on render of one voice
+is now **bit-identical** to the ceiling-off render, i.e. the limiter does not engage on a single note at all.
 
-**The voices sum with no headroom, and that is why the second key goes red.** Measured with the ceiling off,
-init patch, velocity 127, notes 36/39/42…:
+## The gain-staging finding, and what ticket `63` did about it
 
-* **one voice already peaks at 0.9999996** — full scale to the last bit, since the init patch's oscillator
-  at level 1.0 drives a table whose peak is 1.0 through a master gain of 1.0. There is no per-voice trim and
-  no mix-bus trim anywhere between the oscillator and the output;
+**The voices sum with no headroom, and that is why a chord goes red.** Measured with the ceiling off, init
+patch, velocity 127, notes 36/39/42…:
+
+* with the two level leaves at unity, **one voice peaks at 0.9999996** — full scale to the last bit: a table
+  whose peak is 1.0 through an oscillator level of 1.0 and a master gain of 1.0. There is no per-voice trim
+  and no mix-bus trim anywhere between the oscillator and the output;
 * **two voices are 1.999630** — about twice one voice (the two peaks do not land on the same sample, which
   is the only reason it is not exactly 2×);
 * **sixteen voices are 7.740814** — about 7.7 times, sub-linear for the same reason.
 
-So the fix is not "the voices are slightly too hot"; it is that **a single voice is already exactly full
-scale**, which makes any polyphony a guaranteed overload. **Nothing was re-voiced.** The dev asked for a
-limiter, and whether the voices should be quieter — a per-voice headroom factor, or a mix-bus trim, or a
-lower table peak — is a separate decision about the instrument's gain structure, and it belongs in this
-report. Changing it would alter every preset's level and every fidelity measurement, which is not what this
-ticket was asked for.
+**Nothing was re-voiced.** The engine's gain structure is exactly ticket `58`'s: no per-voice headroom
+factor, no mix-bus trim, no lower table peak. What ticket `63` changed is the **default patch**, which now
+carries the reference's own two level leaves at the reference's own values — so the default patch renders one
+voice at 0.198638 (−14.04 dBFS) and sixteen at 1.537620, and a single note no longer reaches the limiter at
+all while a chord still does. The per-voice-headroom question the old paragraph here left open is therefore
+still open; it is just no longer what makes the second key red.
 
 ## Fidelity: the corpus bypasses it, and says so
 

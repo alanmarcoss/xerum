@@ -376,18 +376,21 @@ TEST_CASE ("the ceiling is a parameter, saved and restored with the patch", "[pl
     CHECK (restored.parameterValue ("Master0/plainParams/kParamLimitCeiling") == Catch::Approx (-6.0));
 }
 
-TEST_CASE ("the gain-staging finding: the voices sum with no headroom, so the second key clips",
+TEST_CASE ("the default patch carries the reference's own level, so a voice no longer clips but a chord does",
            "[plugin][audio][limiter]")
 {
-    // This is the report the ticket asks for, measured rather than asserted from reasoning, and it is
-    // deliberately **not** a change to the engine: whether the voices are too hot is a separate decision.
+    // Ticket 58's finding was that **one voice already reached full scale**, which made any polyphony a
+    // guaranteed overload. Ticket 63 changed the premise rather than the engine: the default patch now
+    // carries the reference's own two level leaves (`Main Vol` at -9.04 dB, `A Level` at -5.0 dB), so one
+    // voice sits ~14 dB lower than it did and the *second* key no longer clips. A chord still does, because
+    // the voice bus still sums with no headroom. That is the report, measured rather than reasoned.
     const auto one = peakStereo (1);
     const auto two = peakStereo (2);
     const auto sixteen = peakStereo (16);
 
     CHECK (one > 0.05);            // one voice renders
-    CHECK (one < 1.0);             // and does not clip on its own
-    CHECK (two > 1.0);             // **the second voice is the one that goes red**
+    CHECK (one < 0.5);             // and with the reference's own attenuation it is well below full scale
+    CHECK (two < 1.0);             // **and the second key no longer goes red** — ticket 63's change
 
     std::fprintf (stderr, "[limiter] gain staging, ceiling off: 1 voice %.6f, 2 voices %.6f, 16 voices %.6f\n",
                   one, two, sixteen);
@@ -396,6 +399,10 @@ TEST_CASE ("the gain-staging finding: the voices sum with no headroom, so the se
     // the voice bus has no per-voice headroom and no mix-bus trim, so N voices are about N times one voice.
     CHECK (two == Catch::Approx (2.0 * one).epsilon (0.2));
     CHECK (sixteen > 4.0 * one);
+
+    // A sixteen-note chord still overloads — which is what the ceiling is for, and why ticket 63's change
+    // returns the limiter to a safety net rather than a stage that works on every note played.
+    CHECK (sixteen > 1.0);
 
     // The ceiling is what stops that reaching the host's meters, which is the whole of ticket 58's ask.
     CHECK (sixteen <= 32.0);
@@ -423,6 +430,11 @@ xerum::model::PresetDocument fxDocument()
     document.schemaVersion = "4.0";
     document.parameters["Oscillator0/plainParams/kParamEnable"] = number (1.0);
     document.parameters["Oscillator0/plainParams/kParamVolume"] = number (0.5);
+    // The master leaf is pinned rather than left to the default, because ticket 63 moved that default to
+    // the reference's own `Main Vol` (-9.04 dB) and every case below compares two renders of *this*
+    // document at its own level. Pinning 1.0 keeps the stimulus these cases were calibrated on and makes
+    // the dependence explicit; a document that omits the leaf on purpose is `[gain-staging]`'s job.
+    document.parameters["Global0/plainParams/kParamMasterVolume"] = number (1.0);
     document.parameters["VoiceFilter0/plainParams/kParamEnable"] = number (0.0);
     document.parameters["VoiceFilter1/plainParams/kParamEnable"] = number (0.0);
     document.parameters["Master0/plainParams/kParamLimitOn"] = number (0.0);

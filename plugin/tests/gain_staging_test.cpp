@@ -1,14 +1,32 @@
-// Ticket 61 — is a full-scale voice faithful, or a bug?
+// Ticket 63 — the default patch's level, carried by construction
 //
-// Ticket 58 measured xerum's own gain staging and refused to act on it: **a single voice renders 0.9999996** —
-// full scale to the last bit — with two voices at 1.999630 and sixteen at 7.740814, so the limiter is not
-// taming a hot mix, it is the only thing between polyphony and clipping. That left one question, and it is not
-// answerable by reasoning: **does the reference do the same?**
+// Ticket 61 answered its own question with a third reading: **the engine is faithful, and what is at full
+// scale is the default patch**. The reference's own init patch renders **-10.81 dBFS** at one voice where
+// xerum's rendered 1.000000, and the reason is on the reference's own parameter surface — it attenuates its
+// default patch **14.0 dB through two of its own controls** (`Main Vol` at 50% [-9.0 dB], `OSC A / A Level`
+// at 75% [-5.0 dB]) while xerum's init document carried neither leaf, so the engine's unity defaults stood.
+// The dev chose to match the reference, and this file is that change's instrument.
 //
-//   * **Faithful** — the reference's voices are likewise at full scale, polyphony clips there too, and our
-//     limiter is simply the divergence ticket 58 declared. Then the engine needs no change at all.
-//   * **A bug** — our voices are hotter than the reference's, our fidelity is wrong at every dynamic level,
-//     and the limiter has been masking it.
+// **The change is the two leaves, not the 10.8 dB difference.** Attenuating xerum's output by the measured
+// gap would match this one number by coincidence, and would pay for it with a level the engine did not
+// choose. Carrying the same two leaves at the same values the reference's default carries is faithful *by
+// construction*: where a preset omits a leaf, `resolveAbsent` now resolves it to the reference's own default
+// (`ParameterBridge.cpp` is where the values live, and why). The counterfactual below — the same patch with
+// the two leaves forced back to unity — is what turns "by construction" into a measurement. The rows, the
+// stimulus and the reference route are ticket 61's, unchanged, so both tickets' numbers share a vocabulary.
+//
+// **What this file asserts, each one a number it measured:**
+//
+//   * xerum's init peak is the unity peak **times the two leaves**, and the counterfactual at unity is
+//     1.000000 at one voice (7.740814 at sixteen) — ticket 58's own figures, unchanged, so the change is
+//     exactly the two leaves and nothing else;
+//   * xerum's init peak lands within `kDefaultLevelToleranceDb` of the reference's -10.81 dBFS. What remains
+//     between the two *defaults* is a **content** residual — the reference's raw voice peaks ~3.2 dB hotter
+//     than xerum's at unity control positions — which no level leaf can close and which ticket 63 reports to
+//     ticket 62 rather than absorbs;
+//   * **the limiter stops engaging on a single note**, measured rather than heard: the same patch rendered
+//     with the ceiling on and off is **sample-identical** at one voice and differs at sixteen, where it is a
+//     safety net for polyphony again.
 //
 // This file is the measurement. It renders **the same preset on both sides**, under one stimulus, with the
 // ceiling off on ours, and reports peak and RMS at one voice and at sixteen — the two measures ticket 54 used
@@ -99,6 +117,25 @@ constexpr int kSettleMs = 1500;
 constexpr int kVelocity = 127;          // ticket 58 measured at full velocity
 constexpr int kNoteOnMs = 20;           // the harness's note-on, 0.02 s in
 constexpr int kHarnessNoteOffMs = 500;  // past the end of this render: the chord is held throughout
+
+// The two leaves ticket 63 carries, and the values it carries them at — the reference's own default patch,
+// in the model's units. `0.5625` is `A Level` at 75%: the stored value is the knob squared (ticket 32
+// measured the relation by writing one and reading the other), and `20·log10 0.5625` is the reference's own
+// "-5.0 dB". `0.3531344` is `Main Vol` at 50% of a knob that spans -inf..+3 dB (swept against the reference:
+// "+3.0 dB" at the top, "-9.0 dB" at half), i.e. `0.5² · 10^(3/20)`, which `20·log10`s to -9.04 dB and so
+// displays as the reference's "-9.0 dB". The engine's own parameters are read back below and compared to
+// these, so a drift in either is a failing measurement rather than a stale comment.
+constexpr double kDefaultOscillatorLevel = 0.5625;
+constexpr double kDefaultMasterLevel = 0.3531343861556886;
+
+/// The tolerance the two *defaults* are held to, and it is deliberately not a level tolerance. Once the two
+/// leaves are carried, what separates the two init patches is **content**: ticket 61 measured the reference's
+/// raw voice at +3.23 dBFS where xerum's is at 0.00 for the same control positions, and no level leaf can
+/// close that — it is ticket 62's question, reported and not absorbed. 3.5 dB therefore covers exactly that
+/// residual. It is tight enough that a level change big enough to matter (3.5 dB) could not hide inside it,
+/// and the "faithful by construction" assertion above is the one that pins the leaves themselves to 1e-3.
+constexpr double kDefaultLevelToleranceDb = 3.5;
+
 
 /// `36 + 3 * i` — ticket 58's chord, so its published numbers are continued rather than restated in a second
 /// protocol.
@@ -395,6 +432,12 @@ struct XerumRender
     std::string firstReport;
     std::string oscLevel;
     std::string masterLevel;
+    /// The same two leaves read back from the **parameters** the engine is holding, not from the document:
+    /// the init patch has no document at all, so the document reads "absent" while the parameter is the
+    /// value the engine actually renders with (ticket 63's whole point).
+    double oscParam { 0.0 };
+    double masterParam { 0.0 };
+    bool ceilingOn { false };
 };
 
 /// Fixed-point text for the report: the numbers in the table are meant to be compared to the digits ticket 58
@@ -427,7 +470,17 @@ std::string leaf (const xerum::model::PresetDocument& document, const std::strin
 /// One xerum render: a fresh processor, the reference preset applied through the product's own path (or none
 /// at all, for the init-patch row), the ceiling switched off **after** the document is applied, and the
 /// declared latency compensated.
-XerumRender renderXerum (const std::string& presetPath, const std::vector<int>& notes)
+///
+/// Two switches, both of them the ticket-63 assertions:
+///
+///   * `ceilingOn` leaves the ceiling where the document (or the default, which is on) put it, so the
+///     ceiling-on and ceiling-off renders of the same patch can be compared sample for sample — which is how
+///     "the limiter stops engaging" is measured rather than heard;
+///   * `unityLevels` forces the two level leaves back to 1.0 after the document is applied, which is the
+///     **counterfactual**: the same patch without ticket 63's two leaves, i.e. the 1.000000 ticket 58
+///     measured.
+XerumRender renderXerum (const std::string& presetPath, const std::vector<int>& notes,
+                         const bool ceilingOn = false, const bool unityLevels = false)
 {
     XerumRender result;
 
@@ -493,13 +546,28 @@ XerumRender renderXerum (const std::string& presetPath, const std::vector<int>& 
 
     // Ticket 58: off, and set *after* the document, because `applyDocument` writes every parameter and a
     // reference preset carries no `Master0` leaf — which resolves the ceiling back to its default, which is on.
-    processor.setParameterValue ("Master0/plainParams/kParamLimitOn", 0.0);
+    if (! ceilingOn)
+        processor.setParameterValue ("Master0/plainParams/kParamLimitOn", 0.0);
+
+    // The counterfactual. Ticket 63's change is *only* the two leaves' authored init, so undoing exactly
+    // those two — with the same call the parameter surface uses — must reproduce ticket 58's 1.000000. If
+    // the init patch moved for any other reason, this is where it shows.
+    if (unityLevels)
+    {
+        processor.setParameterValue ("Oscillator0/plainParams/kParamVolume", 1.0);
+        processor.setParameterValue ("Global0/plainParams/kParamMasterVolume", 1.0);
+    }
+
+    result.ceilingOn = ceilingOn;
     result.latency = processor.getLatencySamples();
 
     // The two leaves that decide a voice's level, read out of the document the engine is actually holding —
-    // the init patch when nothing was applied, and the imported preset when one was.
+    // the init patch when nothing was applied, and the imported preset when one was — and out of the
+    // parameters, which is what the engine renders with whether a document carried them or not.
     result.oscLevel = leaf (processor.document(), "Oscillator0/plainParams/kParamVolume");
     result.masterLevel = leaf (processor.document(), "Global0/plainParams/kParamMasterVolume");
+    result.oscParam = processor.parameterValue ("Oscillator0/plainParams/kParamVolume");
+    result.masterParam = processor.parameterValue ("Global0/plainParams/kParamMasterVolume");
 
     // Rendered `latency` samples long and the front dropped, so the two sides start at the same sample
     // (ticket 46's compensation, for the same reason).
@@ -765,33 +833,87 @@ TEST_CASE ("the reference's voice and ours, peak and RMS at one voice and at six
 
     std::vector<Row> rows;
 
-    // --- xerum's init patch: ticket 58's own measurement, re-taken under this comparison's stimulus -----
-    for (const auto voices : { 1, 16 })
+    // --- xerum's init patch, in three states -------------------------------------------------------------
+    //
+    // Three states of the *same* patch, so ticket 63's change is separated from everything else in the
+    // comparison:
+    //
+    //   * `init` — the default patch as the product ships it, which now carries the reference's own two
+    //     level leaves (`ParameterBridge.cpp` says where they live and why they are those values);
+    //   * `init-unity` — the same patch with those two leaves forced back to 1.0 through the parameter
+    //     surface. This is the **counterfactual**, and it must still reproduce ticket 58's own 1.000000
+    //     (7.740814 at sixteen): the change is exactly the two leaves, and if anything else moved, this row
+    //     is where it shows;
+    //   * `init-ceiling` — the default patch with the ceiling *on*, so the ceiling-on render can be compared
+    //     sample for sample against the ceiling-off one. That comparison **is** the limiter-engagement
+    //     measurement: a limiter that engages changes the samples, and one that does not leaves them equal.
+    struct InitState
     {
-        const auto render = renderXerum ({}, chordNotes (voices));
+        const char* patch;
+        bool ceilingOn;
+        bool unityLevels;
+    };
 
-        // Twice, and required sample-identical: a render that is not reproducible is not evidence (ticket 20),
-        // and the reference's rows are held to the same standard.
-        const auto repeat = renderXerum ({}, chordNotes (voices));
-        const auto same = render.ok && repeat.ok
-                       && render.audio.left == repeat.audio.left
-                       && render.audio.right == repeat.audio.right;
+    const InitState initStates[] {
+        { "init",         false, false },
+        { "init-unity",   false, true  },
+        { "init-ceiling", true,  false },
+    };
 
-        Row row { "xerum", "init", voices, render.ok, render.error, 0.0, 0.0, same };
+    /// The renders the limiter assertion needs: `[voice][ceiling]`, one and sixteen voices.
+    Stereo initCeilingOff[2];
+    Stereo initCeilingOn[2];
 
-        if (render.ok)
+    double initOscParam = -1.0;
+    double initMasterParam = -1.0;
+
+    for (const auto& state : initStates)
+    {
+        for (const auto voices : { 1, 16 })
         {
-            row.peak = peakOf (render.audio);
-            row.rms = rmsOf (render.audio);
-            writeWav (outDir / ("xerum-init-" + std::to_string (voices) + ".wav"), render.audio);
+            const auto render = renderXerum ({}, chordNotes (voices), state.ceilingOn, state.unityLevels);
 
-            if (voices == 1)
-                std::fprintf (stderr, "[gain-staging] xerum init: limiter latency %d samples, "
-                                      "Oscillator0 kParamVolume %s, Global0 kParamMasterVolume %s\n",
-                              render.latency, render.oscLevel.c_str(), render.masterLevel.c_str());
+            // Twice, and required sample-identical: a render that is not reproducible is not evidence
+            // (ticket 20), and the reference's rows are held to the same standard.
+            const auto repeat = renderXerum ({}, chordNotes (voices), state.ceilingOn, state.unityLevels);
+            const auto same = render.ok && repeat.ok
+                           && render.audio.left == repeat.audio.left
+                           && render.audio.right == repeat.audio.right;
+
+            Row row { "xerum", state.patch, voices, render.ok, render.error, 0.0, 0.0, same };
+
+            if (render.ok)
+            {
+                row.peak = peakOf (render.audio);
+                row.rms = rmsOf (render.audio);
+                writeWav (outDir / ("xerum-" + std::string (state.patch) + "-" + std::to_string (voices) + ".wav"),
+                          render.audio);
+
+                const auto voiceIndex = voices == 1 ? 0 : 1;
+
+                // Only the *unmodified* default patch goes into the ceiling-off pair: `init-unity` is
+                // ceiling-off too, and recording it here would make the comparison below a comparison
+                // against the counterfactual rather than against the patch the limiter sees.
+                if (state.ceilingOn)
+                    initCeilingOn[voiceIndex] = render.audio;
+                else if (std::string (state.patch) == "init")
+                    initCeilingOff[voiceIndex] = render.audio;
+
+                if (std::string (state.patch) == "init" && voices == 1)
+                {
+                    initOscParam = render.oscParam;
+                    initMasterParam = render.masterParam;
+
+                    std::fprintf (stderr, "[gain-staging] xerum init: limiter latency %d samples, "
+                                          "Oscillator0 kParamVolume %.6f (document: %s), "
+                                          "Global0 kParamMasterVolume %.6f (document: %s)\n",
+                                  render.latency, render.oscParam, render.oscLevel.c_str(),
+                                  render.masterParam, render.masterLevel.c_str());
+                }
+            }
+
+            rows.push_back (row);
         }
-
-        rows.push_back (row);
     }
 
     // --- xerum, rendering the reference's own FX-free preset through the product's loader ---------------
@@ -919,7 +1041,9 @@ TEST_CASE ("the reference's voice and ours, peak and RMS at one voice and at six
     // --- the evidence ----------------------------------------------------------------------------------
     const auto report = outDir / "gain-staging-report.tsv";
     std::ofstream tsv (report);
-    tsv << "# ticket 61: peak and RMS, one voice and sixteen, same stimulus, xerum's ceiling off\n"
+    tsv << "# ticket 61 / 63: peak and RMS, one voice and sixteen, same stimulus, xerum's ceiling off\n"
+        << "# (xerum-init-unity is xerum's default patch with ticket 63's two level leaves forced back to 1.0,\n"
+        << "#  and xerum-init-ceiling is the default patch with the ceiling on — the limiter-engagement pair)\n"
         << "# scheme\tpatch\tvoices\tpeak\trms\tpeakDb\trmsDb\treproducible\n";
 
     std::fprintf (stderr, "\n[gain-staging] %-10s %-8s %6s %12s %12s %10s %10s  %s\n",
@@ -982,6 +1106,8 @@ TEST_CASE ("the reference's voice and ours, peak and RMS at one voice and at six
     };
 
     REQUIRE (has ("xerum", "init"));
+    REQUIRE (has ("xerum", "init-unity"));
+    REQUIRE (has ("xerum", "init-ceiling"));
     REQUIRE (has ("xerum", "preset"));
     REQUIRE (has ("reference", "preset"));
 
@@ -1020,15 +1146,57 @@ TEST_CASE ("the reference's voice and ours, peak and RMS at one voice and at six
     // ---------------------------------------------------------------------------------------------
 
     const auto xerumInit = find ("xerum", "init", 1);
+    const auto xerumInitUnity = find ("xerum", "init-unity", 1);
     const auto xerumPreset = find ("xerum", "preset", 1);
     const auto referencePreset = find ("reference", "preset", 1);
     const auto haveReferenceInit = has ("reference", "init");
 
-    // **Ticket 58's measurement, re-taken under this stimulus.** If this does not hold, the xerum side is not
-    // the patch that report describes and the two sides are not being compared at all. (It also reproduces
-    // the sixteen-voice figure exactly: 7.740814, the number in ticket 58's table.)
-    CHECK (xerumInit.peak > 0.95);
-    CHECK (find ("xerum", "init", 16).peak == Catch::Approx (7.740814).epsilon (0.01));
+    // ---------------------------------------------------------------------------------------------
+    // Ticket 63: the two leaves are carried, and the counterfactual is ticket 58's own number
+    // ---------------------------------------------------------------------------------------------
+
+    // The engine is holding the two leaves — read back from the parameters, not from the comment in
+    // `ParameterBridge.cpp`, so a drift in either is this measurement failing rather than a stale note. The
+    // parameters are `float` (JUCE's storage), so the comparison is at that precision rather than at the
+    // double the constants are written in.
+    CHECK (initOscParam == Catch::Approx (kDefaultOscillatorLevel).epsilon (1e-6));
+    CHECK (initMasterParam == Catch::Approx (kDefaultMasterLevel).epsilon (1e-6));
+
+    // **Faithful by construction, and this is the assertion that says it.** The init peak is the unity peak
+    // times exactly the two leaves, so the default is turned down by *the leaves* and not by an output trim
+    // that happens to land on the same number.
+    CHECK (xerumInit.peak == Catch::Approx (xerumInitUnity.peak * kDefaultOscillatorLevel * kDefaultMasterLevel)
+                                 .epsilon (1e-3));
+
+    // **The counterfactual.** Without the two leaves the same patch is ticket 58's 1.000000 at one voice and
+    // 7.740814 at sixteen — its published figures, to the digit. The change is the two leaves and nothing
+    // else, and a level that moved anywhere else would land here.
+    CHECK (xerumInitUnity.peak == Catch::Approx (1.0).epsilon (1e-3));
+    CHECK (find ("xerum", "init-unity", 16).peak == Catch::Approx (7.740814).epsilon (0.01));
+
+    // ---------------------------------------------------------------------------------------------
+    // The limiter stops engaging on a single note — ticket 63's point, measured rather than heard
+    // ---------------------------------------------------------------------------------------------
+
+    // The ceiling imposes its declared latency whether it engages or not, so the two renders of the *same*
+    // patch start at the same sample and can be compared directly. At one voice the two leaves put the
+    // default patch far below the ceiling, and a limiter that does not engage changes nothing at all: the
+    // ceiling-on and ceiling-off renders are identical to the sample.
+    REQUIRE (initCeilingOff[0].size() == initCeilingOn[0].size());
+    CHECK (initCeilingOff[0].size() > 0);
+    CHECK (initCeilingOff[0].left == initCeilingOn[0].left);
+    CHECK (initCeilingOff[0].right == initCeilingOn[0].right);
+
+    // And it is still a safety net where one is needed: sixteen held notes take the default patch over full
+    // scale, the limiter engages, and its output both differs from the ceiling-off render and lands at the
+    // ceiling. A single note no longer works the limiter; a chord still does.
+    CHECK (find ("xerum", "init", 16).peak > 1.0);
+    CHECK (find ("xerum", "init-ceiling", 16).peak < find ("xerum", "init", 16).peak);
+    CHECK (initCeilingOff[1].left != initCeilingOn[1].left);
+
+    // ---------------------------------------------------------------------------------------------
+    // The rest of ticket 61's comparison, still holding
+    // ---------------------------------------------------------------------------------------------
 
     // **The engine is not hotter than the reference's voice path.** On the same preset, under the same
     // stimulus, ours is *quieter* — so the "our voices are hotter than the reference's" reading does not
@@ -1051,11 +1219,32 @@ TEST_CASE ("the reference's voice and ours, peak and RMS at one voice and at six
         CHECK (referenceInit.peak < 0.5);
         CHECK (referencePreset.peak < 0.5);
 
-        // And the gap between the two *defaults* is a level, not a rounding: ours is authored at unity.
-        CHECK (toDb (referenceInit.peak) < toDb (xerumInit.peak) - 8.0);
+        // **Ticket 63's headline.** The two *defaults* now agree, to within `kDefaultLevelToleranceDb` — and
+        // what is left inside that margin is content, not level: ticket 61 measured the reference's raw voice
+        // at +3.23 dBFS at unity control positions where xerum's is at 0.00, and no level leaf can close that.
+        // It is printed here and reported to ticket 62 rather than absorbed.
+        const auto residual = toDb (xerumInit.peak) - toDb (referenceInit.peak);
+
+        std::fprintf (stderr, "[gain-staging] the two default patches: xerum %.6f (%.2f dBFS), "
+                              "reference %.6f (%.2f dBFS) — residual %.2f dB, content (ticket 62)\n",
+                      xerumInit.peak, toDb (xerumInit.peak), referenceInit.peak, toDb (referenceInit.peak),
+                      residual);
+
+        CHECK (toDb (xerumInit.peak) == Catch::Approx (toDb (referenceInit.peak)).margin (kDefaultLevelToleranceDb));
+
+        // The residual is real and is *not* absorbed into the tolerance: it is the same ~3.2 dB ticket 61 named
+        // between the reference's own 14.0 dB of attenuation and the 10.81 dB the two defaults differ by in
+        // audio. Asserting it is non-zero is what keeps "within tolerance" from meaning "we rounded it away".
+        CHECK (std::abs (residual) > 1.0);
+        CHECK (std::abs (residual) < kDefaultLevelToleranceDb);
+
+        // Ours is now *quieter* than the reference's at the default — the direction ticket 63 set out to
+        // change, since the same two leaves are what the reference attenuates with. Before the change ours
+        // was 10.81 dB *louder* (1.000000 against 0.288216), which is the row above the counterfactual.
+        CHECK (toDb (xerumInit.peak) < toDb (referenceInit.peak));
 
         CHECK (find ("reference", "init", 16).peak > 1.0);
-        CHECK (find ("xerum", "init", 16).peak > 4.0 * referenceInit.peak);
+        CHECK (find ("xerum", "init", 16).peak > 1.0);
 
         // **The control.** Raising the reference's own level knobs puts its single voice *above* full scale
         // (measured 2.049533, +6.23 dBFS), so a voice exceeding full scale is not a gain-staging defect in

@@ -387,11 +387,13 @@ TEST_CASE ("an absent parameter resolves through defaultFor, and nullopt falls t
 
     // **nullopt is not zero.** `kParamVolume` has no established default on any machine — its entry in
     // ticket 38's table is normalised-only, which is not a preset-unit value — so it resolves to xerum's
-    // init of unity, which is the parameter's host-facing default too.
+    // init, which is the reference's own default patch's level and the parameter's host-facing default
+    // too. Ticket `63`: the reference's init state omits this leaf and its own surface reports `A Level`
+    // at 75%, i.e. a stored 0.75² = 0.5625.
     const auto* volume = findSpec (bridge, "Oscillator0/plainParams/kParamVolume");
     REQUIRE (volume != nullptr);
     CHECK_FALSE (schema.defaultFor (volume->schemaPath).has_value());
-    CHECK (ParameterBridge::resolveAbsent (*volume) == 1.0);
+    CHECK (ParameterBridge::resolveAbsent (*volume) == 0.5625);
     CHECK (ParameterBridge::resolveAbsent (*volume) != 0.0);
 
     // The positive control that makes the assertion above mean something: a parameter whose init *is*
