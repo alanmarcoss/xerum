@@ -739,6 +739,50 @@ TEST_CASE ("a preset whose rack holds a resonant delay does not run away", "[plu
     CHECK (peak < 2.0);
 }
 
+TEST_CASE ("a preset whose rack carries a drawn filter response loads and renders", "[plugin][audio][fx][corpus]")
+{
+    // **The drawn response, on real material.** `FXFilter` is the voice filter exposed as a master effect,
+    // so a preset can inline a pole/zero response for it — six factory slots do, and `BA - Kitchen Sink`'s
+    // is `FXRack0/FX[1]/FXFilter` with four objects (32 sections, the engine's cap). Ticket 60 parameterised
+    // `poleZeroFromDocument` so this slot could share the voice filter's reader; the reader is the one place
+    // a *stale* call could walk a null path (see `PoleZeroObjectPath`), so the product path is measured
+    // here rather than only in a unit test with a hand-built document: it loads, it does not report a
+    // problem for that slot, and it renders.
+    const juce::File preset (juce::String (corpusRoot()) + "/Presets/Factory/Bass/Reese/BA - Kitchen Sink.SerumPreset");
+
+    if (! preset.existsAsFile())
+        SKIP ("the reference's corpus is not installed at " << corpusRoot().toStdString());
+
+    const auto loaded = xerum::plugin::loadPresetFile (preset);
+    REQUIRE (loaded.ok);
+
+    // The document really carries the response under the object path the decode builds from it.
+    CHECK (loaded.document.parameters.count ("FXRack0/FX[1]/FXFilter/plainParams/kParamType") == 1);
+    CHECK (loaded.document.parameters.count ("FXRack0/FX[1]/FXFilter/PZs[0]/fp[0]") == 1);
+    CHECK (loaded.document.parameters.count ("FXRack0/FX[1]/FXFilter/PZs[3]/types[7]") == 1);
+
+    XerumAudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    REQUIRE (processor.loadPresetFromFile (preset).wasOk());
+
+    const auto rendered = render (processor, 32, 512, noteThenRelease (60, 16));
+    const auto peak = peakOf (rendered);
+
+    std::fprintf (stderr, "[fx] BA - Kitchen Sink (drawn FXFilter response): peak %.6f\n", peak);
+
+    CHECK (std::isfinite (peak));
+    CHECK (peak > 0.001);   // it renders, and nothing in the decode walked off the response
+
+    // **The reader itself, on this preset's own object path** — the same path `planFxRack` builds from the
+    // document key, and the surface the crash was on. The preset carries four objects, which is the engine's
+    // cap of 32 sections; a decode that had read the wrong object path would come back empty.
+    const auto description = xerum::plugin::poleZeroFromDocument (
+        loaded.document, xerum::plugin::PoleZeroObjectPath { "FXRack0/FX[1]/FXFilter" });
+
+    CHECK (description.count == 4 * xerum::dsp::PoleZeroDescription::kSectionsPerObject);
+    CHECK (description.count == xerum::dsp::PoleZeroDescription::kMaxSections);
+}
+
 TEST_CASE ("each shipped class engages: the per-class difference the rack makes to one render",
            "[plugin][audio][fx]")
 {

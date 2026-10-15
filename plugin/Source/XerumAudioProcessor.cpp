@@ -1655,8 +1655,8 @@ void XerumAudioProcessor::publishPoleZero()
     std::array<dsp::PoleZeroDescription, dsp::kFilterSlots> next;
 
     for (int slot = 0; slot < dsp::kFilterSlots; ++slot)
-        next[static_cast<std::size_t> (slot)] = poleZeroFromDocument (document_, "VoiceFilter"
-                                                                                    + std::to_string (slot));
+        next[static_cast<std::size_t> (slot)] =
+            poleZeroFromDocument (document_, PoleZeroObjectPath { "VoiceFilter" + std::to_string (slot) });
 
     if (! freezeAndWait())
     {
@@ -1872,7 +1872,7 @@ XerumAudioProcessor::planFxRack (const model::PresetDocument& document) const
             if (const auto response = responseObjects.find (index); response != responseObjects.end())
             {
                 auto description = std::make_unique<dsp::PoleZeroDescription> (
-                    poleZeroFromDocument (document, response->second));
+                    poleZeroFromDocument (document, PoleZeroObjectPath { response->second }));
 
                 if (! description->empty())
                 {

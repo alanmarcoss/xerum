@@ -974,7 +974,11 @@ TEST_CASE ("the matrix section is fed by the loaded preset", "[interface][ui]")
 TEST_CASE ("the drawn filter shows its sections, up to the engine's 32", "[interface]")
 {
     // Two objects, 16 sections: what a preset with a drawn response actually carries.
-    const auto description = poleZeroFromDocument (drawnFilterDocument (2), 0);
+    //
+    // **The reader takes the object's path, not a slot index** (ticket `60`: it was parameterised so the
+    // rack's own `FXFilter` could share it, and both callers here were left on the old form). That form is
+    // now a compile error rather than a crash — see `PoleZeroObjectPath`.
+    const auto description = poleZeroFromDocument (drawnFilterDocument (2), PoleZeroObjectPath { "VoiceFilter0" });
 
     CHECK (description.count == 16);
     CHECK (description.count % dsp::PoleZeroDescription::kSectionsPerObject == 0);
@@ -1018,7 +1022,7 @@ TEST_CASE ("the drawn filter shows its sections, up to the engine's 32", "[inter
     CHECK (empty.sectionCount() == 0);
     CHECK (empty.caption().contains ("no pole/zero sections"));
 
-    const auto everything = poleZeroFromDocument (drawnFilterDocument (5), 0);
+    const auto everything = poleZeroFromDocument (drawnFilterDocument (5), PoleZeroObjectPath { "VoiceFilter0" });
     CHECK (everything.count == dsp::PoleZeroDescription::kMaxSections);
     CHECK (everything.count == 32);
 }

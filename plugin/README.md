@@ -1869,6 +1869,37 @@ at 0 and 1 puts the plateau on the baseline and on the top of the plot; the grap
 the knob's `valueToProportionOfLength`; and a document whose matrix row addresses `Env0/kParamAttack` reaches
 the graph's second curve and the knob's arc as **the same number**.
 
+## The crash the parameterised reader caused, and why it is now a compile error
+
+The drawn-response reader used to take a slot **index** (`poleZeroFromDocument (document, 0)`); ticket 60 gave it
+an **object path** so the rack's own `FXFilter` could share it. That was right, and it broke the two callers in
+`interface_test.cpp` — which did not fail to compile, they **segfaulted**: `std::string_view` accepts `0`,
+because `0` is a null pointer constant and the view's pointer constructor is implicit, so the old call bound,
+built a view over `nullptr`, and the reader walked it. `[interface]` was the one suite left to integration, so
+the first run after the change was red with `SIGSEGV - Segmentation violation signal`.
+
+**The type is now `PoleZeroObjectPath`, whose integer constructor is deleted**: an index is a **compile error**
+(`conversion function from 'int' to 'PoleZeroObjectPath' invokes a deleted function`) rather than a null view and
+a crash. That is the design point worth stating — a parameterisation that turns a stale call into a crash is
+worse than the duplication it removes, and this one did it through a conversion the language allows and nobody
+would write on purpose.
+
+**Can a real preset reach that crash?** No, and that is measured rather than argued:
+
+* every product caller passes a **non-null** path — `"VoiceFilter" + std::to_string (slot)` for a slot, or the
+  document-derived `FXRack{n}/FX[i]/FXFilter` in `planFxRack`, whose prefix is built from the key itself and
+  cannot be empty;
+* the drawn-response path on real material is exercised on both sides: the **voice** filter by
+  `ba-geiger-wub` (its fixture covers `filter:PZ_SVF`) and every fidelity run that renders it, and the **FX**
+  filter by `[plugin][audio][fx]`'s "a preset whose rack carries a drawn filter response loads and renders",
+  which loads `BA - Kitchen Sink`, checks the 32 sections its `FXRack0/FX[1]` inlines arrive through the same
+  reader and object path the decode builds, and renders it (peak 0.086557).
+
+So this was a **test-side** breakage of a *product* API change, not a release blocker: the crashed call existed
+only in `interface_test.cpp`, and no preset can construct it. The test now calls the reader with the object path
+it means, `"VoiceFilter0"` — which is what it was always asking for; the fix is the call, and the reason it was
+wrong is that it stayed on an argument form the new signature no longer accepted.
+
 ## Verified by running it
 
 | | |
@@ -2054,9 +2085,10 @@ instead of pretending.
 
 | | |
 |---|---|
-| `[fx]` in `plugin/tests/audio_test.cpp` | **8 cases / 55 assertions — all passed** in `build-60`, the corpus-gated ones included (the reference's factory bank is installed on this machine) |
+| `[fx]` in `plugin/tests/audio_test.cpp` | **9 cases / 64 assertions — all passed** in `build-60`, the corpus-gated ones included (the reference's factory bank is installed on this machine) |
 | `[fx-loop]` in `tests/dsp/fx_rack_test.cpp` | **1 case / 27 assertions passed** — and it **fails** if the loop bound is removed: reverting that one line for a run put the tail at **8.97e35** (impulse) and 5.76e11 (through the rack), which is what makes it a regression test rather than a description |
 | `xerum-dsp-tests` | **161 cases / 1,642,990 assertions — all passed** |
 | `[fidelity-corpus]`, with the stage wired | **1879 assertions — all passed**; the seven gate rows printed above, and 808-decomposed's re-measured baseline is the number it measures |
 | `[fidelity-corpus]`, stage neutralised (the control) | **all seven rows reproduced their recorded baselines to the printed 0.01 dB** (-25.44, -21.72, -20.79, -19.14, -19.52, -21.06, -18.33 / 10.85, 9.89, 14.76, 15.00, 18.85, 14.60, 14.95) and every assertion passed — so the table above is a before/after of one machine, one build, one control |
-| the rest of the plugin suite (`~[interface]`) | 71 cases, 68 passed, **2 failed in `gain_staging_test.cpp`** — another session's ticket-61 file, mid-flight while this ran, whose *reference*-side renders are empty in this build; not touched here and not this ticket's. One case skipped: `[fidelity-stimulus]`, which needs the harness binary in this build directory. The interface, model and content suites were left to integration's serialised run |
+| `[interface]` — **the whole tag this time, not `~[interface]`** | **8,730 assertions / 24 cases — all passed**, the drawn-filter case included (it segfaulted before the `PoleZeroObjectPath` fix: see above) |
+| the rest of the plugin suite (`~[interface]`) | **15,326 of 15,331 assertions passed**; the one failing case is `gain_staging_test.cpp`'s "the reference's voice and ours" (**5 assertions**, ticket 61's file, another session's), whose *reference*-side renders come back empty in this build directory — the file is not touched here and its own report records it green in `build-61`. One case skipped: `[fidelity-stimulus]`, which needs the harness binary in this build directory. Model, content and presets suites untouched by this ticket |

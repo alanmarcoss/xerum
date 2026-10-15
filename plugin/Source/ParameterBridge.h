@@ -205,20 +205,38 @@ std::string parameterIdFromPath (std::string_view modelPath);
 /// label cannot disagree with the spec the engine will build.
 std::string describeFilterSpec (const dsp::FilterSpec& spec);
 
-/// Read a filter slot's drawn response out of a loaded document — `{objectPath}/PZs[]`, which is where a
-/// preset inlines it. Empty when the preset carries none, and never a partial object: the reference
-/// stores eight sections per object or none.
+/// Where a drawn response lives in a document: `VoiceFilter{slot}`, or `FXRack{n}/FX[i]/FXFilter` for the
+/// rack's own `FXFilter` slot.
 ///
-/// Ticket 45 moved this from the interface into the preset→engine path: the plane *shows* the response,
-/// but the response must also reach `dsp::VoiceFilter::setPoleZero`, so its reader belongs in the layer
-/// the processor can use rather than in a widget header.
+/// **A distinct type rather than a `std::string_view`, and the reason is measured.** This reader used to take
+/// a slot **index**. Ticket 60 generalised it to an object path so the voice filter and the FX filter could
+/// share one reader — and `std::string_view` accepts `0`, because `0` is a null pointer constant and the
+/// view's pointer constructor is implicit. So a caller left on the old form — `f (document, 0)`, which is
+/// exactly what `plugin/tests/interface_test.cpp` had twice — **compiled**, built a view over `nullptr`, and
+/// segfaulted inside the reader. The integer constructor below is deleted so that call is now a **compile
+/// error**: a parameterisation that turns a stale call into a crash rather than into a diagnostic is worse
+/// than the duplication it avoided.
+struct PoleZeroObjectPath
+{
+    PoleZeroObjectPath (const char* text) : path (text) {}
+    explicit PoleZeroObjectPath (std::string text) : path (std::move (text)) {}
+
+    /// The index this parameter used to be. Deleted rather than left to `const char*`, because an integer
+    /// `0` would bind to that constructor and the reader would then walk a null string.
+    PoleZeroObjectPath (int) = delete;
+
+    std::string path;
+};
+
+/// Read a filter slot's drawn response out of a loaded document — `{object}/PZs[]`, which is where a preset
+/// inlines it. Empty when the preset carries none, and never a partial object: the reference stores eight
+/// sections per object or none.
 ///
-/// **ticket 60 made the object path a parameter**, because there are two slots of this shape and one
-/// reader: a voice filter's is `VoiceFilter{slot}` and an `FXFilter`'s is `FXRack{n}/FX[i]/FXFilter`. The
-/// fields are the same — the schema declares the same six leaves under both — so a second reader would
-/// have been a second convention for one format.
+/// Ticket 45 moved this from the interface into the preset→engine path: the plane *shows* the response, but
+/// the response must also reach `dsp::VoiceFilter::setPoleZero`, so its reader belongs in the layer the
+/// processor can use rather than in a widget header.
 dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& document,
-                                               std::string_view objectPath);
+                                               PoleZeroObjectPath objectPath);
 
 /// Read a number out of a document value. Returns false for anything that is not numeric.
 bool modelNumber (const model::Value& value, double& out);

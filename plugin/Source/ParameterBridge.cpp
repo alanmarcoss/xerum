@@ -262,7 +262,7 @@ std::string modulationFieldPath (const int row, const ModRowField field)
 }
 
 dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& document,
-                                               const std::string_view objectPath)
+                                               const PoleZeroObjectPath objectPath)
 {
     using Section = dsp::PoleZeroDescription;
 
@@ -270,7 +270,7 @@ dsp::PoleZeroDescription poleZeroFromDocument (const model::PresetDocument& docu
 
     for (std::size_t object = 0; object < Section::kMaxObjects; ++object)
     {
-        const auto prefix = std::string (objectPath) + "/PZs[" + std::to_string (object) + "]";
+        const auto prefix = objectPath.path + "/PZs[" + std::to_string (object) + "]";
 
         // `fp[0]` is the object's presence: the reference writes all eight sections of an object or none
         // of it, so a partial object is not a case this has to read.
